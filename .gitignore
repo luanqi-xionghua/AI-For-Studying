@@ -1,0 +1,25 @@
+# 依赖与通用产物
+node_modules/
+dist/
+release/
+artifacts/
+test-results/
+.cache/
+.claude/
+.toolchain/
+*.user
+.env
+.env.*
+!.env.example
+
+# frontend/：构建时由 scripts/prepare-assets.mjs 生成的离线 PDF.js 资源
+frontend/public/vendor/
+
+# backend/：Rust / Tauri 产物，以及从 native-host/bin 复制来的小助手
+backend/target/
+backend/gen/
+backend/resources/*.exe
+
+# backend/native-host/：scripts/build-host.ps1 编译出的 PdfCopilotHost.exe
+backend/native-host/bin/
+backend/native-host/.schema/

@@ -1,0 +1,245 @@
+// Real interaction checks in an isolated browser library; no native user data or AI requests.
+import { chromium } from 'playwright';
+import { createServer } from 'vite';
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
+const port = Number(process.env.PHYDOG_GLASS_SHAPE_UI_PORT || 1476);
+const origin = `http://127.0.0.1:${port}`;
+const artifacts = resolve('artifacts');
+const checks = [], errors = [], remoteRequests = [], states = [];
+let server, browser, page;
+const settle = async () => {
+  await page.waitForFunction(() => !document.querySelector('.view-enter-active,.view-leave-active,.pane-enter-active,.pane-leave-active,.sidebar-enter-active,.sidebar-leave-active,.outline-enter-active,.outline-leave-active,.settings-pop-enter-active,.settings-pop-leave-active'));
+  await page.waitForTimeout(240);
+};
+const ready = () => page.waitForFunction(() => document.querySelector('#page-surface')?.classList.contains('page-ready') && !document.querySelector('#page-surface')?.classList.contains('pdf-preview'));
+const dialog = () => page.getByRole('dialog', { name: '设置', exact: true });
+const shot = name => page.screenshot({ path: resolve(artifacts, name), animations: 'disabled' });
+const style = locator => locator.evaluate(element => {
+  const css = getComputedStyle(element);
+  return { color: css.color, background: css.backgroundColor, radius: [css.borderTopLeftRadius, css.borderTopRightRadius, css.borderBottomRightRadius, css.borderBottomLeftRadius] };
+});
+async function moveAway() { await page.mouse.move(1430, 930); await page.waitForTimeout(240); }
+async function compareState(name, locator, select, deselect) {
+  await moveAway();
+  const before = await style(locator);
+  await select(); await settle(); await moveAway();
+  const selected = await style(locator);
+  assert.equal(selected.color, before.color, `${name}: selecting preserves foreground.`);
+  await locator.hover(); await page.waitForTimeout(240);
+  const hover = await style(locator);
+  assert.equal(hover.color, before.color, `${name}: selected hover preserves foreground.`);
+  await moveAway();
+  states.push({ name, before, selected, hover });
+  if (deselect) { await deselect(); await settle(); }
+}
+// Liquid Glass geometry: panels use large concentric corners, controls are capsules.
+async function shapes(name, selectors, { capsule = false, minRadius = 6, maxRadius = Infinity } = {}) {
+  const actual = await page.locator(selectors).evaluateAll(elements => elements.filter(element => element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0).map(element => {
+    const css = getComputedStyle(element), rect = element.getBoundingClientRect();
+    return { name: element.className || element.tagName, width: rect.width, height: rect.height, radius: [css.borderTopLeftRadius, css.borderTopRightRadius, css.borderBottomRightRadius, css.borderBottomLeftRadius].map(parseFloat) };
+  }));
+  assert.ok(actual.length > 0, `${name}: visible components were examined.`);
+  for (const item of actual) {
+    const required = capsule ? Math.min(item.width, item.height) / 2 - 1 : minRadius;
+    assert.ok(item.radius.every(value => Math.min(value, Math.min(item.width, item.height) / 2) >= required), `${name}: ${item.name} is ${capsule ? 'a capsule' : 'rounded'} (${item.radius}).`);
+    assert.ok(item.radius.every(value => value <= maxRadius), `${name}: ${item.name} keeps squarer corners ≤ ${maxRadius}px (${item.radius}).`);
+  }
+  checks.push(`${name}: ${actual.length} visible ${capsule ? 'controls are capsules' : `surfaces have corners ≥ ${minRadius}px`}.`);
+}
+// The sliding glass droplet rests exactly under the selected item of its group.
+async function indicator(name, group, selected) {
+  await page.waitForFunction(({ group, selected }) => {
+    const host = document.querySelector(group), target = host?.querySelector(selected), drop = host?.querySelector(':scope > .liquid-indicator.visible');
+    if (!target || !drop || drop.getAnimations().length) return false;
+    const a = drop.getBoundingClientRect(), b = target.getBoundingClientRect();
+    return Math.abs(a.left - b.left) < 1.5 && Math.abs(a.top - b.top) < 1.5 && Math.abs(a.width - b.width) < 1.5 && Math.abs(a.height - b.height) < 1.5;
+  }, { group, selected });
+  assert.equal(await page.locator(`${group}.has-indicator`).count(), 1, `${name}: the group hands its selected background to the droplet.`);
+  checks.push(`${name}: the glass droplet is aligned with the selected item.`);
+}
+async function importEntry(name, payload) {
+  const entries = page.getByRole('button', { name: /加入文档/ });
+  assert.equal(await entries.count(), 1, `${name}: exactly one import entry is mounted.`);
+  assert.equal(await page.getByRole('button', { name: /导入 PDF\s*\/\s*Markdown|^导入文档$/ }).count(), 0, `${name}: redundant import buttons are removed.`);
+  const chooserPromise = page.waitForEvent('filechooser');
+  await entries.click();
+  const chooser = await chooserPromise;
+  assert.equal(chooser.isMultiple(), true);
+  await chooser.setFiles({ name: payload, mimeType: 'text/markdown', buffer: Buffer.from(`# ${payload}\n\nA local glass shape UI verification document.\n`) });
+  await page.locator('.markdown-paper').waitFor(); await settle();
+  assert.equal(await page.getByRole('tab', { name: payload, exact: true }).count(), 1);
+  checks.push(`${name}: unique import control opens a multi-file picker and imports Markdown.`);
+}
+
+try {
+  await mkdir(artifacts, { recursive: true });
+  server = await createServer({ server: { host: '127.0.0.1', port, strictPort: true, watch: { ignored: ['**/src-tauri/**', '**/artifacts/**', '**/public/vendor/**'] } } });
+  await server.listen();
+  browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 940 }, deviceScaleFactor: 1, colorScheme: 'light' });
+  page = await context.newPage(); page.setDefaultTimeout(20000);
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route(/^https?:\/\//, route => {
+    if (route.request().url().startsWith(origin)) return route.continue();
+    remoteRequests.push(route.request().url()); return route.abort();
+  });
+  await page.goto(origin, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: '打开 PDF 阅读示例.pdf', exact: true }).waitFor();
+  await importEntry('Visible sidebar', 'Glass sidebar import.md');
+  await page.getByRole('button', { name: '文档库', exact: true }).click(); await settle();
+
+  for (const theme of ['light', 'dark']) {
+    if (await page.locator('html').getAttribute('data-theme') !== theme) await page.locator(`[data-tip="${theme === 'light' ? '切换浅色主题' : '切换深色主题'}"]`).first().click();
+    await page.waitForFunction(() => !document.documentElement.dataset.themeTransition);
+    await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme); await settle();
+    const recent = page.locator('.workspace-nav button').filter({ hasText: '最近阅读' });
+    await compareState(`${theme}: category`, recent, () => recent.click(), () => page.locator('.workspace-nav button').filter({ hasText: '全部文档' }).click());
+    const list = page.locator('[data-tip="列表视图"]');
+    await page.locator('[data-tip="卡片视图"]').click(); await settle();
+    await compareState(`${theme}: list layout`, list, () => list.click());
+    await indicator(`${theme}: list layout`, '.view-switch', 'button.selected');
+    await recent.click(); await settle(); await indicator(`${theme}: category`, '.workspace-nav', 'button.selected');
+    await page.locator('.workspace-nav button').filter({ hasText: '全部文档' }).click(); await settle();
+    await shapes(`${theme}: library surfaces`, '.app-sidebar,.document-card,.document-cover', { minRadius: 8 });
+    // Bars and buttons use moderately rounded rectangles; small counters stay pills.
+    await shapes(`${theme}: library controls`, '.app-topbar,.library-search,.view-switch,.view-switch button,.topbar-actions,.topbar-actions .icon-button', { minRadius: 6, maxRadius: 16 });
+    await shapes(`${theme}: library pills`, '.library-summary > div,.heading-count', { capsule: true });
+    // Sidebar controls are squarer rounded rectangles (12px), concentric with the 28px panel.
+    const sidebarRadii = await page.locator('.app-sidebar .import-button,.workspace-nav button,.sidebar-bottom button').evaluateAll(elements => elements.map(element => parseFloat(getComputedStyle(element).borderTopLeftRadius)));
+    assert.ok(sidebarRadii.length >= 4 && sidebarRadii.every(value => value === 10), `${theme}: sidebar controls use 10px corners (${sidebarRadii}).`);
+    assert.equal(await page.locator('.workspace-nav > .liquid-indicator').evaluate(element => getComputedStyle(element).borderTopLeftRadius), '10px', `${theme}: the sidebar droplet matches its items.`);
+    checks.push(`${theme}: sidebar controls and droplet share 12px corners.`);
+    await shot(`glass-shape-library-${theme}.png`);
+
+    const libraryTab = page.getByRole('button', { name: '文档库', exact: true });
+    const selectedLibraryColor = (await style(libraryTab)).color;
+    await page.getByRole('button', { name: '打开 阅读工作台指南.md', exact: true }).click();
+    await page.locator('.markdown-paper').waitFor(); await settle();
+    assert.equal((await style(libraryTab)).color, selectedLibraryColor, `${theme}: library tab keeps its foreground when deselected.`);
+    const markdownTab = page.getByRole('tab', { name: '阅读工作台指南.md', exact: true });
+    const selectedTabColor = (await style(markdownTab)).color;
+    const outline = page.locator('.markdown-reader .quiet-button').filter({ hasText: '目录' });
+    if (await outline.count() === 0) throw new Error('Markdown outline control was not found.');
+    if (await outline.evaluate(element => element.classList.contains('active'))) { await outline.click(); await settle(); }
+    await compareState(`${theme}: Markdown outline`, outline, () => outline.click(), () => outline.click());
+    const source = page.locator('.markdown-reader .quiet-button').filter({ hasText: /查看源码|阅读视图/ });
+    await compareState(`${theme}: Markdown source`, source, () => source.click(), () => source.click());
+    const star = page.locator('[data-tip="收藏文档"]');
+    await compareState(`${theme}: favorite control`, star, () => star.click(), () => star.click());
+    const details = page.locator('[data-tip="文档详情与标签"]');
+    await compareState(`${theme}: details control`, details, () => details.click(), () => page.locator('[data-tip="关闭文档详情"]').click());
+    const ai = page.getByRole('button', { name: '阅读助手', exact: true });
+    await compareState(`${theme}: AI assistant`, ai, () => ai.click());
+    await indicator(`${theme}: file tabs`, '.tab-strip', '.file-tab.selected');
+    await shapes(`${theme}: reading panels`, '.ai-pane,.composer-field,.markdown-paper', { minRadius: 12 });
+    await shapes(`${theme}: reading controls`, '.reader-tools,.reader-tools button,.reader-zoom,.reader-search,.tab-strip,.file-tab,.tab-library,.model-picker,.context-switch,.reading-pill', { minRadius: 6, maxRadius: 16 });
+    await shapes(`${theme}: assistant header buttons`, '.ai-pane .header-button', { minRadius: 10 });
+    const chip = page.locator('.ai-pane .context-switch');
+    const chipColor = (await style(chip)).color;
+    await chip.hover(); await page.waitForTimeout(240);
+    assert.equal((await style(chip)).color, chipColor, `${theme}: document-context chip hover keeps text color.`);
+    // Type a draft to examine the enabled send capsule.
+    await page.getByRole('textbox', { name: '向 AI 提问', exact: true }).fill('本页的主要结论是什么？');
+    const send = page.getByRole('button', { name: '发送', exact: true });
+    assert.equal(await send.isEnabled(), true);
+    await shapes(`${theme}: send`, '.send-button', { minRadius: 6, maxRadius: 16 });
+    await page.getByRole('textbox', { name: '向 AI 提问', exact: true }).fill('');
+    await shot(`glass-shape-reading-${theme}.png`);
+    await page.getByRole('button', { name: '关闭阅读助手', exact: true }).click(); await settle();
+    await libraryTab.click(); await settle();
+    await page.getByRole('button', { name: '打开 PDF 阅读示例.pdf', exact: true }).click(); await ready(); await settle();
+    assert.equal((await style(markdownTab)).color, selectedTabColor, `${theme}: file tab keeps foreground when inactive.`);
+    await markdownTab.hover(); await page.waitForTimeout(240);
+    assert.equal((await style(markdownTab)).color, selectedTabColor, `${theme}: file tab hover keeps foreground.`);
+    const crop = page.locator('.crop-toggle');
+    await compareState(`${theme}: PDF capture mode`, crop, () => crop.click(), () => crop.click());
+    await shapes(`${theme}: PDF controls`, '.reader-tools,.reader-tools button,.reader-page-control input,.reader-zoom', { minRadius: 6, maxRadius: 16 });
+
+    await page.getByRole('button', { name: '打开设置', exact: true }).click(); await dialog().waitFor(); await settle();
+    const readingCategory = dialog().getByRole('button', { name: '阅读', exact: true });
+    await compareState(`${theme}: settings category`, readingCategory, () => readingCategory.click(), () => dialog().getByRole('button', { name: '外观', exact: true }).click());
+    const transparency = dialog().getByRole('slider', { name: '玻璃透明度', exact: true });
+    const sliderColor = (await style(transparency)).color;
+    await transparency.fill('83');
+    assert.equal((await style(transparency)).color, sliderColor, `${theme}: transparency adjustment keeps the neutral foreground.`);
+    await indicator(`${theme}: settings category`, '.settings-tabs', 'button.selected');
+    await shapes(`${theme}: settings surfaces`, '.settings-dialog,.settings-group', { minRadius: 12 });
+    await shapes(`${theme}: settings capsules`, '.settings-tabs button,.settings-dialog select,.settings-dialog input:not([type=checkbox]):not([type=range]):not([type=file]),.settings-close,.settings-footer button:not(.text-action),.settings-dialog input[type=checkbox]', { minRadius: 6 });
+    await shot(`glass-shape-settings-${theme}.png`);
+    await dialog().getByRole('button', { name: 'AI', exact: true }).click(); await settle();
+    await shapes(`${theme}: AI settings`, '.ai-settings input,.ai-settings select,.ai-settings button', { minRadius: 6 });
+    await dialog().getByRole('button', { name: '取消', exact: true }).click(); await dialog().waitFor({ state: 'detached' });
+    await libraryTab.click(); await settle();
+    checks.push(`${theme}: category, list, library/file tabs, Markdown/PDF modes, details, AI, settings category and glass selection preserve foreground including hover.`);
+
+    // Accessibility materials suppress pointer movement, but retain the indicator's
+    // layout translation: the selected item is often far from the group's origin.
+    for (const material of ['solid', 'high']) {
+      const original = await page.locator('html').evaluate(element => ({ glass: element.getAttribute('data-glass'), contrast: element.getAttribute('data-contrast') }));
+      const applyMaterial = () => page.evaluate(material => {
+        if (material === 'solid') document.documentElement.dataset.glass = 'solid';
+        else document.documentElement.dataset.contrast = 'high';
+      }, material);
+      try {
+        await applyMaterial();
+        await recent.click(); await settle();
+        await indicator(`${theme}/${material}: category`, '.workspace-nav', 'button.selected');
+        await page.locator('[data-tip="卡片视图"]').click();
+        await list.click(); await settle();
+        await indicator(`${theme}/${material}: list layout`, '.view-switch', 'button.selected');
+        await page.getByRole('tab', { name: '阅读工作台指南.md', exact: true }).click(); await settle();
+        await indicator(`${theme}/${material}: file tabs`, '.tab-strip', '.file-tab.selected');
+        await page.getByRole('button', { name: '打开设置', exact: true }).click(); await dialog().waitFor();
+        await applyMaterial();
+        await dialog().getByRole('button', { name: '快捷键', exact: true }).click(); await settle();
+        await indicator(`${theme}/${material}: settings category`, '.settings-tabs', 'button.selected');
+        await dialog().getByRole('button', { name: '取消', exact: true }).click(); await dialog().waitFor({ state: 'detached' });
+        await libraryTab.click(); await settle();
+        await page.locator('.workspace-nav button').filter({ hasText: '全部文档' }).click(); await settle();
+      } finally {
+        await page.evaluate(original => {
+          for (const [attribute, value] of [['data-glass', original.glass], ['data-contrast', original.contrast]]) {
+            if (value === null) document.documentElement.removeAttribute(attribute);
+            else document.documentElement.setAttribute(attribute, value);
+          }
+        }, original);
+      }
+    }
+  }
+
+  await page.getByRole('button', { name: '切换侧栏', exact: true }).click();
+  await page.locator('.app-sidebar').waitFor({ state: 'detached' }); await settle();
+  assert.equal(await page.getByRole('button', { name: /加入文档/ }).count(), 0, 'Collapsing the sidebar removes its import action without another toolbar entry.');
+  const shortcutChooser = page.waitForEvent('filechooser');
+  await page.keyboard.press('Control+o');
+  await (await shortcutChooser).setFiles({ name: 'Glass shortcut import.md', mimeType: 'text/markdown', buffer: Buffer.from('# Keyboard import\n\nAvailable with the sidebar collapsed.\n') });
+  await page.locator('.markdown-paper').waitFor(); await settle();
+  checks.push('Collapsed sidebar shows no import button while Ctrl+O still opens its multi-file picker.');
+  await page.setViewportSize({ width: 1000, height: 740 }); await settle();
+  assert.ok(await page.locator('.app-topbar').evaluate(element => element.scrollWidth <= element.clientWidth + 1));
+  assert.equal(await page.getByRole('button', { name: /加入文档/ }).count(), 0);
+  await shot('glass-shape-reading-minimum.png');
+  await page.getByRole('button', { name: '切换侧栏', exact: true }).click();
+  await page.locator('.app-sidebar').waitFor(); await settle();
+  assert.equal(await page.getByRole('button', { name: /加入文档/ }).count(), 1);
+  await importEntry('Reopened sidebar', 'Glass reopened import.md');
+  await page.getByRole('button', { name: '文档库', exact: true }).click(); await settle();
+  await shot('glass-shape-library-minimum.png');
+  checks.push('1000px window has no hidden-sidebar toolbar import or overflow; reopening restores the single sidebar action.');
+
+  // Empty only this disposable browser library and verify its single entry still works.
+  await page.evaluate(async () => { const { library } = await import('/src/sdk/index.ts'); for (const doc of await library.list()) await library.remove(doc.id); });
+  await page.reload(); await page.locator('.library-empty h2').waitFor(); await settle();
+  assert.equal(await page.locator('.library-empty h2').innerText(), '暂无文档');
+  assert.equal(await page.locator('.library-empty button').count(), 0);
+  await importEntry('Empty library', 'Glass empty import.md');
+  assert.deepEqual(errors, []); assert.deepEqual(remoteRequests, []);
+  console.log(JSON.stringify({ passed: true, checks: checks.length, statePairs: states.length, errors, remoteRequests }));
+} finally {
+  await mkdir(artifacts, { recursive: true });
+  await writeFile(resolve(artifacts, 'glass-shape-ui.json'), JSON.stringify({ checks, states, errors, remoteRequests }, null, 2));
+  await browser?.close(); await server?.close();
+}

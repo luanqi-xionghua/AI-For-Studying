@@ -1,0 +1,1433 @@
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
+import 'katex/dist/katex.min.css'
+import { getProvider, getNativeModels, getNativeStatus } from '../ai/providers.mjs'
+import { nativeModelInventory, registerNativeModelInventory } from '../ai/native-models'
+import { adoptTurns, addExcerpt, removeExcerpt, removeMessage, compressConversation, sideConversation, chatState, sendChat, stopChat, configureRequests, taskSummary, conversations, activeConversationId, selectConversation, newConversation, deleteConversation, loadConversations, conversationTokens, contextWindow, branchConversation, resendQuestion, watchConversation, allConversations, pinMessage, MAX_ATTACHMENTS, pendingImages, setPendingImages, keepImage, type Message, type ChatState } from '../ai/workspace'
+import { renderMarkdown, renderDiagrams } from '../ai/render'
+import { mountIntelligentUi } from '../ai/intelligent-ui'
+import { nudgeGlassMotion } from '../ui/glass-motion'
+import { vMarquee } from '../ui/marquee'
+import { loadAiSettings, saveModelChoice, saveTaskPreset, supportsFast, hasPresets } from '../ai/settings.mjs'
+import { presetTitle, presetDetail } from '../ai/presets'
+import { warmNative } from '../ai/native.mjs'
+import { useSettings } from '../settings'
+import AppIcon from './AppIcon.vue'
+import { readsAsPdf, documentTitle } from '../library/kinds'
+import AssistantMark from './AssistantMark.vue'
+import { greetingFor, placeholderFor, thinkingVerb, spinnerFor } from '../ai/greeting'
+import { predictQuestion, predictionKey } from '../ai/predict'
+import { cropImageAsync } from '../reader/crop'
+const ModelPicker = defineAsyncComponent(() => import('./ModelPicker.vue'))
+const UsagePanel = defineAsyncComponent(() => import('./UsagePanel.vue'))
+
+const props = defineProps<{ document: { id: string; title: string; kind: string }; context: any; sendShortcut?: string; consumeCapture?: (value: { documentId: string; selection: any }) => void; conversationId?: string; draggable?: boolean
+  /** Other documents on screen beside this one (side-by-side), to switch which one the assistant reads. */
+  alternatives?: { id: string; title: string }[]
+  /** Every library document, for the history of all conversations. */
+  library?: { id: string; title: string }[]
+  /** 附属对话（侧边对话）：嵌在主对话右边的同一种助手，没有分支、没有对话记录，标题栏写明它挂在哪段主对话上。 */
+  side?: boolean; mainTitle?: string
+  /** 外层窗口刚放进附属对话输入框的摘录，用来闪一下。 */
+  arrived?: string }>()
+const emit = defineEmits<{ jump: [value: { page: number; rect?: any; line?: number }]; close: []; settings: []; error: [value: string]; clearSelection: []; conversation: [id: string]; grab: [event: PointerEvent]; switchDocument: [id: string]; openConversation: [value: { documentId: string; conversationId: string }]
+  /** 侧边对话打开 / 收起：整个助手窗口要加宽（或收回）的像素数，0 表示收起。 */
+  side: [width: number] }>()
+const settings = ref<any>(loadAiSettings())
+// A window that follows the active tab may carry a conversation id from the previous document;
+// only an id that belongs to this document is honoured.
+const ownConversation = (documentId: string, id?: string) => props.side && id ? id : id && conversations(documentId).some(item => item.id === id) ? id : activeConversationId(documentId)
+const conversationId = ref(ownConversation(props.document.id, props.conversationId))
+const state = computed(() => chatState(props.document.id, conversationId.value))
+const messages = computed(() => state.value.messages)
+const prompt = computed({ get: () => state.value.draft, set: value => { state.value.draft = value } })
+const busy = computed(() => Boolean(state.value.request))
+const errorText = computed(() => state.value.error ? state.value.status : '')
+// 只给读屏软件的进度播报；界面上用思考气泡与回答尾部表达同样的状态。
+const liveStatus = computed(() => {
+  if (errorText.value) return errorText.value
+  const last = messages.value.at(-1)
+  if (!last || last.role !== 'assistant') return ''
+  if (busy.value && !last.finishedAt) return last.activity || '正在回答'
+  return last.stopped ? '回答已停止，已收到的内容保留。' : last.failed ? '' : '回答完成。'
+})
+const includeDocument = computed({ get: () => state.value.includeDocument, set: value => { state.value.includeDocument = value } })
+const includeSelection = computed({ get: () => state.value.includeSelection, set: value => { state.value.includeSelection = value } })
+const title = computed(() => state.value.title || '新对话')
+const history = computed(() => conversations(props.document.id).filter(item => item.messages.length || item.id === conversationId.value))
+const messageList = ref<HTMLElement>()
+const input = ref<HTMLTextAreaElement>()
+// 浅拷贝：截图晚到时同一个选区对象被补上 image，拷贝能让依赖它的显示跟着刷新。
+const selected = computed(() => ({ ...(props.context?.selection || {}) }))
+const hasSelection = computed(() => Boolean(selected.value.text || selected.value.image))
+const { preferences, effectiveAppearance } = useSettings()
+const avatar = computed(() => preferences.value.assistant.avatar)
+// 每段对话的问候与占位语各固定一句，切换对话或新建时再随机挑；占位语每问一次换一句。
+const seed = (text: string) => { let hash = 0; for (const char of text) hash = (hash * 31 + char.charCodeAt(0)) >>> 0; return (hash % 9973) / 9973 }
+const greeting = computed(() => greetingFor(new Date(), seed(state.value.id), preferences.value.assistant.greeting.style, preferences.value.assistant.greeting.custom))
+const placeholder = computed(() => placeholderFor(seed(`${state.value.id}:${messages.value.length}`)))
+const dark = computed(() => document.documentElement.dataset.theme === 'dark' || effectiveAppearance.value.theme === 'dark')
+
+// ---- Conversations -------------------------------------------------------
+const historyOpen = ref(false)
+// 对话记录：本文档 / 全部文档。全部文档按时间排，点别的文档的对话会打开那份文档。
+const historyScope = ref<'document' | 'all'>('document')
+const everything = ref<ChatState[]>([])
+const loadingAll = ref(false)
+const titles = computed(() => new Map((props.library || []).map(item => [item.id, documentTitle(item.title)])))
+async function showAll() {
+  historyScope.value = 'all'
+  loadingAll.value = true
+  try { everything.value = await allConversations((props.library || []).map(item => item.id)) } finally { loadingAll.value = false }
+}
+function openAny(item: ChatState) {
+  historyOpen.value = false
+  if (item.documentId === props.document.id) useConversation(item.id)
+  else emit('openConversation', { documentId: item.documentId, conversationId: item.id })
+}
+watch(historyOpen, open => { if (!open) historyScope.value = 'document' })
+function useConversation(id: string) {
+  conversationId.value = id
+  if (!props.conversationId) selectConversation(props.document.id, id)
+  emit('conversation', id)
+  historyOpen.value = false
+  void nextTick(() => { restoreScroll(); input.value?.focus() })
+}
+function startConversation() {
+  const fresh = newConversation(props.document.id)
+  useConversation(fresh.id)
+}
+function removeConversation(id: string) {
+  deleteConversation(props.document.id, id)
+  if (id === conversationId.value) useConversation(activeConversationId(props.document.id))
+}
+function relative(time: number) {
+  const minutes = Math.round((Date.now() - time) / 60000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const date = new Date(time)
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+// ---- 附属对话（侧边对话）与摘录 ---------------------------------------------------
+// 附属对话开着时就在主对话右边，中间一道细线；它开始时继承主对话的上下文，之后两边互不相通，
+// 要读者在回答里选中文字、用 Ctrl+↓（本对话）/ Ctrl+→（带到附属对话）/ Ctrl+←（带回主对话）把内容传过去。
+const SIDE_KEY = 'kaizhi.sideChat.width'
+const sideOpen = ref(false)
+const sideWidth = ref(Math.min(640, Math.max(280, Number(localStorage.getItem(SIDE_KEY)) || 380)))
+const sideId = computed(() => sideOpen.value ? sideConversation(props.document.id, state.value.id, true)!.id : '')
+const columns = ref<HTMLElement>()
+function openSide() {
+  if (props.side || sideOpen.value) return
+  sideOpen.value = true; emit('side', sideWidth.value)
+}
+function closeSide() { if (!sideOpen.value) return; sideOpen.value = false; emit('side', 0); focusPrompt() }
+// 换到另一段主对话（或另一本书）：附属对话不再自己弹出来；原来开着而新对话没有附属内容时收起。要看就点标题栏的图标。
+watch(() => state.value.id, id => {
+  if (props.side || !sideOpen.value) return
+  if (!sideConversation(props.document.id, id)?.messages.length) { sideOpen.value = false; emit('side', 0) }
+})
+const hasSideContent = computed(() => !props.side && Boolean(sideConversation(props.document.id, state.value.id)?.messages.length))
+function toggleSide() { if (sideOpen.value) closeSide(); else openSide() }
+// 拖动中间的分隔线：主栏与侧栏此消彼长，整个窗口宽度不变。
+let sideDrag: { x: number; width: number; total: number } | undefined
+function startSideDrag(event: PointerEvent) {
+  sideDrag = { x: event.clientX, width: sideWidth.value, total: columns.value?.clientWidth || 800 }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  document.documentElement.classList.add('resizing-panels')
+}
+function moveSideDrag(event: PointerEvent) {
+  if (!sideDrag) return
+  sideWidth.value = Math.round(Math.min(sideDrag.total - 300, Math.max(260, sideDrag.width - (event.clientX - sideDrag.x))))
+}
+function endSideDrag() {
+  if (!sideDrag) return
+  sideDrag = undefined; document.documentElement.classList.remove('resizing-panels')
+  try { localStorage.setItem(SIDE_KEY, String(sideWidth.value)) } catch { /* 存不下就只在这次有效 */ }
+}
+type QuotePop = { from: 'main' | 'side'; text: string; left: number; top: number; rect: DOMRect }
+const quotePop = ref<QuotePop | null>(null)
+function readQuote(): QuotePop | null {
+  const selection = window.getSelection()
+  if (props.side || !selection || selection.isCollapsed || !selection.rangeCount || !pane.value) return null
+  const range = selection.getRangeAt(0)
+  const anchor = (range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement)
+  const answer = anchor?.closest('.answer-body')
+  if (!answer || !pane.value.contains(answer) || answer.closest('.summary-card, .btw-card')) return null
+  const text = selection.toString().trim()
+  if (!text) return null
+  // 浮条挂在窗口最上层（不被助手窗口的边框裁掉），坐标按整个窗口算。
+  const rect = range.getBoundingClientRect()
+  return { from: answer.closest('.ai-pane.embedded') ? 'side' : 'main', text: text.slice(0, 8000), rect, left: rect.left + rect.width / 2, top: Math.max(48, rect.top - 8) }
+}
+let quoteFrame = 0
+function selectionChanged() { cancelAnimationFrame(quoteFrame); quoteFrame = requestAnimationFrame(() => { quotePop.value = readQuote() }) }
+// 量出浮条的实际宽度（手写体更宽）：太靠近窗口左右边缘就往里挪，始终一行、不被截断。
+const quoteEl = ref<HTMLElement>()
+watch(quotePop, () => void nextTick(() => {
+  const pop = quotePop.value, element = quoteEl.value, box = document.documentElement.clientWidth
+  if (!pop || !element || !box) return
+  const half = element.offsetWidth / 2
+  const left = Math.max(8 + half, Math.min(box - 8 - half, pop.left))
+  if (Math.abs(left - pop.left) > .5) quotePop.value = { ...pop, left }
+}))
+// 摘录飞过去：一张小纸条从选区飞进目标对话的输入框，落下后输入框上方多一枚摘录。
+function fly(text: string, from: DOMRect, target: HTMLElement | null | undefined) {
+  if (!pane.value || !target || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve()
+  const box = pane.value.getBoundingClientRect(), goal = target.getBoundingClientRect()
+  const slip = document.createElement('div')
+  slip.className = 'note-flyer'
+  slip.textContent = text.length > 60 ? `${text.slice(0, 60)}…` : text
+  pane.value.append(slip)
+  const startX = from.left - box.left, startY = from.top - box.top
+  const endX = goal.left - box.left + 18, endY = goal.top - box.top + 8
+  const animation = slip.animate([
+    { transform: `translate(${startX}px, ${startY}px) scale(1)`, opacity: .95 },
+    { transform: `translate(${(startX + endX) / 2}px, ${Math.min(startY, endY) - 40}px) scale(.9) rotate(${endX > startX ? 3 : -3}deg)`, opacity: 1, offset: .45 },
+    { transform: `translate(${endX}px, ${endY}px) scale(.82)`, opacity: .2 },
+  ], { duration: 560, easing: 'cubic-bezier(.3,.7,.2,1)' })
+  return animation.finished.catch(() => {}).finally(() => slip.remove())
+}
+const arrivedNote = ref('')
+async function quoteAction(action: 'add' | 'side' | 'main') {
+  const pop = quotePop.value ?? readQuote()
+  if (!pop) return false
+  const target = action === 'add' ? pop.from : action
+  window.getSelection()?.removeAllRanges(); quotePop.value = null
+  if (target === 'side') openSide()
+  await nextTick()
+  const targetId = target === 'side' ? sideConversation(props.document.id, state.value.id, true)!.id : state.value.id
+  const field = target === 'side' ? pane.value?.querySelector<HTMLElement>('.ai-pane.embedded .composer-field') : composerField.value
+  await fly(pop.text, pop.rect, field || pane.value?.querySelector<HTMLElement>('.ai-side'))
+  const excerpt = addExcerpt(props.document.id, targetId, pop.text, action === 'add' ? 'self' : pop.from)
+  if (excerpt) { arrivedNote.value = excerpt.id; setTimeout(() => { if (arrivedNote.value === excerpt.id) arrivedNote.value = '' }, 1200) }
+  if (target === 'main') focusPrompt()
+  else void nextTick(() => pane.value?.querySelector<HTMLTextAreaElement>('.ai-pane.embedded .prompt-box textarea')?.focus())
+  return true
+}
+// Ctrl+↓ / Ctrl+→ / Ctrl+←：只在选中了这个窗口里回答的文字时接管，平时仍是书签跳转等原来的快捷键。
+function quoteKeys(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.defaultPrevented) return
+  const action = event.key === 'ArrowDown' ? 'add' : event.key === 'ArrowRight' ? 'side' : event.key === 'ArrowLeft' ? 'main' : null
+  if (!action) return
+  const pop = readQuote()
+  if (!pop || (action === 'side' && pop.from !== 'main') || (action === 'main' && pop.from !== 'side')) return
+  event.preventDefault(); event.stopPropagation()
+  quotePop.value = pop
+  void quoteAction(action)
+}
+// 摘录只占一行：图标表示来处，悬停看全文。
+const noteLabel = (message: Message) => message.note === 'main' ? '来自主对话' : message.note === 'side' ? '来自附属对话' : '摘录'
+const excerptLabel = (from: string) => from === 'main' ? '来自主对话' : from === 'side' ? '来自附属对话' : '摘录'
+const excerpts = computed(() => state.value.excerpts || [])
+// arrivedNote 在外层窗口里设置；附属对话里的摘录由外层带着 id 落进来，这里也要认得。
+const arrivedExcerpt = computed(() => props.arrived || arrivedNote.value)
+onMounted(() => { if (props.side) return; document.addEventListener('selectionchange', selectionChanged); window.addEventListener('keydown', quoteKeys, true) })
+onBeforeUnmount(() => { cancelAnimationFrame(quoteFrame); document.removeEventListener('selectionchange', selectionChanged); window.removeEventListener('keydown', quoteKeys, true) })
+
+// ---- Regenerate, branch and edit ----------------------------------------
+const pane = ref<HTMLElement>()
+let unwatch: (() => void) | undefined
+// 正在屏幕上的对话答完不需要提示；藏起来（去了文档库、窗口最小化）时才提示。
+watch(() => state.value.id, id => { unwatch?.(); unwatch = watchConversation(id, () => !!pane.value?.offsetParent && document.visibilityState === 'visible') }, { immediate: true })
+const editing = ref<string | null>(null)
+const editText = ref('')
+const editor = ref<HTMLTextAreaElement[]>([])
+function startEdit(message: Message) { editing.value = message.id; editText.value = message.content; void nextTick(() => { const field = editor.value[0]; field?.focus(); field?.setSelectionRange(field.value.length, field.value.length) }) }
+function cancelEdit() { editing.value = null }
+function resend(message: Message, question: string) {
+  follow = true
+  const id = resendQuestion({ ...props.document }, state.value.id, message.id, question, () => emit('settings'))
+  if (id && id !== state.value.id) useConversation(id)
+}
+function submitEdit(message: Message) {
+  const text = editText.value.trim()
+  editing.value = null
+  if (text && text !== message.content.trim()) resend(message, text)
+}
+function editKeydown(event: KeyboardEvent, message: Message) {
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelEdit() }
+  else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); submitEdit(message) }
+}
+function questionOf(answer: Message) { const index = messages.value.indexOf(answer); return messages.value.slice(0, index).reverse().find(item => item.role === 'user' && !item.note) }
+function regenerate(answer: Message) { const question = questionOf(answer); if (question) resend(question, question.content) }
+function branchFrom(message: Message) { useConversation(branchConversation(props.document.id, state.value.id, message.id).id) }
+const isLastAnswer = (message: Message) => message === messages.value.at(-1)
+const lastQuestionId = computed(() => [...messages.value].reverse().find(item => item.role === 'user' && !item.note)?.id)
+
+watch(() => props.document.id, id => {
+  rememberScroll()
+  conversationId.value = ownConversation(id, props.conversationId)
+  settings.value = loadAiSettings()
+  historyOpen.value = false; pickerOpen.value = false
+  void loadConversations(id).then(() => { if (id === props.document.id) conversationId.value = ownConversation(id, props.conversationId) })
+  void nextTick(restoreScroll)
+}, { flush: 'sync' })
+watch(() => props.conversationId, id => { if (id) conversationId.value = ownConversation(props.document.id, id) })
+// 跟随标签的窗口显示文档当前的对话；别处（例如答完提示）切换了对话时跟着切换。
+watch(() => activeConversationId(props.document.id), id => { if (!props.conversationId && id !== conversationId.value) { rememberScroll(); conversationId.value = id; void nextTick(restoreScroll) } })
+
+// ---- Live timing and the thinking line -------------------------------------
+const now = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | undefined
+// 120ms 一帧：用时数字与 Claude Code 式的星标一起走。
+watch(busy, value => {
+  clearInterval(ticker); ticker = undefined
+  if (value) ticker = setInterval(() => { now.value = Date.now() }, 120)
+  now.value = Date.now()
+}, { immediate: true })
+// 每段回答随机用一种转动符号（按回答的 id 选，重绘时不会换）。
+function spinner(message: Message) { const frames = spinnerFor(message.id); return frames[Math.floor(now.value / 120) % frames.length] }
+// 进度里只保留有信息量的状态（排队、读文档、查原文）；「思考中 / 正在回答」由英文动词表达。
+const GENERIC_ACTIVITY = /^(思考中|正在回答|准备上下文|AI 思考中)$/
+function activityNote(message: Message) { const text = message.activity || ''; return GENERIC_ACTIVITY.test(text) ? '' : text }
+const live = (message: Message) => Boolean(busy.value && message === messages.value.at(-1) && message.role === 'assistant' && !message.finishedAt)
+// 用时按整秒走，小数位跳得太快反而分心。
+function seconds(ms: number) { return ms < 60000 ? `${Math.max(0, Math.floor(ms / 1000))}s` : `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s` }
+function count(value?: number) { return !value ? '0' : value < 1000 ? String(value) : `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}k` }
+function elapsed(message: Message) { return seconds((message.finishedAt || now.value) - (message.startedAt || now.value)) }
+// 回答的时刻：当天只显示几点几分，隔天起带上日期，跨年带上年份。
+function clock(message: Message) {
+  const at = new Date(message.finishedAt || message.startedAt || 0), today = new Date(now.value), time = `${at.getHours()}:${String(at.getMinutes()).padStart(2, '0')}`
+  if (at.toDateString() === today.toDateString()) return time
+  return `${at.getFullYear() === today.getFullYear() ? '' : `${at.getFullYear()}年`}${at.getMonth() + 1}月${at.getDate()}日 ${time}`
+}
+function thinkingTime(message: Message) { return seconds((message.firstTokenAt || message.finishedAt || now.value) - (message.startedAt || now.value)) }
+function lastThought(message: Message) {
+  const lines = (message.reasoning || '').trim().split(/\n+/).filter(Boolean)
+  return lines.at(-1)?.replace(/^[#*\-\s]+/, '').slice(0, 160) || ''
+}
+const expanded = ref(new Set<string>())
+function toggleReasoning(id: string) { const next = new Set(expanded.value); if (next.has(id)) next.delete(id); else next.add(id); expanded.value = next }
+const contextUsed = computed(() => conversationTokens(state.value))
+const contextLimit = computed(() => contextWindow(settings.value.provider, settings.value.model || ''))
+const contextRatio = computed(() => Math.min(1, contextUsed.value / Math.max(1, contextLimit.value)))
+
+// ---- Answer rendering ----------------------------------------------------
+function jump(source: any) { emit('jump', { page: source.page, rect: source.rect, ...(source.line ? { line: source.line } : {}) }) }
+const renderTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
+// 滚动、导航条刷新等也会触发指令更新；只有回答本身变了才重绘，图示不会反复重画。
+const renderedKeys = new WeakMap<HTMLElement, string>()
+const uiStyle = computed(() => effectiveAppearance.value.style === 'crystal' ? 'glass' : effectiveAppearance.value.style)
+const answerKey = (message: Message) => `${message.content.length}:${message.content.slice(-24)}:${message.finishedAt || 0}:${message.sources.length}:${dark.value}:${uiStyle.value}`
+function renderAnswer(element: HTMLElement, message: Message) {
+  renderedKeys.set(element, answerKey(message))
+  element.innerHTML = renderMarkdown(message.content)
+  // 模型有时引用前几轮回答里的来源，甚至写出不存在的编号：先在整场对话的来源里找，找不到就把编号去掉，绝不把 [S…] 原样留在正文里。
+  const sourceMap = new Map([...messages.value.flatMap(item => item.sources || []), ...message.sources].map(source => [source.sourceId, source]))
+  {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), nodes: Node[] = []
+    while (walker.nextNode()) if (!(walker.currentNode.parentElement?.closest('pre,code,.katex,button'))) nodes.push(walker.currentNode)
+    for (const node of nodes) {
+      // 一对方括号里可以有一个或多个编号：[S12ab-3]、[S12ab-3, S12ab-4]。
+      const text = node.textContent || '', pattern = /\s?[\[【]\s*(S[a-zA-Z0-9]+-\d+(?:\s*[,，、;；]\s*S[a-zA-Z0-9]+-\d+)*)\s*[\]】]/g, fragment = document.createDocumentFragment()
+      let match: RegExpExecArray | null, last = 0
+      while ((match = pattern.exec(text))) {
+        fragment.append(document.createTextNode(text.slice(last, match.index)))
+        for (const id of match[1].split(/[,，、;；]/).map(item => item.trim())) {
+          const source: any = sourceMap.get(id); if (!source) continue
+          const button = document.createElement('button')
+          button.className = 'inline-citation'; button.textContent = source.line ? `第 ${source.line} 行` : `第 ${source.page} 页`; button.dataset.tip = source.text
+          button.onclick = () => jump(source); fragment.append(button)
+        }
+        last = pattern.lastIndex
+      }
+      if (last) { fragment.append(document.createTextNode(text.slice(last))); node.parentNode?.replaceChild(fragment, node) }
+    }
+  }
+  if (message.finishedAt) void renderDiagrams(element, dark.value, uiStyle.value)
+  // 回答里的 ```ui 块画成可操作的界面；表单的按钮把填好的内容当作下一个问题发出去。
+  mountIntelligentUi(element, { streaming: !message.finishedAt, onAction: text => { if (!busy.value) void send(text) } })
+}
+// Streaming answers re-render at most every 90ms; markdown and KaTeX stay cheap.
+function scheduleRender(element: HTMLElement, message: Message) {
+  // 流式输出时对话区每 90ms 重排一次：图片底板上的玻璃先撤掉折射透镜，停下再装回。
+  if (!message.finishedAt) nudgeGlassMotion()
+  if (message.finishedAt || !renderTimers.has(element)) {
+    clearTimeout(renderTimers.get(element)); renderTimers.delete(element)
+    renderAnswer(element, message)
+    if (!message.finishedAt) renderTimers.set(element, setTimeout(() => { renderTimers.delete(element); renderAnswer(element, message) }, 90))
+    return
+  }
+}
+const vAnswer = {
+  mounted: (el: HTMLElement, binding: any) => renderAnswer(el, binding.value),
+  updated: (el: HTMLElement, binding: any) => { if (renderedKeys.get(el) !== answerKey(binding.value)) scheduleRender(el, binding.value) },
+  beforeUnmount: (el: HTMLElement) => { clearTimeout(renderTimers.get(el)); renderTimers.delete(el) },
+}
+function answerClick(event: MouseEvent) {
+  const button = (event.target as Element).closest<HTMLButtonElement>('[data-copy]')
+  if (!button) return
+  const code = button.closest('.answer-code-block')?.querySelector('code')?.textContent || ''
+  void copy(code).then(ok => {
+    if (!ok) return
+    button.classList.add('copied'); button.setAttribute('aria-label', '已复制'); button.dataset.tip = '已复制'
+    setTimeout(() => { button.classList.remove('copied'); button.setAttribute('aria-label', '复制代码'); button.dataset.tip = '复制代码' }, 1400)
+  })
+}
+async function copy(text: string) {
+  try { await navigator.clipboard.writeText(text); return true } catch { state.value.status = '复制失败，请手动选择文字。'; state.value.error = true; return false }
+}
+
+// ---- Scrolling and the question navigator ---------------------------------
+let renderFrame = 0
+function restoreScroll() { if (messageList.value) messageList.value.scrollTop = state.value.scrollTop }
+function rememberScroll() { if (messageList.value) state.value.scrollTop = messageList.value.scrollTop; updateThumb() }
+function nearBottom() { const list = messageList.value; return !list || list.scrollHeight - list.scrollTop - list.clientHeight < 80 }
+let follow = true
+function scroll() { void nextTick(() => { if (messageList.value && follow) messageList.value.scrollTop = messageList.value.scrollHeight; updateRail() }) }
+function scheduleScroll() { if (!renderFrame) renderFrame = requestAnimationFrame(() => { renderFrame = 0; scroll() }) }
+watch(() => [conversationId.value, messages.value.length, messages.value.at(-1)?.content, messages.value.at(-1)?.reasoning], (value, previous) => {
+  // 换了一场对话（包括刚打开时，存着的对话晚一步才读出来）：不跟到底，但右边的问题刻度要按新对话重算，否则会空着或留着上一场的。
+  if (value[0] !== previous?.[0]) { void nextTick(updateRail); return }
+  if (value[1] !== previous?.[1]) follow = true
+  scheduleScroll()
+})
+// 滚动时每帧只更新一次细滑块与「当前这一问」，不重算整条刻度（刻度只在内容变化时重算）。
+let scrollFrame = 0
+function onScroll() {
+  if (scrollFrame) return
+  scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; follow = nearBottom(); rememberScroll() })
+}
+type Mark = { id: string; top: number; text: string; answer: string; current: boolean; pinned: boolean }
+const marks = ref<Mark[]>([])
+const hoverMark = ref<Mark | null>(null)
+// Codex 式的提问刻度：全部排在右侧中间，指针靠近时像程序坞一样逐个放大，指着的那一条最长最深。
+const tickColumn = ref<HTMLElement>()
+const tickPointer = ref<number | null>(null)
+const hoverTop = ref(0)
+// 每条刻度占一整格、格与格首尾相接，指针在两条之间也落在某一条上，没有点不到的空隙。
+const tickSlot = computed(() => { const room = (messageList.value?.clientHeight || 400) - 96; return Math.max(4, Math.min(10, room / Math.max(1, marks.value.length))) })
+function tickCenters() { return [...(tickColumn.value?.querySelectorAll<HTMLElement>('.rail-mark') || [])].map(tick => tick.offsetTop + tick.offsetHeight / 2) }
+function tickGrow(index: number) {
+  if (tickPointer.value === null) return 0
+  const center = tickCenters()[index]
+  return center === undefined ? 0 : Math.max(0, 1 - Math.abs(center - tickPointer.value) / 34)
+}
+function tickHover(event: PointerEvent) {
+  const column = tickColumn.value
+  if (!column) return
+  const y = event.clientY - column.getBoundingClientRect().top
+  tickPointer.value = y
+  const centers = tickCenters()
+  let nearest = -1, best = Infinity
+  centers.forEach((center, index) => { const distance = Math.abs(center - y); if (distance < best) { best = distance; nearest = index } })
+  clearTimeout(previewTimer)
+  if (nearest >= 0) { hoverMark.value = marks.value[nearest]; hoverTop.value = column.offsetTop + centers[nearest] } else hoverMark.value = null
+}
+// 离开刻度后卡片多留一会儿，指针能移到卡片上点「钉住」。
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+function tickLeave() { tickPointer.value = null; hidePreviewSoon() }
+function hidePreviewSoon() { clearTimeout(previewTimer); previewTimer = setTimeout(() => { hoverMark.value = null }, 220) }
+function keepPreview() { clearTimeout(previewTimer) }
+function togglePin(mark: Mark) {
+  mark.pinned = !mark.pinned
+  pinMessage(props.document.id, conversationId.value, mark.id, mark.pinned)
+  updateRail()
+  hoverMark.value = marks.value.find(item => item.id === mark.id) || null
+}
+function tickFocus(mark: Mark, event: FocusEvent) { const tick = event.target as HTMLElement; hoverMark.value = mark; hoverTop.value = (tickColumn.value?.offsetTop || 0) + tick.offsetTop + tick.offsetHeight / 2 }
+// 右侧导航条代替滚动条：细滑块表示当前视口，刻度是每一轮提问。
+const thumb = ref({ top: 0, height: 1, visible: false })
+/** 每一问在列表里的位置（像素），内容变化时重算，滚动时只拿来判断当前是哪一问。 */
+let markOffsets: number[] = []
+function updateThumb() {
+  const list = messageList.value
+  if (!list) return
+  const height = Math.max(1, list.scrollHeight)
+  const next = { top: list.scrollTop / height, height: Math.min(1, list.clientHeight / height), visible: list.scrollHeight > list.clientHeight + 4 }
+  const previous = thumb.value
+  if (Math.abs(previous.top - next.top) > 1e-4 || Math.abs(previous.height - next.height) > 1e-4 || previous.visible !== next.visible) thumb.value = next
+  if (!marks.value.length) return
+  const view = list.scrollTop + list.clientHeight / 3
+  let current = -1
+  markOffsets.forEach((offset, index) => { if (offset <= view) current = index })
+  marks.value.forEach((mark, index) => { if (mark.current !== (index === current)) mark.current = index === current })
+}
+function updateRail() {
+  const list = messageList.value
+  if (!list) return
+  const height = Math.max(1, list.scrollHeight)
+  const users = [...list.querySelectorAll<HTMLElement>('.ai-message.user')]
+  markOffsets = users.map(element => element.offsetTop)
+  if (users.length < 2) { marks.value = []; updateThumb(); return }
+  const index = new Map(messages.value.map((item, position) => [item.id, position]))
+  marks.value = users.map((element, position) => {
+    const at = index.get(element.dataset.id || '') ?? -1, message = messages.value[at], answer = messages.value[at + 1]
+    // 预览只要开头一百多字：先截一段再去掉 Markdown，长回答不必整篇过正则。
+    return { id: element.dataset.id || '', top: markOffsets[position]! / height, text: message?.content || '', answer: plainText((answer?.content || '').slice(0, 800)).slice(0, 140), current: false, pinned: Boolean(message?.pinned) }
+  })
+  updateThumb()
+}
+// 预览里不显示 Markdown、公式与引用标记的源码。
+function plainText(source: string) {
+  return source.replace(/```[\s\S]*?```/g, ' ').replace(/\$\$[\s\S]*?\$\$/g, ' [公式] ').replace(/\$([^$\n]+)\$/g, '$1').replace(/\[S[\w-]+\]/g, '').replace(/[#>*_`|~]+/g, '').replace(/\s+/g, ' ').trim()
+}
+function goToMark(mark: Mark) {
+  follow = false
+  hoverMark.value = null
+  // 只滚动对话列表本身：scrollIntoView 在最后一问滚不到顶时会去滚外层容器，把整个窗格挤乱。
+  const list = messageList.value, target = list?.querySelector<HTMLElement>(`.ai-message.user[data-id="${CSS.escape(mark.id)}"]`)
+  if (list && target) list.scrollTo({ top: Math.min(list.scrollHeight - list.clientHeight, Math.max(0, target.offsetTop - 12)), behavior: 'smooth' })
+}
+let railDrag: { offset: number; rail: HTMLElement } | undefined
+function railRatio(event: PointerEvent, rail: HTMLElement) { const box = rail.getBoundingClientRect(); return (event.clientY - box.top - 8) / Math.max(1, box.height - 16) }
+function railDown(event: PointerEvent) {
+  if ((event.target as Element).closest('.rail-mark') || event.button !== 0) return
+  const rail = event.currentTarget as HTMLElement, list = messageList.value
+  if (!list) return
+  event.preventDefault()
+  const ratio = railRatio(event, rail)
+  // 点在滑块上就拖动；点在空白处先跳过去，再继续拖。
+  const onThumb = ratio >= thumb.value.top && ratio <= thumb.value.top + thumb.value.height
+  if (!onThumb) list.scrollTop = (ratio - thumb.value.height / 2) * list.scrollHeight
+  railDrag = { offset: onThumb ? ratio - thumb.value.top : thumb.value.height / 2, rail }
+  follow = false
+  rail.setPointerCapture(event.pointerId)
+}
+function railMove(event: PointerEvent) {
+  if (!railDrag || !messageList.value) return
+  messageList.value.scrollTop = (railRatio(event, railDrag.rail) - railDrag.offset) * messageList.value.scrollHeight
+}
+function railUp() { railDrag = undefined }
+let observer: ResizeObserver | undefined
+
+// ---- Composer: resizable field, context switch, model card -----------------
+const COMPOSER_KEY = 'kaizhi.composer.height'
+const composerHeight = ref(Number(localStorage.getItem(COMPOSER_KEY)) || 76)
+let resizeStart: { y: number; height: number } | undefined
+function startResize(event: PointerEvent) {
+  resizeStart = { y: event.clientY, height: composerHeight.value }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+function resize(event: PointerEvent) {
+  if (!resizeStart) return
+  const limit = Math.max(120, (messageList.value?.parentElement?.clientHeight || 600) * .6)
+  composerHeight.value = Math.round(Math.min(limit, Math.max(52, resizeStart.height + resizeStart.y - event.clientY)))
+}
+function endResize() { if (!resizeStart) return; resizeStart = undefined; try { localStorage.setItem(COMPOSER_KEY, String(composerHeight.value)) } catch {} }
+function resetResize() { composerHeight.value = 76; try { localStorage.removeItem(COMPOSER_KEY) } catch {} }
+const EFFORT_LABELS: Record<string, string> = { '': '默认', none: '不思考', minimal: '极简', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高', ultra: '极致' }
+const pickerOpen = ref(false)
+// 模型与强度抽屉第一次拉开后保持挂载，收起时才有回弹动画。
+const drawerMounted = ref(false)
+const pickerHost = ref<HTMLElement>()
+const composerField = ref<HTMLElement>()
+const pickerLoading = ref(false)
+const pickerError = ref('')
+let pickerRequest: AbortController | undefined
+const pickerModels = computed<{ id: string; name: string; efforts?: string[]; defaultEffort?: string }[]>(() => {
+  const list: any[] = settings.value.provider === 'codex' ? nativeModelInventory.value : getProvider(settings.value.provider)?.models || []
+  const current = settings.value.model || ''
+  const extra = settings.value.provider === 'codex' && !list.some(item => !item.id) ? [{ id: '', name: '模型默认' }] : []
+  const custom = current && !list.some(item => item.id === current) ? [{ id: current, name: current }] : []
+  return [...extra, ...custom, ...list]
+})
+// 一个模型预设都没有：模型按钮写「未设置模型」，点它直接打开 设置 → AI 去新建，不拉开抽屉。
+const noPreset = computed(() => !hasPresets(settings.value))
+const modelLabel = computed(() => noPreset.value ? '未设置模型' : pickerModels.value.find(item => item.id === (settings.value.model || ''))?.name || settings.value.model || '默认模型')
+function togglePicker() { if (noPreset.value) { pickerOpen.value = false; emit('settings') } else pickerOpen.value = !pickerOpen.value }
+function commitChoice(model: string, effort: string, fast?: boolean) { saveModelChoice(model, effort, fast); settings.value = loadAiSettings() }
+const fastChoice = computed(() => supportsFast(settings.value.provider) ? Boolean(settings.value.fast) : undefined)
+function chooseFast(value: boolean) { commitChoice(settings.value.model || '', settings.value.effort || '', value) }
+// Codex：面板一出现就把小助手拉起来，第一次提问不用等冷启动。
+onMounted(() => { if (!props.side && !noPreset.value && settings.value.provider === 'codex') void warmNative() })
+function chooseModel(id: string) {
+  const model = pickerModels.value.find(item => item.id === id)
+  let effort = settings.value.effort || ''
+  if (effort && model?.efforts && !model.efforts.includes(effort)) effort = model.defaultEffort || ''
+  commitChoice(id, effort)
+}
+function chooseEffort(value: string) { commitChoice(settings.value.model || '', value) }
+// 模型预设：抽屉最上面一行切换阅读助手用的预设；上面的模型与强度改的是当前这个预设。
+const presetChips = computed(() => (settings.value.presets || []).map((item: any) => ({ id: item.id, name: presetTitle(item), detail: presetDetail(item) })))
+function choosePreset(id: string) {
+  if (id === settings.value.assistantPreset) return
+  settings.value = saveTaskPreset('assistant', id)
+  pickerError.value = ''
+  if (settings.value.provider === 'codex') { void warmNative(); if (!nativeModelInventory.value.length) void refreshPickerModels() }
+}
+function managePresets() { pickerOpen.value = false; emit('settings') }
+function pickerOutside(event: PointerEvent) { if (event.target instanceof Node && !composerField.value?.contains(event.target)) pickerOpen.value = false }
+async function refreshPickerModels() {
+  if (pickerLoading.value || settings.value.provider !== 'codex') return
+  pickerError.value = ''
+  if (!(globalThis as any).__TAURI_INTERNALS__) { pickerError.value = '完整模型列表需在 Windows 桌面版中读取。'; return }
+  const request = new AbortController()
+  pickerRequest = request; pickerLoading.value = true
+  try {
+    const info: any = await getNativeStatus(request.signal)
+    if (!info.compatible || !info.loggedIn) throw new Error(info.diagnostic || (info.loggedIn === false ? 'Codex 尚未登录。请先在 Codex 中登录。' : '未找到可用 Codex。'))
+    const list: any[] = await getNativeModels(request.signal)
+    if (request.signal.aborted || pickerRequest !== request) return
+    registerNativeModelInventory(list)
+    if (!list.length) pickerError.value = '未读取到可用模型，可重新读取或打开 AI 设置。'
+  } catch (cause: any) {
+    if (!request.signal.aborted && pickerRequest === request) pickerError.value = cause?.message || String(cause)
+  } finally { if (pickerRequest === request) { pickerRequest = undefined; pickerLoading.value = false } }
+}
+watch(pickerOpen, open => {
+  if (open) {
+    drawerMounted.value = true
+    window.addEventListener('keydown', strayEscape, true)
+    document.addEventListener('pointerdown', pickerOutside, true)
+    if (settings.value.provider === 'codex' && !nativeModelInventory.value.length) void refreshPickerModels()
+  } else {
+    document.removeEventListener('pointerdown', pickerOutside, true)
+    window.removeEventListener('keydown', strayEscape, true)
+    pickerRequest?.abort(); pickerRequest = undefined; pickerLoading.value = false
+  }
+})
+watch(busy, value => { if (value) pickerOpen.value = false })
+function drawerEscape(event: KeyboardEvent) { if (!pickerOpen.value || event.defaultPrevented) return; event.preventDefault(); event.stopPropagation(); closePicker() }
+// 抽屉里的按钮在读取模型时会暂时禁用，焦点随之落回页面：这时 Esc 仍然收起抽屉。
+function strayEscape(event: KeyboardEvent) { if (event.key === 'Escape' && (document.activeElement === document.body || !document.activeElement)) drawerEscape(event) }
+function closePicker() { pickerOpen.value = false; void nextTick(() => pickerHost.value?.querySelector<HTMLElement>('.model-picker')?.focus()) }
+function historyOutside(event: PointerEvent) { if (!(event.target as Element)?.closest?.('.history-host')) historyOpen.value = false }
+watch(historyOpen, open => { if (open) document.addEventListener('pointerdown', historyOutside, true); else document.removeEventListener('pointerdown', historyOutside, true) })
+
+// 框选截图可能晚一点才编码好（同一个选区对象补上 image），到时也自动勾上。
+watch([() => props.context?.selection, () => Boolean(props.context?.selection?.image)], ([selection]) => { includeSelection.value = Boolean(selection?.text || selection?.image) }, { immediate: true })
+function focusPrompt() { void nextTick(() => input.value?.focus()) }
+function stop() { stopChat(props.document.id, state.value.id) }
+function applySettings(value: any) { settings.value = value; configureRequests(value) }
+function keydown(event: KeyboardEvent) {
+  const plain = !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing && event.keyCode !== 229
+  if (commandMatches.value.length && plain) {
+    const total = commandMatches.value.length
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); commandIndex.value = (commandIndex.value + (event.key === 'ArrowDown' ? 1 : total - 1)) % total; return }
+    if (event.key === 'Tab' || event.key === 'Enter') { event.preventDefault(); pickCommand(); return }
+  }
+  if (event.key === 'Escape' && btw.value && !prompt.value) { event.preventDefault(); event.stopPropagation(); closeBtw(); return }
+  if (preferences.value.assistant.predictQuestions && prediction.value && !prompt.value) {
+    // Tab 或回车：采用预判的问题，放进输入框里可以再改；发送仍用发送键。
+    if ((event.key === 'Tab' || event.key === 'Enter') && plain) { event.preventDefault(); prompt.value = prediction.value; return }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismissed = predictionKey(predictContext()); prediction.value = ''; return }
+  }
+  if (event.key === 'Enter' && plain && !props.sendShortcut) { event.preventDefault(); void send() }
+  // 默认回车发送；Ctrl + Enter（或 Shift + Enter）换行。
+  else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && !props.sendShortcut && !event.isComposing) {
+    event.preventDefault()
+    const field = event.target as HTMLTextAreaElement
+    const start = field.selectionStart ?? prompt.value.length, end = field.selectionEnd ?? start
+    prompt.value = prompt.value.slice(0, start) + '\n' + prompt.value.slice(end)
+    void nextTick(() => { field.selectionStart = field.selectionEnd = start + 1 })
+  }
+}
+// ---- 输入框附图：Ctrl+V 粘贴、拖进输入框，或点「添加图片」；随问题一起发出，发出后清空 ----
+// 这些图片按文档记在外面（workspace）：按住 Shift 截图时，上一张截图也是存到这里。
+const imageKey = computed(() => props.document.id + (props.side ? '#side' : ''))
+const attachments = computed<string[]>({ get: () => pendingImages(imageKey.value), set: value => setPendingImages(imageKey.value, value) })
+// 刚截的图还没确认：再截一张会把它换掉。点一下就留住（加上红框），之后再截图是新增一张。
+const freshShot = computed(() => selected.value.image && !attachments.value.includes(selected.value.image) ? selected.value.image as string : '')
+const shots = computed(() => [...attachments.value.map(image => ({ image, kept: true })), ...(freshShot.value ? [{ image: freshShot.value, kept: false }] : [])])
+const shotKey = (image: string) => `${image.length}:${image.slice(-40)}`
+function keepShot() {
+  const image = freshShot.value
+  if (!image) return
+  if (!keepImage(imageKey.value, image)) { attachNote(`一次最多附 ${MAX_ATTACHMENTS} 张图片。`); return }
+  emit('clearSelection')
+}
+function dropShot(shot: { image: string; kept: boolean }) { if (shot.kept) attachments.value = attachments.value.filter(image => image !== shot.image); else emit('clearSelection') }
+// 双击问题里的图片放大看；点一下或按 Esc 收起。
+const zoomed = ref('')
+function zoomKey(event: KeyboardEvent) { if (event.key === 'Escape' && zoomed.value) { event.stopPropagation(); zoomed.value = '' } }
+watch(zoomed, value => { if (value) window.addEventListener('keydown', zoomKey, true); else window.removeEventListener('keydown', zoomKey, true) })
+onBeforeUnmount(() => window.removeEventListener('keydown', zoomKey, true))
+const attachInput = ref<HTMLInputElement>()
+const imageFiles = (files?: FileList | null) => [...(files || [])].filter(file => file.type.startsWith('image/'))
+async function imageToDataUrl(file: Blob) {
+  const bitmap = await createImageBitmap(file)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width; canvas.height = bitmap.height
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0); bitmap.close()
+  // 与框选截图同一套处理：长边压到 1600 像素以内，后台编码成 PNG。
+  try { return await cropImageAsync(canvas, { x: 0, y: 0, width: canvas.width, height: canvas.height }, canvas.width, canvas.height) }
+  finally { canvas.width = canvas.height = 0 }
+}
+function attachNote(text: string) { state.value.status = text; state.value.error = true }
+async function addImages(files: File[]) {
+  for (const file of files) {
+    if (attachments.value.length >= MAX_ATTACHMENTS) { attachNote(`一次最多附 ${MAX_ATTACHMENTS} 张图片。`); return }
+    try { attachments.value = [...attachments.value, await imageToDataUrl(file)] }
+    catch { attachNote(`无法读取图片「${file.name || '粘贴的图片'}」。`) }
+  }
+}
+function pasteImages(event: ClipboardEvent) {
+  const files = imageFiles(event.clipboardData?.files)
+  if (files.length) { event.preventDefault(); void addImages(files) }
+}
+function dragImages(event: DragEvent) {
+  if (![...(event.dataTransfer?.types || [])].includes('Files')) return
+  event.preventDefault(); event.stopPropagation()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+function dropImages(event: DragEvent) {
+  const files = imageFiles(event.dataTransfer?.files)
+  if (!files.length) return
+  event.preventDefault(); event.stopPropagation(); void addImages(files)
+}
+function pickImages(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = imageFiles(input.files); input.value = ''
+  void addImages(files)
+}
+// ---- 斜杠命令：/btw 顺便问、/compress 压缩对话、/usage 用量 ------------------------------
+const COMMANDS = [
+  { name: '/btw', args: '问题', label: '顺便问一句', hint: '快速问一个旁支问题，回答不写进对话记录' },
+  { name: '/compress', args: '要求（可选）', label: '压缩对话', hint: '把目前的对话写成摘要，之后只带摘要发送，省上下文' },
+  { name: '/usage', args: '', label: '查看用量', hint: '本次会话的 token 用量、上下文占用与明细' },
+]
+const commandIndex = ref(0)
+// 只有还在输入命令名（以 / 开头、还没有空格）时才弹出命令列表。
+const commandMatches = computed(() => {
+  const text = prompt.value
+  if (!text.startsWith('/') || /\s/.test(text)) return []
+  return COMMANDS.filter(item => item.name.startsWith(text.toLowerCase()))
+})
+watch(commandMatches, () => { commandIndex.value = 0 })
+function pickCommand(item = commandMatches.value[commandIndex.value]) {
+  if (!item) return
+  if (!item.args) { prompt.value = ''; void runCommand(item.name.slice(1), ''); return }
+  prompt.value = `${item.name} `
+  focusPrompt()
+}
+const usageOpen = ref(false)
+const compressing = ref<AbortController | null>(null)
+type BtwTurn = { id: string; question: string; answer: string; startedAt: number; finishedAt?: number }
+type Btw = { turns: BtwTurn[]; running: boolean; error: string; controller: AbortController }
+const btw = ref<Btw | null>(null)
+const btwLast = computed(() => btw.value?.turns.at(-1))
+const btwDone = computed(() => btw.value?.turns.filter(turn => turn.answer) || [])
+function closeBtw() { btw.value?.controller.abort(); btw.value = null; btwReply.value = false; btwDraft.value = '' }
+// 纸条上接着聊：点「接着聊」出一行输入框，回车发出；之前的问答一起带给模型。
+const btwReply = ref(false), btwDraft = ref(''), btwInput = ref<HTMLInputElement>(), btwBody = ref<HTMLElement>()
+function replyBtw() { btwReply.value = !btwReply.value; if (btwReply.value) void nextTick(() => btwInput.value?.focus()); else focusPrompt() }
+function sendBtwReply() { const text = btwDraft.value.trim(); if (!text || btw.value?.running) return; btwDraft.value = ''; void askBtw(text) }
+// 把纸条上聊的搬走：另起一段主对话、接到当前对话后面，或放进附属对话。
+function adoptBtw(target: 'new' | 'append' | 'side') {
+  const turns = btwDone.value
+  if (!turns.length) return
+  if (target === 'append' && busy.value) { attachNote('请等这一轮回答结束再并入。'); return }
+  const moved = adoptTurns(props.document.id, state.value.id, target, turns.map(turn => ({ question: turn.question, answer: turn.answer, startedAt: turn.startedAt, finishedAt: turn.finishedAt })))
+  closeBtw()
+  if (target === 'new') useConversation(moved.id)
+  else if (target === 'side') openSide()
+  else { follow = true; scheduleScroll(); focusPrompt() }
+}
+async function askBtw(question: string) {
+  if (!btw.value) btw.value = { turns: [], running: false, error: '', controller: new AbortController() }
+  const current = btw.value!
+  if (current.running) current.controller.abort()
+  current.controller = new AbortController(); current.error = ''; current.running = true
+  const controller = current.controller
+  const earlier = current.turns.filter(turn => turn.answer).slice(-6).map(turn => `读者：${turn.question}\n\n助手：${turn.answer.slice(0, 2000)}`).join('\n\n')
+  current.turns = current.turns.filter(turn => turn.answer)
+  current.turns.push({ id: crypto.randomUUID(), question, answer: '', startedAt: Date.now() })
+  const turn = current.turns.at(-1)!
+  void nextTick(() => { if (btwBody.value) btwBody.value.scrollTop = btwBody.value.scrollHeight })
+  const recent = messages.value.filter(message => !message.compressed && message.content).slice(-6).map(message => `${message.summary ? '【摘要】' : message.role === 'user' ? '读者' : '助手'}：${message.content.slice(0, 1500)}`).join('\n\n')
+  try {
+    const { complete } = await import('../ai/complete')
+    await complete({ kind: 'btw', signal: controller.signal, messages: [{ role: 'user', content: [
+      '[顺便问：这是读者插进来的一个旁支问题，回答不会写进对话记录。请简短、直接地回答。]',
+      `[正在读的文档]《${props.document.title}》`,
+      selected.value.text && `[读者选中的文字]\n${String(selected.value.text).slice(0, 1500)}`,
+      recent && `[最近的对话，仅供参考]\n${recent}`,
+      earlier && `[这张纸条上已经聊过的]\n${earlier}`,
+      `问题：${question}`,
+    ].filter(Boolean).join('\n\n') }], onDelta: (_delta, all) => { if (btw.value === current && current.controller === controller) turn.answer = all } })
+  } catch (error: any) { if (btw.value === current && !controller.signal.aborted) current.error = error?.message || String(error) }
+  finally { if (btw.value === current && current.controller === controller) { current.running = false; turn.finishedAt = Date.now() } }
+}
+// /btw 等第一个字时，也像主对话一样走动星标、计时和 Thinking… 动词。
+let btwTicker: ReturnType<typeof setInterval> | undefined
+watch(() => Boolean(btw.value?.running && !btwLast.value?.answer), waiting => {
+  clearInterval(btwTicker); btwTicker = undefined
+  if (waiting && !ticker) btwTicker = setInterval(() => { now.value = Date.now() }, 120)
+  now.value = Date.now()
+})
+onBeforeUnmount(() => clearInterval(btwTicker))
+async function runCommand(name: string, args: string) {
+  state.value.error = false; state.value.status = ''
+  if (name === 'usage') { usageOpen.value = true; return }
+  if (name === 'compress') {
+    if (busy.value || compressing.value) { attachNote('请等这一轮回答结束再压缩。'); return }
+    const controller = new AbortController(); compressing.value = controller
+    follow = true; scheduleScroll()
+    try { await compressConversation({ ...props.document }, state.value.id, args, controller.signal) }
+    catch (error: any) { if (!controller.signal.aborted) attachNote(error?.message || String(error)) }
+    finally { if (compressing.value === controller) compressing.value = null; scheduleScroll() }
+    return
+  }
+  if (name === 'btw') {
+    if (!args) { attachNote('在 /btw 后面写上要顺便问的问题。'); prompt.value = '/btw '; return }
+    // 纸条开着时再 /btw 是接着聊；想另起话头先关掉纸条。
+    await askBtw(args)
+  }
+}
+const compressedBefore = (message: Message) => { const index = messages.value.indexOf(message); return messages.value.slice(0, index).filter(item => item.compressed && !item.summary).length }
+function send(question?: string) {
+  // 斜杠命令在本地处理，不当作问题发出去。
+  const command = question === undefined ? prompt.value.trim().match(/^\/(btw|compress|usage)(?:\s+([\s\S]*))?$/i) : null
+  if (command) { prompt.value = ''; void runCommand(command[1]!.toLowerCase(), (command[2] || '').trim()); return }
+  // 输入框空着而有预判的问题时，按发送键直接发送它。
+  if (preferences.value.assistant.predictQuestions && question === undefined && !prompt.value.trim() && prediction.value) question = prediction.value
+  const id = props.document.id
+  const selection = props.context?.selection
+  // 发出去的选区就算交给了 AI：输入框上方的选区随之清空，改在问题气泡下面显示。
+  const usesSelection = includeSelection.value && Boolean(selection?.image || selection?.text)
+  const consumeCapture = props.consumeCapture
+  const sentImages = [...attachments.value], sentKey = imageKey.value
+  follow = true
+  return sendChat({ ...props.document }, { ...props.context }, () => { if (id === props.document.id) emit('settings') }, () => {
+    // The request can be accepted after this pane closes or switches files.
+    if (usesSelection) consumeCapture?.({ documentId: id, selection })
+    if (sentImages.length) setPendingImages(sentKey, pendingImages(sentKey).filter(image => !sentImages.includes(image)))
+  }, question, { conversationId: state.value.id, attachments: sentImages })
+}
+// ---- Predicted next question --------------------------------------------------
+const prediction = ref('')
+let predicting: AbortController | undefined
+let predictionOwner = ''
+let predictTimer: ReturnType<typeof setTimeout> | undefined
+let dismissed = ''
+watch(() => preferences.value.assistant.predictQuestions, enabled => {
+  if (enabled) return
+  clearTimeout(predictTimer); predicting?.abort(); predicting = undefined
+  prediction.value = ''; dismissed = ''
+}, { flush: 'sync' })
+function predictContext() {
+  return { document: { ...props.document }, page: props.context?.page || 1, includePage: includeDocument.value, selection: selected.value.text || '', history: messages.value.filter(item => item.content && !item.failed).map(item => ({ role: item.role, content: item.content })) }
+}
+// 只有真正的上下文——已经有对话，或选中了文字——才预判；空白的新对话不猜。输入、发送、换页都会取消在途请求。
+const predictable = computed(() => !props.side && preferences.value.assistant.predictQuestions && !busy.value && !prompt.value && (Boolean(selected.value.text) || messages.value.some(item => item.content && !item.failed)))
+// 「Tab / Enter 采用」只在前三次出现预判时提示，之后只留淡色的问题本身。
+const HINT_KEY = 'kaizhi.predictionHints.v1'
+const showHint = ref(false)
+watch(prediction, (value, previous) => {
+  if (!value) { showHint.value = false; return }
+  if (previous) return
+  let shown = 3
+  try { shown = Number(localStorage.getItem(HINT_KEY)) || 0 } catch { /* 读不到计数时不再提示 */ }
+  showHint.value = shown < 3
+  if (showHint.value) try { localStorage.setItem(HINT_KEY, String(shown + 1)) } catch { /* 私有窗口等情况下只是多提示一次 */ }
+})
+watch(() => [predictable.value, state.value.id, props.document.id, props.context?.page, selected.value.text, messages.value.length, messages.value.at(-1)?.finishedAt] as const, () => {
+  clearTimeout(predictTimer); predicting?.abort(); predicting = undefined
+  const context = predictContext(), key = predictionKey(context)
+  // 猜测只属于它算出来的那场对话、那份文档：换了对话或文档立刻清掉，不把别处的问题带过来。
+  const owner = `${state.value.id}|${props.document.id}`
+  if (owner !== predictionOwner) { prediction.value = ''; predictionOwner = owner }
+  // 没有上下文（空白的新对话、没选中文字）、正在输入或回答中：不显示猜测。
+  if (!predictable.value) { prediction.value = ''; return }
+  if (key === dismissed) { prediction.value = ''; return }
+  // 同一场对话里换页、来新消息时先留着上一条猜测，等新的算出来再替换；新的没算出来就撤掉旧的。
+  predictTimer = setTimeout(() => {
+    const request = new AbortController(); predicting = request
+    predictQuestion(context, request.signal).then(question => { if (predicting === request && !request.signal.aborted && preferences.value.assistant.predictQuestions && !prompt.value && !busy.value) prediction.value = question || '' }).catch(() => { if (predicting === request && !request.signal.aborted) prediction.value = '' }).finally(() => { if (predicting === request) predicting = undefined })
+  }, settings.value.provider === 'codex' ? 2600 : 1200) // Codex 每次预判都是一整轮对话：多等一会儿，翻页时不白跑
+}, { immediate: true })
+onMounted(() => {
+  void loadConversations(props.document.id).then(() => { conversationId.value = ownConversation(props.document.id, props.conversationId) })
+  restoreScroll()
+  observer = new ResizeObserver(() => updateRail())
+  if (messageList.value) observer.observe(messageList.value)
+})
+onBeforeUnmount(() => { unwatch?.(); cancelAnimationFrame(scrollFrame); rememberScroll(); clearInterval(ticker); clearTimeout(predictTimer); predicting?.abort(); observer?.disconnect(); if (renderFrame) cancelAnimationFrame(renderFrame); pickerRequest?.abort(); document.removeEventListener('pointerdown', pickerOutside, true); window.removeEventListener('keydown', strayEscape, true); document.removeEventListener('pointerdown', historyOutside, true) })
+defineExpose({ send, stop, applySettings, focusPrompt, newConversation: startConversation, closeSide })
+</script>
+
+<template>
+  <aside ref="pane" class="ai-pane" :class="{ embedded: side }" :aria-label="side ? '附属对话' : 'AI 阅读助手'">
+
+    <div ref="columns" class="ai-columns" :class="{ 'with-side': sideOpen }">
+    <div class="ai-main">
+    <header v-if="side" class="ai-header side-header">
+      <span class="side-badge"><AppIcon name="branch" :size="13" />附属对话</span>
+      <span class="side-of" :title="mainTitle">挂在「{{ mainTitle || '新对话' }}」旁边</span>
+      <button class="header-button close-assistant" data-tip="收起附属对话（内容会保留）" aria-label="收起附属对话" @click="emit('close')"><AppIcon name="close" :size="15" /></button>
+    </header>
+    <header v-else class="ai-header" :class="{ draggable }" @pointerdown.self="draggable && emit('grab', $event)">
+      <span v-if="draggable" class="drag-grip" data-tip="拖动调整位置" aria-hidden="true" @pointerdown.stop="emit('grab', $event)"><AppIcon name="grip" :size="14" /></span>
+      <div class="history-host">
+        <button class="conversation-title" :aria-expanded="historyOpen" aria-label="对话记录" data-tip="对话记录" @click="historyOpen = !historyOpen"><span class="title-text">{{ title }}</span><small>{{ document.title }}</small></button>
+        <Transition name="history-pop">
+          <div v-if="historyOpen" class="history-menu" role="dialog" aria-label="对话记录">
+            <button class="history-new" @click="startConversation"><AppIcon name="compose" :size="15" />新对话</button>
+            <div v-if="alternatives?.length" class="history-switch"><p class="history-label">助手正在读</p><button v-marquee class="current" aria-current="true" tabindex="-1"><span class="marquee-text">{{ document.title }}</span></button><button v-for="item in alternatives" :key="item.id" v-marquee @click="historyOpen = false; emit('switchDocument', item.id)"><span class="marquee-text">改读 {{ item.title }}</span></button></div>
+            <div class="history-scope" role="tablist" aria-label="对话范围"><button role="tab" :aria-selected="historyScope === 'document'" @click="historyScope = 'document'">这份文档</button><button role="tab" :aria-selected="historyScope === 'all'" @click="showAll">全部文档</button></div>
+            <div v-if="historyScope === 'all'" class="history-list">
+              <p v-if="loadingAll" class="history-empty">正在读取…</p>
+              <div v-for="item in everything" v-else :key="item.id" class="history-item" :class="{ current: item.id === conversationId }">
+                <button v-marquee class="history-open" @click="openAny(item)"><span><AppIcon v-if="item.branchOf" name="branch" :size="12" class="branch-mark" /><span class="marquee-text">{{ item.title || '新对话' }}</span></span><small>{{ titles.get(item.documentId) || '已移除的文档' }} · {{ relative(item.updatedAt) }}</small></button>
+              </div>
+              <p v-if="!loadingAll && !everything.length" class="history-empty">还没有对话。</p>
+            </div>
+            <div v-else class="history-list">
+              <div v-for="item in history" :key="item.id" class="history-item" :class="{ current: item.id === conversationId }">
+                <button v-marquee class="history-open" @click="useConversation(item.id)"><span><AppIcon v-if="item.branchOf" name="branch" :size="12" class="branch-mark" /><span class="marquee-text">{{ item.title || '新对话' }}</span></span><small>{{ relative(item.updatedAt) }} · {{ Math.ceil(item.messages.length / 2) }} 问<template v-if="item.request"> · 回答中</template></small></button>
+                <button v-if="item.messages.length" class="history-delete" :aria-label="`删除对话 ${item.title}`" data-tip="删除这段对话" @click.stop="removeConversation(item.id)"><AppIcon name="trash" :size="13" /></button>
+              </div>
+              <p v-if="!history.length" class="history-empty">还没有对话。</p>
+            </div>
+          </div>
+        </Transition>
+      </div>
+      <span v-if="taskSummary.running || taskSummary.queued" class="task-summary" :data-tip="`同时最多 ${taskSummary.limits.concurrent} 题，Codex ${taskSummary.limits.codex} 题`">{{ taskSummary.running }} 运行<template v-if="taskSummary.queued"> · {{ taskSummary.queued }} 等待</template></span>
+      <button class="header-button side-toggle" :class="{ on: sideOpen, has: hasSideContent && !sideOpen }" :aria-pressed="sideOpen" :aria-label="sideOpen ? '收起附属对话' : '打开附属对话'" :data-tip="sideOpen ? '收起附属对话' : hasSideContent ? '打开附属对话（有内容）' : '打开附属对话'" @click="toggleSide"><AppIcon name="branch" :size="15" /></button>
+      <button class="header-button" aria-label="新对话" data-tip="新对话" :disabled="!messages.length" @click="startConversation"><AppIcon name="compose" :size="16" /></button>
+      <button class="header-button close-assistant" data-tip="关闭阅读助手" aria-label="关闭阅读助手" @click="emit('close')"><AppIcon name="close" :size="15" /></button>
+    </header>
+    <div class="ai-body">
+      <div ref="messageList" class="ai-messages" data-glass-still @scroll.passive="onScroll" @click="answerClick">
+        <div v-if="!messages.length" class="ai-welcome">
+          <AssistantMark :kind="avatar.kind" :image="avatar.image" :size="56" class="ai-welcome-mark" />
+          <h2 class="ai-welcome-lead" :lang="greeting.lang === 'zh' ? 'zh-CN' : 'en'">{{ greeting.text }}</h2>
+        </div>
+        <article v-for="message in messages" :key="message.id" class="ai-message" :class="[message.note ? 'note' : message.role, { compressed: message.compressed, summary: message.summary, arrived: arrivedNote === message.id }]" :data-id="message.id">
+          <div v-if="message.note" class="note-card" :data-tip="`${noteLabel(message)}：${message.content.slice(0, 300)}`">
+            <AppIcon class="note-icon" :name="message.note === 'self' ? 'pin' : 'branch'" :size="11" />
+            <span class="note-text">{{ message.content }}</span>
+            <button type="button" class="note-remove" aria-label="移除这条摘录" @click="removeMessage(document.id, state.id, message.id)"><AppIcon name="close" :size="10" /></button>
+          </div>
+          <template v-else-if="message.role === 'user'">
+            <div v-if="editing === message.id" class="question-editor">
+              <textarea ref="editor" v-model="editText" rows="3" aria-label="编辑问题" @keydown="editKeydown($event, message)" />
+              <div class="editor-actions"><button class="frost-button" @click="cancelEdit">取消</button><button class="frost-button primary" :disabled="!editText.trim()" @click="submitEdit(message)">发送</button></div>
+            </div>
+            <template v-else>
+              <div class="user-question">{{ message.content }}</div>
+              <div v-if="message.ask?.text || message.images?.length || message.ask?.includeDocument || message.excerpts?.length" class="sent-context" aria-label="随问题发送的上下文">
+                <span v-for="item in message.excerpts || []" :key="item.id" class="sent-quote sent-excerpt" :data-tip="`${excerptLabel(item.from)}：${item.text.slice(0, 300)}`"><AppIcon :name="item.from === 'self' ? 'pin' : 'branch'" :size="10" />{{ item.text.slice(0, 40) }}{{ item.text.length > 40 ? '…' : '' }}</span>
+                <img v-for="(image, index) in (message.images || []).slice(0, 5)" :key="index" :src="image" alt="随问题发送的图片" data-tip="双击放大" @dblclick="zoomed = image" />
+                <span v-if="message.ask?.text" class="sent-quote" :title="message.ask.text">“{{ message.ask.text.slice(0, 60) }}{{ message.ask.text.length > 60 ? '…' : '' }}”</span>
+                <span v-if="message.ask?.includeDocument" class="sent-doc"><AppIcon name="book" :size="11" />{{ readsAsPdf(document.kind) ? `文档 · 第 ${message.ask.page || 1} 页` : '文档' }}</span>
+              </div>
+              <div class="question-actions"><button v-if="!side || message.id === lastQuestionId" class="meta-button" :disabled="busy && message.id === lastQuestionId" aria-label="编辑问题" data-tip="编辑后重新回答" @click="startEdit(message)"><AppIcon name="edit" :size="13" /></button><button class="meta-button" aria-label="复制问题" data-tip="复制" @click="copy(message.content)"><AppIcon name="copy" :size="13" /></button></div>
+            </template>
+          </template>
+          <div v-else-if="message.summary" class="summary-card">
+            <p class="summary-head"><AppIcon name="history" :size="13" />对话摘要<span>以上 {{ compressedBefore(message) }} 条消息已压缩，之后只带这份摘要</span></p>
+            <div v-answer="message" class="answer-body" />
+          </div>
+          <template v-else>
+            <button v-if="live(message) || message.reasoning || message.sources.length" class="thinking" :class="{ live: live(message), open: expanded.has(message.id) }" :aria-expanded="expanded.has(message.id)" @click="toggleReasoning(message.id)">
+              <span class="thinking-star" aria-hidden="true">{{ live(message) ? spinner(message) : '✻' }}</span>
+              <span class="thinking-label">{{ live(message) ? `${thinkingVerb(message.id)}…` : `Thought for ${thinkingTime(message)}` }}</span>
+              <span v-if="live(message)" class="thinking-meta">{{ elapsed(message) }}<template v-if="activityNote(message)"> · {{ activityNote(message) }}</template></span>
+              <AppIcon v-if="message.reasoning || message.sources.length" class="thinking-chevron" name="down" :size="12" />
+            </button>
+            <p v-if="live(message) && !expanded.has(message.id) && lastThought(message)" class="thinking-direction">{{ lastThought(message) }}</p>
+            <div v-if="message.reasoning && expanded.has(message.id)" class="reasoning-body">{{ message.reasoning }}</div>
+            <!-- 参考原文收在 Thinking 里：点开思考过程时一起列出，平时不占地方。 -->
+            <div v-if="message.sources.length && expanded.has(message.id)" class="source-list"><p class="source-heading">参考原文 · {{ message.sources.length }} 段</p><button v-for="source in message.sources" :key="source.sourceId" @click="jump(source)"><span>{{ source.line ? `第 ${source.line} 行` : `第 ${source.page} 页` }}</span><small>{{ source.text }}</small></button></div>
+            <div v-if="message.content" v-answer="message" class="answer-body" />
+            <div v-if="!live(message)" class="answer-meta">
+              <button v-if="message.content" class="meta-button" aria-label="复制回答" data-tip="复制回答" @click="copy(message.content)"><AppIcon name="copy" :size="13" /></button>
+              <button v-if="!side || isLastAnswer(message)" class="meta-button" :disabled="busy && isLastAnswer(message)" aria-label="重新生成" :data-tip="isLastAnswer(message) ? '重新生成' : '在新分支中重新生成'" @click="regenerate(message)"><AppIcon name="retry" :size="13" /></button>
+              <button v-if="!side" class="meta-button" aria-label="从这里分支" data-tip="从这里开一个分支对话" @click="branchFrom(message)"><AppIcon name="branch" :size="13" /></button>
+              <span v-if="message.stopped" class="meta-flag">已停止</span>
+
+              <span v-else-if="message.failed" class="meta-flag error">未完成</span>
+              <span v-if="message.startedAt && message.finishedAt" class="meta-time">{{ clock(message) }}</span>
+            </div>
+          </template>
+        </article>
+        <p v-if="compressing" class="compressing-line"><span class="thinking-star" aria-hidden="true">✻</span>正在压缩对话…<button type="button" class="meta-button" aria-label="取消压缩" data-tip="取消" @click="compressing?.abort()"><AppIcon name="close" :size="12" /></button></p>
+        <p v-if="errorText" class="ai-error">{{ errorText }}</p>
+        <p class="ai-status" role="status" aria-live="polite">{{ liveStatus }}</p>
+      </div>
+      <div v-show="thumb.visible" class="scroll-rail" :class="{ marked: marks.length }" aria-label="问题导航" @pointerdown="railDown" @pointermove="railMove" @pointerup="railUp" @pointercancel="railUp">
+        <span class="rail-thumb" :style="{ top: `calc(8px + ${thumb.top} * (100% - 16px))`, height: `calc(${thumb.height} * (100% - 16px))` }" aria-hidden="true" />
+      </div>
+      <div v-if="marks.length" ref="tickColumn" class="rail-ticks" :class="{ hovering: tickPointer !== null }" :style="{ '--slot': `${tickSlot}px` }" aria-label="问题导航" @pointermove="tickHover" @pointerleave="tickLeave">
+        <button v-for="(mark, index) in marks" :key="mark.id" class="rail-mark" :class="{ current: mark.current, hot: hoverMark?.id === mark.id, pinned: mark.pinned }" :style="{ '--grow': tickGrow(index) }" :aria-label="`跳到问题：${mark.text.slice(0, 30)}`" @click="goToMark(mark)" @focus="tickFocus(mark, $event)" @blur="hidePreviewSoon" />
+      </div>
+      <Transition name="rail-pop"><div v-if="hoverMark" class="rail-preview" :style="{ top: `clamp(56px, ${hoverTop}px, calc(100% - 56px))` }" @pointerenter="keepPreview" @pointerleave="hidePreviewSoon">
+        <button type="button" class="rail-pin" :class="{ on: hoverMark.pinned }" :aria-pressed="hoverMark.pinned" :aria-label="hoverMark.pinned ? '取消钉住' : '钉住这一问'" :data-tip="hoverMark.pinned ? '取消钉住' : '钉住这一问'" @click="togglePin(hoverMark)"><AppIcon name="pin" :size="13" /></button>
+        <strong>{{ hoverMark.text }}</strong><p v-if="hoverMark.answer">{{ hoverMark.answer }}</p>
+      </div></Transition>
+    </div>
+
+    <Transition name="btw-pop">
+      <div v-if="btw" class="btw-card" role="status" aria-live="polite">
+        <p class="btw-head"><span class="btw-tag">/btw</span><span class="btw-question">{{ btw.turns[0]?.question }}</span><button type="button" class="meta-button" aria-label="关闭顺便问" data-tip="关闭" data-tip-key="Esc" @click="closeBtw"><AppIcon name="close" :size="12" /></button></p>
+        <div ref="btwBody" class="btw-body">
+          <template v-for="(turn, index) in btw.turns" :key="turn.id">
+            <p v-if="index" class="btw-ask">{{ turn.question }}</p>
+            <div v-if="turn.answer" class="answer-body btw-answer" v-html="renderMarkdown(turn.answer)"></div>
+            <p v-else-if="btw.running" class="thinking live btw-wait"><span class="thinking-star" aria-hidden="true">{{ spinnerFor(turn.id)[Math.floor(now / 120) % spinnerFor(turn.id).length] }}</span><span class="thinking-label">{{ thinkingVerb(turn.id) }}…</span><span class="thinking-meta">{{ seconds(now - turn.startedAt) }}</span></p>
+          </template>
+          <p v-if="btw.error" class="ai-error">{{ btw.error }}</p>
+        </div>
+        <form v-if="btwReply" class="btw-reply" @submit.prevent="sendBtwReply"><input ref="btwInput" v-model="btwDraft" type="text" placeholder="接着问…" aria-label="接着问" @keydown.esc.stop.prevent="replyBtw" /><button type="submit" class="meta-button" :disabled="!btwDraft.trim() || btw.running" aria-label="发送" data-tip="发送" data-tip-key="Enter"><AppIcon name="arrow-up" :size="13" /></button></form>
+        <p class="btw-tools">
+          <button type="button" class="meta-button" :class="{ on: btwReply }" :aria-pressed="btwReply" aria-label="接着聊" data-tip="接着聊" @click="replyBtw"><AppIcon name="chat-more" :size="14" /></button>
+          <i aria-hidden="true"></i>
+          <button type="button" class="meta-button" :disabled="!btwDone.length" aria-label="另起一段主对话" data-tip="另起一段主对话" @click="adoptBtw('new')"><AppIcon name="chat-new" :size="14" /></button>
+          <button type="button" class="meta-button" :disabled="!btwDone.length" :aria-label="side ? '并入这段附属对话' : '并入当前主对话'" :data-tip="side ? '并入这段附属对话' : '并入当前主对话'" @click="adoptBtw('append')"><AppIcon name="append" :size="14" /></button>
+          <button v-if="!side" type="button" class="meta-button" :disabled="!btwDone.length" aria-label="变成附属对话" data-tip="变成附属对话" @click="adoptBtw('side')"><AppIcon name="branch" :size="14" /></button>
+        </p>
+      </div>
+    </Transition>
+    <div class="ai-composer">
+      <Transition name="command-pop">
+        <div v-if="commandMatches.length" class="command-menu" role="listbox" aria-label="斜杠命令">
+          <button v-for="(item, index) in commandMatches" :key="item.name" type="button" role="option" :aria-selected="index === commandIndex" :class="{ on: index === commandIndex }" @pointerdown.prevent @click="pickCommand(item)" @pointerenter="commandIndex = index">
+            <b>{{ item.name }}</b><span v-if="item.args" class="command-args">{{ item.args }}</span><span class="command-label">{{ item.label }}</span><small>{{ item.hint }}</small>
+          </button>
+        </div>
+      </Transition>
+      <div ref="composerField" class="composer-field" :class="{ busy, expanded: pickerOpen }" @keydown.esc="drawerEscape" @dragover="dragImages" @drop="dropImages">
+        <div class="composer-resize" role="separator" aria-orientation="horizontal" aria-label="拖动调整输入框高度" data-tip="拖动调整高度，双击恢复" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @dblclick="resetResize" />
+        <div v-if="hasSelection && !selected.image" class="ai-selection-context">
+          <label class="selection-chip" :class="{ off: !includeSelection }"><input v-model="includeSelection" type="checkbox" :disabled="busy" aria-label="使用所选文字" /><span class="selection-text">{{ selected.text.slice(0, 80) }}</span><small>{{ selected.rect?.space === 'markdown' ? '框选区域的文字' : '所选文字' }}</small></label>
+          <button class="chip-remove" data-tip="清除选区" aria-label="清除选区" @click="emit('clearSelection')"><AppIcon name="close" :size="11" /></button>
+        </div>
+        <TransitionGroup v-if="excerpts.length" tag="div" name="excerpt" class="ai-excerpts" aria-label="随下一个问题发送的摘录">
+          <span v-for="item in excerpts" :key="item.id" class="excerpt-chip" :class="{ arrived: arrivedExcerpt === item.id }" :data-tip="`${excerptLabel(item.from)}：${item.text.slice(0, 300)}`">
+            <AppIcon class="note-icon" :name="item.from === 'self' ? 'pin' : 'branch'" :size="11" />
+            <span class="note-text">{{ item.text }}</span>
+            <button type="button" class="note-remove" aria-label="移除这段摘录" @click="removeExcerpt(document.id, state.id, item.id)"><AppIcon name="close" :size="10" /></button>
+          </span>
+        </TransitionGroup>
+        <!-- 随问题发出的图片：只有图。留住的带红框；刚截的那张点一下留住，双击放大。 -->
+        <TransitionGroup v-if="shots.length" tag="div" name="shot" class="composer-shots" aria-label="随问题发送的图片">
+          <span v-for="(shot, index) in shots" :key="shotKey(shot.image)" class="shot" :class="{ kept: shot.kept }">
+            <img :src="shot.image" :alt="shot.kept ? '已留住的图片' : '刚截的图'" :data-tip="shot.kept ? '双击放大' : '点一下留住，再截图会新增一张 · 双击放大'" draggable="false" @click="shot.kept || keepShot()" @dblclick="zoomed = shot.image" />
+            <button type="button" class="shot-remove" :aria-label="`移除第 ${index + 1} 张图片`" @click="dropShot(shot)"><AppIcon name="close" :size="10" /></button>
+          </span>
+        </TransitionGroup>
+        <div class="prompt-box">
+          <textarea ref="input" v-model="prompt" @paste="pasteImages" :style="{ height: `${composerHeight}px` }" :placeholder="prediction ? '' : placeholder" aria-label="向 AI 提问" :aria-describedby="prediction ? `prediction-${state.id}` : undefined" @keydown="keydown" />
+          <!-- 预判的问题：像 Claude Code 一样以淡色出现在空输入框里，按 Tab 或回车采用。 -->
+          <p v-if="prediction && !prompt" :id="`prediction-${state.id}`" class="prompt-ghost"><span>{{ prediction }}</span><template v-if="showHint"><kbd>Tab</kbd><small>/</small><kbd>Enter</kbd><small>采用</small></template><span v-else class="visually-hidden">，按 Tab 或回车采用</span></p>
+        </div>
+        <div class="composer-actions">
+          <button type="button" class="attach-button" :disabled="busy || attachments.length >= MAX_ATTACHMENTS" aria-label="添加图片" data-tip="添加图片（也可以 Ctrl+V 粘贴或拖进来）" @click="attachInput?.click()"><AppIcon name="image" :size="16" /></button>
+          <input ref="attachInput" class="attach-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple tabindex="-1" aria-hidden="true" @change="pickImages" />
+          <label class="context-switch" :class="{ on: includeDocument }" :data-tip="includeDocument ? '已开启：提问时附带当前页与文档检索' : '已关闭：只发送问题与选区'"><input v-model="includeDocument" type="checkbox" role="switch" :disabled="busy" aria-label="当前页上下文与文档检索" /><span class="context-glyph" aria-hidden="true"><AppIcon name="book" :size="14" /><i class="context-slash" /></span><span class="context-label">文档上下文</span></label>
+          <span class="composer-space" />
+          <span class="context-ring" :data-tip="`上下文约 ${count(contextUsed)} / ${count(contextLimit)} tokens`" aria-hidden="true" :style="{ '--ratio': contextRatio }"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5" /><circle class="ring-value" cx="10" cy="10" r="7.5" pathLength="100" /></svg></span>
+          <div ref="pickerHost" class="model-picker-host">
+            <button type="button" class="model-picker" :class="{ empty: noPreset }" :disabled="busy" :aria-expanded="pickerOpen" :aria-controls="`model-drawer-${state.id}`" aria-label="选择模型与思考强度" :data-tip="noPreset ? '还没有模型预设，点这里去 设置 → AI 新建' : '模型与思考强度'" @click="togglePicker"><span class="picker-model">{{ modelLabel }}</span><span v-if="!noPreset" class="picker-effort">{{ EFFORT_LABELS[settings.effort || ''] || settings.effort }}</span><AppIcon v-if="fastChoice && !noPreset" name="bolt" :size="11" class="picker-fast" /><AppIcon name="down" :size="12" class="picker-chevron" /></button>
+          </div>
+          <button v-if="busy" class="send-button stop" aria-label="停止" data-tip="停止回答" @click="stop"><span class="stop-square" /></button>
+          <button v-else class="send-button" :disabled="!prompt.trim()" aria-label="发送" data-tip="发送" :data-tip-key="sendShortcut || 'Enter'" @click="send()"><AppIcon name="arrow-up" :size="17" /></button>
+        </div>
+        <!-- 点模型按钮时，输入栏下沿顺势拉长，露出模型与思考强度；再点一次或按 Esc 收回。 -->
+        <div :id="`model-drawer-${state.id}`" class="composer-drawer" :class="{ open: pickerOpen }" :inert="!pickerOpen || undefined">
+          <ModelPicker v-if="drawerMounted" :model="settings.model || ''" :effort="settings.effort || ''" :models="pickerModels" :loading="pickerLoading" :error="pickerError" :can-refresh="settings.provider === 'codex'" :fast="fastChoice" :presets="presetChips" :preset="settings.assistantPreset" @preset="choosePreset" @manage="managePresets" @model="chooseModel" @effort="chooseEffort" @fast="chooseFast" @refresh="refreshPickerModels" @close="closePicker" />
+        </div>
+      </div>
+    </div>
+    </div>
+    <Transition name="side-col">
+      <div v-if="sideOpen && sideId" class="ai-side" :style="{ width: `${sideWidth}px` }">
+        <div class="side-divider" role="separator" aria-orientation="vertical" aria-label="拖动调整主对话与附属对话的宽度" data-tip="拖动调整宽度" @pointerdown="startSideDrag" @pointermove="moveSideDrag" @pointerup="endSideDrag" @pointercancel="endSideDrag" />
+        <AiPane side class="embedded" :document="document" :context="context" :conversation-id="sideId" :arrived="arrivedNote" :main-title="title" :send-shortcut="sendShortcut" :consume-capture="consumeCapture" @close="closeSide" @settings="emit('settings')" @jump="value => emit('jump', value)" @clear-selection="emit('clearSelection')" />
+      </div>
+    </Transition>
+    </div>
+    <UsagePanel v-if="usageOpen" :context-used="contextUsed" :context-limit="contextLimit" :model="modelLabel" @close="usageOpen = false; focusPrompt()" />
+    <Teleport to="body"><Transition name="quote-pop">
+      <div v-if="quotePop && !side" ref="quoteEl" class="quote-pop" :style="{ left: `${quotePop.left}px`, top: `${quotePop.top}px` }" role="toolbar" aria-label="引用所选文字" @pointerdown.prevent>
+        <button type="button" @click="quoteAction('add')"><AppIcon name="plus" :size="13" />添加到对话<kbd>Ctrl ↓</kbd></button>
+        <button v-if="quotePop.from === 'main'" type="button" @click="quoteAction('side')"><AppIcon name="branch" :size="13" />在侧边对话提问<kbd>Ctrl →</kbd></button>
+        <button v-else type="button" @click="quoteAction('main')"><AppIcon name="arrow" :size="13" class="flip" />返回主对话提问<kbd>Ctrl ←</kbd></button>
+      </div>
+    </Transition></Teleport>
+  </aside>
+  <Teleport to="body"><div v-if="zoomed" class="image-zoom" role="dialog" aria-label="放大的图片" @click="zoomed = ''"><img :src="zoomed" alt="放大的图片" /></div></Teleport>
+</template>
+
+<style scoped>
+/* 阅读助手：与侧栏同一种液态玻璃。文字颜色由 glass-contrast 按身后图片调成深或浅（--ink/--secondary/--muted）；
+   控件是磨砂的扁平玻璃，输入栏是浮在底板上的一片薄玻璃，两者之间只有很轻的分隔。 */
+.ai-pane{--ink:var(--surface-ink);--control-ink:var(--ink);--secondary:var(--surface-secondary);--muted:var(--surface-muted);
+  --frost:color-mix(in srgb,var(--glass-light) 70%,transparent);--frost-hover:color-mix(in srgb,var(--glass-light) 100%,transparent);--hairline:color-mix(in srgb,var(--ink) 11%,transparent);
+  --bar-glass:color-mix(in srgb,var(--glass-light) 78%,transparent);
+  display:flex;flex-direction:column;height:100%;min-width:0;width:100%;background-color:var(--glass-3);background-image:var(--glass-sheen);--lens-blur:var(--glass-3-blur);--lens-saturate:var(--glass-sat);-webkit-backdrop-filter:var(--refraction, var(--glass-filter-3));backdrop-filter:var(--refraction, var(--glass-filter-3));border:1px solid var(--glass-outline);border-radius:var(--r-xl);box-shadow:var(--shadow-pane),var(--glass-edge);color:var(--ink);overflow:hidden;font-family:var(--font-ui)}
+button{font:inherit;cursor:pointer;color:var(--ink)}
+button:disabled{opacity:.4;cursor:default}
+/* 磨砂扁平玻璃按钮：一层薄雾与一道细高光，没有投影。助手面板本身已做背景模糊，内部不再嵌套 backdrop-filter，
+   这样弹出的模型卡片、对话记录能透过面板模糊下面的内容。 */
+.frost-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:var(--r-control);background:var(--frost);box-shadow:inset 0 1px 0 var(--glass-rim-soft);font-size:12px;font-weight:600;color:var(--ink)}
+.frost-button:hover:not(:disabled){background:var(--frost-hover)}
+.frost-button.primary{background:color-mix(in srgb,var(--accent) 82%,transparent);border-color:transparent;color:var(--accent-on,#fff)}
+.frost-button.primary:hover:not(:disabled){background:var(--accent)}
+/* 深色底图上（浅色字）面板用烟灰玻璃而不是发白的乳白玻璃；浅色底图上仍是白玻璃。 */
+.ai-pane[data-glass-ink='light']{background-color:rgb(14 18 24 / max(calc(.22 + var(--glass-a3) * .55), var(--glass-floor, 0)));--frost:rgb(255 255 255 / .09);--frost-hover:rgb(255 255 255 / .16);--bar-glass:rgb(255 255 255 / .1);--hairline:rgb(255 255 255 / .12)}
+/* 头部：浮在面板上的一条独立玻璃条，带一点高度，与下面的对话区分开。 */
+.ai-header{position:relative;z-index:8;display:flex;align-items:center;gap:4px;flex-shrink:0;height:48px;margin:8px 8px 0;padding:0 6px 0 8px;border:1px solid var(--hairline);border-radius:var(--r-lg);background:var(--bar-glass);box-shadow:inset 0 1px 0 var(--glass-rim-soft),0 8px 22px -14px rgb(0 0 0 / .45)}
+.ai-header.draggable{cursor:grab}
+.drag-grip{display:grid;place-items:center;width:18px;height:30px;margin-right:-2px;border-radius:6px;color:var(--muted);cursor:grab;opacity:.6}
+.drag-grip:hover{background:var(--frost);opacity:1}
+.history-host{position:relative;flex:1;min-width:0}
+.conversation-title{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;max-width:100%;height:40px;padding:0 10px;border:0;border-radius:var(--r-control);background:none;box-shadow:none;text-align:left}
+.conversation-title:hover,.conversation-title[aria-expanded='true']{background:var(--frost)}
+.title-text{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:700;letter-spacing:.1px}
+.conversation-title small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)}
+.header-button{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;padding:0;border:1px solid transparent;border-radius:var(--r-control);background:none;box-shadow:none;color:var(--secondary)}
+.side-toggle{position:relative}
+.side-toggle.on{background:var(--frost);border-color:var(--hairline);color:var(--ink)}
+.side-toggle.has::after{content:'';position:absolute;right:6px;top:6px;width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.header-button:hover:not(:disabled){background:var(--frost);border-color:var(--hairline);color:var(--ink)}
+.task-summary{flex:0 0 auto;padding:3px 8px;border-radius:var(--r-xs);background:var(--frost);font-size:10.5px;font-weight:600;color:var(--secondary);white-space:nowrap;font-variant-numeric:tabular-nums}
+/* 弹出的对话记录与问题预览：更厚的弹层玻璃。 */
+/* 对话记录用实底（和提问预览卡一样），不透出后面的对话文字。 */
+.history-menu{--ink:var(--surface-ink);--control-ink:var(--surface-ink);--secondary:var(--surface-secondary);--muted:var(--surface-muted);background:var(--surface);border:1px solid var(--line-soft);box-shadow:0 18px 44px -18px rgb(0 0 0 / .36),0 2px 6px rgb(0 0 0 / .08);color:var(--ink)}
+.history-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:30;width:min(300px,calc(100vw - 40px));max-height:min(420px,60vh);display:flex;flex-direction:column;padding:6px;border-radius:var(--r-lg);transform-origin:20px 0}
+.history-new{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:0;border-radius:var(--r-control);background:color-mix(in srgb,var(--ink) 6%,transparent);box-shadow:none;font-size:13px;font-weight:600}
+.history-new:hover{background:color-mix(in srgb,var(--ink) 10%,transparent)}
+.history-label{margin:12px 10px 6px;font-size:11px;font-weight:600;color:var(--muted)}
+.history-scope{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin:8px 0 4px;padding:2px;border-radius:var(--r-control);background:color-mix(in srgb,var(--ink) 6%,transparent)}
+.history-scope button{height:28px;padding:0;border:0;border-radius:calc(var(--r-control) - 2px);background:none;box-shadow:none;font-size:12px;font-weight:600;color:var(--muted)}
+.history-scope button[aria-selected='true']{background:color-mix(in srgb,var(--ink) 10%,var(--surface));color:var(--ink);box-shadow:0 1px 3px rgb(0 0 0 / .1)}
+.history-switch{display:flex;flex-wrap:wrap;gap:4px;padding:0 4px}
+.history-switch .history-label{width:100%;margin:10px 6px 2px}
+.history-switch button{display:block;max-width:100%;height:28px;padding:0 10px;border:1px solid var(--hairline);border-radius:var(--r-sm);background:none;box-shadow:none;font-size:12px;line-height:26px;text-align:left;overflow:hidden;white-space:nowrap}
+.history-switch button.current{cursor:default;opacity:1;background:color-mix(in srgb,var(--ink) 8%,transparent);font-weight:600}
+.history-switch button:not(.current):hover:not(:disabled){background:color-mix(in srgb,var(--ink) 6%,transparent)}
+.history-list{overflow:auto;min-height:0;scrollbar-width:none}
+.history-item{position:relative;display:flex;align-items:center;border-radius:var(--r-control)}
+.history-item:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}
+.history-item.current{background:color-mix(in srgb,var(--ink) 9%,transparent)}
+.history-open{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 12px;border:0;background:none;box-shadow:none;text-align:left}
+.history-open>span{display:flex;align-items:center;gap:5px;max-width:100%;min-width:0;overflow:hidden;white-space:nowrap;font-size:12.5px;font-weight:550}
+.branch-mark{flex-shrink:0;color:var(--muted)}
+.history-open small{font-size:10.5px;color:var(--muted)}
+.history-delete{display:grid;place-items:center;width:28px;height:28px;margin-right:6px;padding:0;border:0;border-radius:var(--r-sm);background:none;box-shadow:none;color:var(--muted);opacity:0}
+.history-item:hover .history-delete,.history-delete:focus-visible{opacity:1}
+.history-delete:hover{background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)}
+.history-empty{margin:10px;font-size:12px;color:var(--muted)}
+.history-pop-enter-active{transition:opacity var(--dur-2) var(--ease-out),transform var(--dur-bounce) var(--spring-snappy)}
+.history-pop-leave-active{transition:opacity var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out)}
+.history-pop-enter-from,.history-pop-leave-to{opacity:0;transform:translateY(-6px) scale(.95)}
+/* 消息区；原生滚动条隐藏，右侧导航条代替。 */
+.ai-columns{position:relative;flex:1;min-height:0;display:flex}
+.ai-message.compressed{opacity:.5}
+.summary-card{padding:10px 13px 12px;border-radius:12px;border:1px dashed var(--hairline);background:color-mix(in srgb,var(--ink) 3%,transparent)}
+.summary-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 6px;font-size:12.5px;font-weight:650}
+.summary-head span{font-weight:400;color:var(--muted);font-size:11.5px}
+.compressing-line{display:flex;align-items:center;gap:6px;color:var(--secondary);font-size:12.5px}
+.btw-card{position:relative;margin:0 12px 6px;padding:9px 12px 8px;max-height:40%;overflow:auto;border-radius:12px;border:1px solid var(--hairline);background:var(--bar-glass);box-shadow:0 8px 22px -14px rgb(0 0 0 / .3)}
+.btw-head{display:flex;align-items:center;gap:7px;margin:0 0 5px;font-size:12.5px}
+.btw-tag{padding:1px 6px;border-radius:5px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font:600 11px var(--font-mono,ui-monospace,monospace)}
+.btw-question{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--secondary)}
+.btw-answer{font-size:13.5px;line-height:1.65}
+.btw-wait{margin:2px 0;padding-left:0}
+.btw-wait:hover{background:none}
+.btw-card{display:flex;flex-direction:column;overflow:visible}
+.btw-body{min-height:0;overflow:auto}
+.btw-ask{margin:9px 0 4px;padding-top:7px;border-top:1px dashed var(--hairline);color:var(--secondary);font-size:12.5px}
+.btw-reply{display:flex;align-items:center;gap:4px;margin:7px 0 0;padding:2px 3px 2px 9px;border-radius:9px;background:color-mix(in srgb,var(--ink) 6%,transparent);box-shadow:inset 0 0 0 1px var(--hairline)}
+.btw-reply input{flex:1;min-width:0;min-height:0;height:24px;padding:0;border:0;outline:0;background:none!important;box-shadow:none!important;color:var(--ink);font:inherit;font-size:12.5px}
+.btw-tools{display:flex;align-items:center;gap:2px;margin:6px 0 -2px -4px}
+.btw-tools i{width:1px;height:12px;margin:0 4px;background:var(--hairline)}
+.btw-tools .meta-button.on{color:var(--accent);opacity:1}
+.btw-tools .meta-button:disabled{opacity:.3;cursor:default}
+.btw-pop-enter-active{transition:opacity var(--dur-2) var(--ease-soft),translate var(--dur-3) var(--spring-snappy)}
+.btw-pop-leave-active{transition:opacity var(--dur-1) var(--ease-soft)}
+.btw-pop-enter-from{opacity:0;translate:0 10px}.btw-pop-leave-to{opacity:0}
+.ai-composer{position:relative}
+.command-menu{position:absolute;left:12px;right:12px;bottom:calc(100% - 4px);z-index:20;display:grid;gap:2px;padding:5px;border-radius:12px;background:color-mix(in srgb,var(--surface) 95%,transparent);background-image:var(--popup-sheen,none);-webkit-backdrop-filter:blur(var(--popup-blur,18px)) saturate(var(--glass-sat,1.4));backdrop-filter:blur(var(--popup-blur,18px)) saturate(var(--glass-sat,1.4));border:1px solid var(--glass-outline);box-shadow:0 16px 36px -16px rgb(0 0 0 / .35)}
+.command-menu button{display:grid;grid-template-columns:auto auto 1fr;align-items:baseline;column-gap:8px;padding:7px 10px;border:0;border-radius:9px;background:none;box-shadow:none;text-align:left}
+.command-menu button.on{background:color-mix(in srgb,var(--ink) 8%,transparent)}
+.command-menu b{font:600 12.5px var(--font-mono,ui-monospace,monospace)}
+.command-args{color:var(--muted);font-size:11.5px}
+.command-label{font-size:12.5px;justify-self:end;color:var(--secondary)}
+.command-menu small{grid-column:1/-1;color:var(--muted);font-size:11px;margin-top:2px}
+.command-pop-enter-active,.command-pop-leave-active{transition:opacity var(--dur-1) var(--ease-soft),translate var(--dur-2) var(--spring-snappy)}
+.command-pop-enter-from,.command-pop-leave-to{opacity:0;translate:0 6px}
+.ai-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+.ai-side{position:relative;flex:0 0 auto;min-width:0;min-height:0;display:flex;padding-left:1px}
+.ai-side>.ai-pane{flex:1;min-width:260px}
+/* 嵌在主对话右边的附属对话：同一种助手，去掉自己的外框与底板，和主对话共用一张纸 / 一块玻璃。 */
+.ai-pane.embedded{background:none;border:0;border-radius:0;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.side-header{gap:8px}
+.side-badge{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;padding:3px 9px 3px 7px;border-radius:999px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink);font-size:12.5px;font-weight:650}
+.side-of{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px}
+/* 摘录卡片：从回答里带过来的一段，像贴进对话里的一张小纸条。 */
+.ai-message.note{margin-bottom:10px}
+.note-card{display:flex;align-items:center;gap:6px;margin-left:auto;width:fit-content;max-width:86%;height:26px;padding:0 4px 0 9px;border-left:2px solid color-mix(in srgb,var(--accent) 65%,transparent);border-radius:3px 8px 8px 3px;background:color-mix(in srgb,var(--accent) 7%,transparent);color:var(--secondary);font-size:12px}
+.note-icon{flex-shrink:0;color:var(--muted)}
+.note-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note-remove{display:grid;place-items:center;flex-shrink:0;width:18px;height:18px;padding:0;border:0;border-radius:50%;background:none;box-shadow:none;color:var(--muted);opacity:0;transition:opacity var(--dur-1) var(--ease-soft)}
+.note-card:hover .note-remove,.note-remove:focus-visible{opacity:1}
+.note-remove:hover{background:color-mix(in srgb,var(--ink) 9%,transparent);color:var(--ink)}
+.ai-message.note.arrived .note-card{animation:note-arrive 1.1s var(--ease-out)}
+@keyframes note-arrive{0%{background:color-mix(in srgb,var(--accent) 26%,transparent);scale:.96}30%{scale:1.02}100%{scale:1}}
+.ai-pane :deep(.note-flyer){position:absolute;left:0;top:0;z-index:60;max-width:240px;padding:6px 10px;border-radius:8px;background:var(--surface);color:var(--surface-ink);font-size:12px;line-height:1.45;box-shadow:0 10px 26px -10px rgb(0 0 0 / .45);border-left:3px solid var(--accent);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 主栏与侧栏之间就是一道细线；指针靠近时线变粗，可以左右拖。 */
+.side-divider{position:absolute;left:-5px;top:8px;bottom:8px;z-index:12;width:11px;cursor:col-resize;touch-action:none}
+.side-divider::before{content:'';position:absolute;left:5px;top:0;bottom:0;width:1px;background:var(--hairline);transition:background var(--dur-1) var(--ease-soft),width var(--dur-1) var(--ease-soft),left var(--dur-1) var(--ease-soft)}
+.side-divider:hover::before,.side-divider:active::before{left:4px;width:3px;border-radius:2px;background:color-mix(in srgb,var(--ink) 30%,transparent)}
+.side-col-enter-active,.side-col-leave-active{overflow:hidden;transition:width var(--dur-bounce) var(--spring-snappy),opacity var(--dur-2) var(--ease-soft)}
+.side-col-leave-active{transition-duration:var(--dur-3),var(--dur-2);transition-timing-function:var(--ease-out)}
+.side-col-enter-from,.side-col-leave-to{width:0 !important;opacity:0}
+.quote-pop{position:fixed;z-index:400;display:flex;gap:2px;padding:4px;border-radius:12px;translate:-50% -100%;background:color-mix(in srgb,var(--surface) 95%,transparent);background-image:var(--popup-sheen,none);-webkit-backdrop-filter:blur(var(--popup-blur,18px)) saturate(var(--glass-sat,1.4));backdrop-filter:blur(var(--popup-blur,18px)) saturate(var(--glass-sat,1.4));border:1px solid var(--glass-outline);box-shadow:0 12px 30px -12px rgb(0 0 0 / .35),var(--glass-edge,none)}
+.quote-pop button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:0;border-radius:9px;background:none;box-shadow:none;font-size:12.5px;white-space:nowrap}
+.quote-pop button:hover{background:color-mix(in srgb,var(--ink) 8%,transparent)}
+.quote-pop kbd{margin-left:2px;padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--muted);font:500 10.5px var(--font-ui)}
+.quote-pop .flip{rotate:180deg}
+.quote-pop-enter-active{transition:opacity var(--dur-1) var(--ease-soft),scale var(--dur-2) var(--spring-snappy)}
+.quote-pop-leave-active{transition:opacity var(--dur-1) var(--ease-soft)}
+.quote-pop-enter-from{opacity:0;scale:.92}.quote-pop-leave-to{opacity:0}
+.ai-body{position:relative;flex:1;min-height:0;display:flex;-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%)}
+/* 上下沿的淡出遮罩挂在外层 .ai-body 上，而不是滚动容器本身。对话列表单独成一层（will-change）：
+   半透明玻璃上的文字默认不走合成滚动，滚轮每动一帧都要把整屏文字重新栅格化，长回答里就一顿一顿的。 */
+.ai-messages{flex:1;min-width:0;overflow:auto;overscroll-behavior:contain;padding:18px 26px 8px 18px;scrollbar-width:none;will-change:transform}
+.ai-messages::-webkit-scrollbar{display:none}
+.scroll-rail{position:absolute;right:3px;top:6px;bottom:6px;width:14px;z-index:5;cursor:default;touch-action:none}
+.rail-thumb{position:absolute;right:5px;width:3px;min-height:18px;border-radius:2px;background:color-mix(in srgb,var(--ink) 18%,transparent);transition:width var(--dur-2) var(--spring-snappy),right var(--dur-2) var(--spring-snappy),background var(--dur-1) var(--ease-soft)}
+.scroll-rail:hover .rail-thumb{right:4px;width:5px;background:color-mix(in srgb,var(--ink) 28%,transparent)}
+.rail-ticks{position:absolute;right:5px;top:50%;z-index:6;display:flex;flex-direction:column;align-items:flex-end;max-height:calc(100% - 96px);padding:6px 0;transform:translateY(-50%)}
+/* 按钮是整格热区（宽 44px、高一格），看得见的刻度是里面的细线；只用黑白两色。 */
+.rail-mark{position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:flex-end;width:44px;height:var(--slot,8px);padding:0 4px 0 0;border:0;border-radius:0;background:transparent;box-shadow:none;cursor:pointer}
+.rail-mark::after{content:'';display:block;width:calc(10px + 16px * var(--grow,0));height:2px;border-radius:1px;background:color-mix(in srgb,var(--ink) calc(24% + 46% * var(--grow,0)),transparent);transition:width .18s var(--spring-snappy),background var(--dur-1) var(--ease-soft)}
+.rail-mark.hot::after,.rail-mark:focus-visible::after{width:30px;background:var(--ink)}
+.rail-mark:focus-visible{outline:none}
+.rail-mark:hover:not(:disabled){background:transparent;box-shadow:none}
+.rail-mark.current::after{background:color-mix(in srgb,var(--ink) 82%,transparent)}
+.rail-ticks:not(.hovering) .rail-mark.current::after{width:16px}
+/* 钉住的提问：刻度左边一个小圆点。 */
+.rail-mark.pinned::before{content:'';position:absolute;right:calc(18px + 16px * var(--grow,0));top:50%;width:4px;height:4px;margin-top:-2px;border-radius:50%;background:var(--ink);transition:right .18s var(--spring-snappy)}
+.rail-mark.pinned.hot::before{right:38px}
+/* 悬停卡片用实底（浅色主题白、深色主题深灰），不用玻璃。 */
+.rail-preview{position:absolute;right:50px;z-index:7;width:min(300px,calc(100% - 64px));padding:12px 38px 12px 14px;border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--line-soft);box-shadow:0 18px 44px -18px rgb(0 0 0 / .32),0 2px 6px rgb(0 0 0 / .06);color:var(--surface-ink);--ink:var(--surface-ink);--muted:var(--surface-muted);transform:translateY(-50%)}
+.rail-pin{position:absolute;top:8px;right:8px;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--muted);cursor:pointer;transition:background var(--dur-1) var(--ease-soft),color var(--dur-1) var(--ease-soft)}
+.rail-pin:hover{background:color-mix(in srgb,var(--ink) 8%,transparent);color:var(--ink)}
+.rail-pin.on{color:var(--ink);background:color-mix(in srgb,var(--ink) 10%,transparent)}
+.rail-preview strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px;font-weight:600;line-height:1.5}
+.rail-preview p{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin:6px 0 0;font-size:11.5px;line-height:1.55;color:var(--muted)}
+.rail-pop-enter-active{transition:opacity var(--dur-1) var(--ease-out),translate var(--dur-2) var(--spring-snappy)}
+.rail-pop-leave-active{transition:opacity var(--dur-1) var(--ease-out)}
+.rail-pop-enter-from,.rail-pop-leave-to{opacity:0;translate:6px 0}
+.ai-welcome{display:flex;flex-direction:column;align-items:center;text-align:center;padding:8vh 6px 8px;animation:zg-rise-in var(--dur-bounce) var(--spring-snappy) both}
+.ai-welcome-mark{margin-bottom:16px;animation:zg-pop-in var(--dur-bounce) var(--spring-bouncy) both}
+/* 问候固定用内置的 Anthropic Serif（不随阅读字体设置变化），像 Claude 的「Good afternoon」；
+   古诗没有对应的西文字形，退到宋体 / 思源宋体，仍是衬线。 */
+.ai-welcome-lead{max-width:100%;margin:0;font-family:'Anthropic Serif','Source Han Serif SC','Noto Serif CJK SC','Noto Serif SC','Songti SC','STSong','SimSun',serif;font-size:27px;font-weight:400;line-height:1.35;letter-spacing:-.012em;text-wrap:balance;font-optical-sizing:auto}
+.ai-welcome-lead:lang(zh-CN){font-size:22px;letter-spacing:.06em;line-height:1.6}
+.ai-message{margin-bottom:18px;animation:zg-rise-in var(--dur-3) var(--ease-out) backwards}
+/* 问题和它的回答挨得近一些：问题下面的操作按钮浮在间隙里，不再单独占一行。 */
+.ai-message.user{position:relative;display:flex;flex-direction:column;align-items:flex-end;gap:2px;margin-bottom:10px}
+.user-question{max-width:88%;padding:9px 14px;border-radius:var(--r-lg) var(--r-lg) var(--r-xs) var(--r-lg);background:color-mix(in srgb,var(--ink) 9%,transparent);border:1px solid var(--hairline);font-size:13.5px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere}
+.question-actions{position:absolute;right:0;top:100%;z-index:2;display:flex;gap:2px;opacity:0;pointer-events:none;transition:opacity var(--dur-2) var(--ease-out)}
+.ai-message.user:hover .question-actions,.question-actions:focus-within{pointer-events:auto}
+.ai-message.user:hover .question-actions,.question-actions:focus-within{opacity:1}
+.question-editor{width:min(100%,520px);padding:8px;border-radius:var(--r-lg);background:color-mix(in srgb,var(--ink) 7%,transparent);border:1px solid var(--hairline);animation:zg-pop-in var(--dur-3) var(--spring-snappy) both}
+.question-editor textarea{min-height:64px;padding:6px 8px;border-radius:var(--r-sm)}
+.editor-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:6px}
+/* 思考：Claude Code 式的转动星标 + 随机英文动词 + 用时，文字有流光；展开看完整思路。 */
+.thinking{display:inline-flex;align-items:center;gap:7px;max-width:100%;height:28px;padding:0 10px 0 8px;margin-bottom:6px;border:0;border-radius:var(--r-control);background:none;box-shadow:none;font-size:12px;color:var(--muted)}
+.thinking:hover{background:var(--frost);color:var(--secondary)}
+.thinking-star{display:grid;place-items:center;width:14px;font-size:14px;line-height:1;color:#d97757;font-family:'Segoe UI Symbol','Apple Symbols','Noto Sans Symbols 2',var(--font-ui)}
+.thinking-label{font-weight:600;white-space:nowrap}
+.thinking.live .thinking-label{--shimmer-base:color-mix(in srgb,var(--muted) 72%,transparent);background:linear-gradient(90deg,var(--shimmer-base) 0%,var(--shimmer-base) 38%,var(--ink) 47%,var(--ink) 53%,var(--shimmer-base) 62%,var(--shimmer-base) 100%);background-size:300% 100%;background-position:100% 0;-webkit-background-clip:text;background-clip:text;color:transparent;animation:think-shimmer 2s linear infinite}
+/* Codex 式流光：一道亮带从文字左侧扫到右侧（背景图是文字的 3 倍宽，位置 100% → 0% 让亮带自左向右穿过）。 */
+@keyframes think-shimmer{from{background-position:100% 0}to{background-position:0% 0}}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.thinking-meta{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thinking-chevron{opacity:.55;transition:transform var(--dur-3) var(--spring-snappy)}
+.thinking.open .thinking-chevron{transform:rotate(180deg)}
+.thinking-direction{margin:-2px 0 8px 10px;padding-left:12px;border-left:2px solid var(--hairline);font-size:12px;line-height:1.6;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:zg-fade-in var(--dur-2) var(--ease-out)}
+.reasoning-body{margin:0 0 10px 10px;padding:2px 0 2px 12px;border-left:2px solid var(--hairline);font-size:12px;line-height:1.75;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
+/* 回答正文：衬线正文（Anthropic Serif 一类），表格与代码参照 Claude 的排法。 */
+.answer-body{font-size:14.5px;line-height:1.75;overflow-wrap:anywhere;font-family:var(--font-answer, var(--font-reading));letter-spacing:.005em}
+.answer-body :deep(>:first-child){margin-top:0}
+.answer-body :deep(>:last-child){margin-bottom:0}
+.answer-body :deep(p){margin:0 0 .85em}
+.answer-body :deep(h1),.answer-body :deep(h2),.answer-body :deep(h3),.answer-body :deep(h4){font-family:var(--font-answer, var(--font-reading));line-height:1.35;margin:1.2em 0 .5em;font-weight:650}
+.answer-body :deep(h1){font-size:1.3em}
+.answer-body :deep(h2){font-size:1.18em}
+.answer-body :deep(h3){font-size:1.06em}
+.answer-body :deep(h4){font-size:1em}
+.answer-body :deep(ul),.answer-body :deep(ol){margin:0 0 .85em;padding-left:1.4em}
+.answer-body :deep(li){margin:.25em 0}
+.answer-body :deep(li>p){margin:0}
+.answer-body :deep(blockquote){margin:0 0 .85em;padding:.1em 0 .1em .9em;border-left:3px solid var(--hairline);color:var(--secondary)}
+.answer-body :deep(hr){border:0;border-top:1px solid var(--hairline);margin:1.4em 0}
+.answer-body :deep(a){color:var(--ink);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--ink) 35%,transparent);text-underline-offset:3px}
+.answer-body :deep(strong){font-weight:650}
+.answer-body :deep(code){font-family:var(--font-mono);font-size:.84em;padding:.12em .38em;border-radius:5px;background:color-mix(in srgb,var(--ink) 8%,transparent);border:1px solid var(--hairline);overflow-wrap:anywhere;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.answer-body :deep(.answer-code-block){--ink:var(--surface-ink);margin:0 0 1em;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;background:var(--surface-2);color:var(--surface-ink)}
+.answer-body :deep(.answer-code-head){display:flex;align-items:center;justify-content:space-between;height:30px;padding:0 6px 0 12px;font-family:var(--font-ui);font-size:11px;color:var(--surface-muted);border-bottom:1px solid var(--line-soft)}
+.answer-body :deep(.answer-copy){display:grid;place-items:center;width:26px;height:24px;padding:0;border:0;border-radius:6px;background:none;box-shadow:none;color:var(--surface-muted)}
+.answer-body :deep(.answer-copy svg){grid-area:1/1;transition:opacity var(--dur-1) var(--ease-soft),scale var(--dur-2) var(--spring-snappy)}
+.answer-body :deep(.answer-copy .copy-done){opacity:0;scale:.6}
+.answer-body :deep(.answer-copy.copied .copy-idle){opacity:0;scale:.6}
+.answer-body :deep(.answer-copy.copied .copy-done){opacity:1;scale:1;color:var(--success,#3f8f5a)}
+.answer-body :deep(.answer-copy:hover){background:var(--fill-3);color:var(--surface-ink)}
+.answer-body :deep(pre.answer-code){margin:0;padding:10px 12px;overflow:auto;font-size:12px;line-height:1.6}
+.answer-body :deep(pre.answer-code code){padding:0;border:0;background:none;font-size:inherit}
+/* 表格：外框圆角细线、表头浅底、只有横线，与 Claude 的回答一致。 */
+.answer-body :deep(.answer-table){overflow:auto;margin:.2em 0 1em;border:1px solid var(--hairline);border-radius:var(--r-md)}
+.answer-body :deep(table){border-collapse:collapse;min-width:100%;font-family:var(--font-reading);font-size:13.5px;font-variant-numeric:tabular-nums}
+.answer-body :deep(th),.answer-body :deep(td){padding:9px 14px;border-bottom:1px solid var(--hairline);text-align:left;vertical-align:top}
+.answer-body :deep(th){background:color-mix(in srgb,var(--ink) 5%,transparent);font-weight:500;color:var(--secondary)}
+.answer-body :deep(tr:last-child td){border-bottom:0}
+.answer-body :deep(.answer-diagram){margin:0 0 1em;padding:12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);color:var(--surface-ink);overflow:auto;text-align:center}
+.answer-body :deep(.answer-diagram.rendered svg){max-width:100%;height:auto}
+.answer-body :deep(.answer-diagram figcaption){font-size:11px;color:var(--surface-muted);margin-top:6px}
+.answer-body :deep(.answer-diagram pre){text-align:left;margin:0;font-size:12px}
+.answer-body :deep(.markdown-math){overflow-x:auto;overflow-y:hidden;margin:0 0 .85em}
+.answer-body :deep(.katex){font-size:1.06em}
+/* 引用：中性小标签。 */
+.answer-body :deep(.inline-citation){display:inline-flex;align-items:center;height:20px;margin:0 2px;padding:0 7px;border:1px solid var(--hairline);border-radius:var(--r-xs);background:var(--frost);box-shadow:none;font-family:var(--font-ui);font-size:11px;font-weight:600;color:var(--secondary);vertical-align:1px}
+.answer-body :deep(.inline-citation:hover){background:var(--frost-hover);color:var(--ink)}
+.source-list{margin:8px 0 4px;font-size:12px}
+.source-heading{margin:4px 0 0;font-size:11.5px;font-weight:650;color:var(--secondary)}
+/* 问题气泡下面：这一问一起发给 AI 的截图、所选文字与文档。 */
+.sent-context{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;max-width:88%;margin:5px 0 0 auto}
+.sent-context img{width:38px;height:28px;object-fit:cover;border-radius:6px;border:1px solid var(--hairline)}
+.sent-context span{display:inline-flex;align-items:center;gap:4px;max-width:100%;height:24px;padding:0 9px;overflow:hidden;border-radius:var(--r-sm);background:var(--frost);border:1px solid var(--hairline);color:var(--secondary);font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.sent-context .sent-quote{display:block;line-height:22px}
+.source-list button{display:block;width:100%;margin-top:6px;padding:8px 11px;border:1px solid var(--hairline);border-radius:var(--r-md);background:var(--frost);box-shadow:none;text-align:left}
+.source-list button:hover{background:var(--frost-hover)}
+.source-list span{font-size:11px;font-weight:650;color:var(--ink)}
+.source-list small{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:3px;font-size:11.5px;line-height:1.6;color:var(--muted)}
+.answer-meta{display:flex;align-items:center;gap:2px;min-height:28px;margin-top:6px;font-size:11px;color:var(--muted);opacity:.75;transition:opacity var(--dur-2) var(--ease-out)}
+.ai-message:hover .answer-meta,.answer-meta:focus-within{opacity:1}
+.meta-button{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid transparent;border-radius:var(--r-sm);background:none;box-shadow:none;color:var(--muted)}
+.meta-button:hover:not(:disabled){background:var(--frost);border-color:var(--hairline);color:var(--ink)}
+.meta-time{margin-left:6px;font-variant-numeric:tabular-nums;opacity:0;transition:opacity var(--dur-2) var(--ease-out)}
+.answer-meta:hover .meta-time,.answer-meta:focus-within .meta-time{opacity:1}
+/* 和框选截图一样：周围虚化压暗，图片外一圈白色细线和主色辉光。 */
+.image-zoom{position:fixed;inset:0;z-index:900;display:grid;place-items:center;padding:28px;background:color-mix(in srgb,var(--canvas-deep,#0c101a) 30%,rgb(12 16 26 / .42));-webkit-backdrop-filter:blur(9px) saturate(120%);backdrop-filter:blur(9px) saturate(120%);cursor:zoom-out;animation:zoom-in var(--dur-2) var(--ease-out) both}
+.image-zoom img{max-width:100%;max-height:100%;border-radius:7px;background:#fff;outline:1.5px solid rgb(255 255 255 / .92);box-shadow:0 0 0 1px rgb(0 0 0 / .22),0 0 40px 4px color-mix(in srgb,var(--accent) 45%,transparent)}
+/* 图片从小图的大小弹开。 */
+.image-zoom img{animation:zoom-pop .34s var(--spring-snappy,ease-out) both,zoom-glow 2.6s var(--ease-soft,ease-in-out) .34s 2}
+@keyframes zoom-pop{from{opacity:0;scale:.82}}
+@keyframes zoom-glow{50%{box-shadow:0 0 0 1px rgb(0 0 0 / .22),0 0 60px 8px color-mix(in srgb,var(--accent) 60%,transparent)}}
+@media(prefers-reduced-motion:reduce){.image-zoom img{animation:none}}
+.sent-context img{cursor:zoom-in}
+@keyframes zoom-in{from{opacity:0}}
+.meta-flag{margin-left:4px;padding:1px 7px;border-radius:var(--r-xs);background:var(--frost);font-weight:600}
+.meta-flag.error{background:color-mix(in srgb,var(--danger) 14%,transparent);color:var(--danger)}
+.ai-status{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.ai-error{margin:0 0 12px;padding:9px 12px;border-radius:var(--r-md);background:color-mix(in srgb,var(--danger) 12%,transparent);border:1px solid color-mix(in srgb,var(--danger) 25%,transparent);font-size:12px;line-height:1.6;color:var(--danger);overflow-wrap:anywhere}
+/* 输入栏：一片薄玻璃，只用细边与内高光与底板分开，没有厚重投影。 */
+.ai-composer{flex-shrink:0;padding:6px 10px 10px;container:composer / inline-size}
+/* 输入栏很窄时（最小窗口）芯片才允许省略文字；平时完整显示「文档上下文」，由模型按钮先让出宽度。 */
+@container composer (max-width: 300px){.context-switch{flex-shrink:1}}
+@container composer (max-width: 290px){.context-label{display:none}.context-switch{padding:0 7px}}
+.composer-field{position:relative;border:1px solid var(--hairline);border-radius:var(--r-lg);background:var(--bar-glass);box-shadow:inset 0 1px 0 var(--glass-rim-soft),0 1px 2px rgb(0 0 0 / .04);transition:border-color var(--dur-2) var(--ease-out),background var(--dur-2) var(--ease-out)}
+.composer-field:focus-within{border-color:color-mix(in srgb,var(--ink) 24%,transparent)}
+.composer-resize{position:absolute;left:50%;top:-6px;width:56px;height:12px;margin-left:-28px;cursor:ns-resize;z-index:2;touch-action:none}
+.composer-resize::after{content:'';position:absolute;left:18px;right:18px;top:4px;height:4px;border-radius:2px;background:color-mix(in srgb,var(--ink) 25%,transparent);opacity:0;transition:opacity var(--dur-2) var(--ease-out)}
+.composer-field:hover .composer-resize::after,.composer-resize:active::after{opacity:1}
+textarea{box-sizing:border-box;display:block;width:100%;min-height:52px;max-height:none;padding:12px 14px 4px;resize:none;border:0;border-radius:var(--r-lg) var(--r-lg) 0 0;background:transparent;box-shadow:none;color:var(--ink);font:inherit;font-family:var(--font-ui);font-size:13.5px;line-height:1.65;outline:none}
+textarea:hover:not(:focus),textarea:focus{background:transparent;border:0;box-shadow:none}
+textarea::placeholder{color:var(--muted);font-family:'Anthropic Serif','Source Han Serif SC','Noto Serif CJK SC','Songti SC','SimSun',var(--font-ui);letter-spacing:.02em}
+.prompt-box{position:relative}
+/* 预判的问题：与占位语同位置的一行淡字，末尾是按键提示。 */
+.prompt-ghost{position:absolute;left:14px;right:14px;top:12px;margin:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 6px;font-size:13.5px;line-height:1.65;color:var(--muted);pointer-events:none;animation:zg-fade-in var(--dur-2) var(--ease-out)}
+.prompt-ghost span{color:color-mix(in srgb,var(--ink) 52%,transparent)}
+.prompt-ghost kbd{padding:0 5px;border:1px solid var(--hairline);border-radius:5px;background:var(--frost);font:600 10.5px/16px var(--font-ui);color:var(--secondary)}
+.prompt-ghost small{font-size:11px;margin-right:4px}
+.ai-selection-context{display:flex;align-items:flex-start;gap:6px;padding:10px 10px 0}
+.selection-chip{display:flex;align-items:center;gap:8px;min-width:0;max-width:calc(100% - 28px);padding:4px 10px 4px 4px;border:1px solid var(--hairline);border-radius:var(--r-md);background:var(--frost);cursor:pointer;transition:opacity var(--dur-2) var(--ease-out)}
+.selection-chip.off{opacity:.45}
+.selection-chip input{position:absolute;opacity:0;pointer-events:none}
+.selection-chip:focus-within{box-shadow:0 0 0 2px var(--accent-ring)}
+.selection-chip img{width:44px;height:34px;border-radius:var(--r-sm);object-fit:cover;flex-shrink:0;background:#fff}
+.selection-text{min-width:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:6px;font-size:12px}
+.selection-chip small{flex-shrink:0;font-size:11px;color:var(--muted)}
+.chip-remove{display:grid;place-items:center;width:22px;height:22px;margin-top:8px;padding:0;border:0;border-radius:var(--r-xs);background:var(--frost);box-shadow:none}
+.chip-remove:hover{background:var(--frost-hover)}
+/* 输入框里的图片：一排小图，没有文字。留住的那些有一圈红框；刚截的那张是虚线框，点一下就留住。 */
+.composer-shots{--shot-red:#e5484d;display:flex;flex-wrap:wrap;gap:14px;padding:14px 15px 2px}
+.shot{position:relative;display:block;border-radius:8px;transition:scale .22s var(--spring-snappy,ease-out),rotate .22s var(--spring-snappy,ease-out)}
+/* 刚截的那张带着取景框的光：一圈主色细线和光晕，亮两下；留住后换成红框和淡淡的红晕。 */
+.shot img{display:block;width:60px;height:46px;border-radius:8px;object-fit:cover;background:#fff;outline:1.5px solid color-mix(in srgb,var(--accent) 72%,#fff);outline-offset:2px;box-shadow:0 0 14px 1px color-mix(in srgb,var(--accent) 38%,transparent);cursor:pointer;transition:outline-color .2s,outline-offset .25s var(--spring-snappy,ease-out),box-shadow .25s}
+.shot:not(.kept) img{animation:shot-glow 2.2s var(--ease-soft,ease-in-out) .35s 2}
+@keyframes shot-glow{50%{box-shadow:0 0 24px 4px color-mix(in srgb,var(--accent) 62%,transparent)}}
+.shot:not(.kept):hover img{outline-color:var(--shot-red);box-shadow:0 0 18px 2px color-mix(in srgb,var(--shot-red) 45%,transparent)}
+.shot.kept img{outline:2px solid var(--shot-red);outline-offset:1px;box-shadow:0 0 0 4px color-mix(in srgb,var(--shot-red) 14%,transparent),0 0 16px 1px color-mix(in srgb,var(--shot-red) 34%,transparent);cursor:zoom-in}
+.shot.kept{animation:shot-kept .42s var(--spring-snappy,ease-out)}
+.shot:hover{scale:1.05}
+.shot:active{scale:.97}
+.shot-remove{position:absolute;top:-7px;right:-7px;display:grid;place-items:center;width:18px;height:18px;min-height:0;padding:0;border:0;border-radius:50%;background:var(--surface);box-shadow:0 1px 3px rgb(0 0 0 / .25);color:var(--ink);opacity:0;scale:.6;transition:opacity .15s,scale .18s var(--spring-snappy,ease-out)}
+.shot:hover .shot-remove,.shot-remove:focus-visible{opacity:1;scale:1}
+@keyframes shot-kept{0%{scale:1}35%{scale:.9}70%{scale:1.08}100%{scale:1}}
+.shot-enter-active{transition:opacity .22s var(--ease-out),scale .34s var(--spring-snappy,ease-out),translate .34s var(--spring-snappy,ease-out)}
+.shot-leave-active{position:absolute;transition:opacity .16s,scale .16s}
+.shot-move{transition:translate .3s var(--spring-snappy,ease-out)}
+.shot-enter-from{opacity:0;scale:.5;translate:0 10px}.shot-leave-to{opacity:0;scale:.6}
+:root[data-style='warm'] .composer-shots{--shot-red:var(--accent)}
+:root[data-style='sketch'] .composer-shots{--shot-red:var(--red-pencil,#c0392b)}
+/* 草稿主题：小图像一张张贴上去的照片，微微歪着；留住的是红铅笔圈出来的。 */
+:root[data-style='sketch'] .shot{rotate:-1.5deg}
+:root[data-style='sketch'] .shot:nth-child(even){rotate:1.6deg}
+:root[data-style='sketch'] .shot img{border-radius:2px;outline:1.2px dashed var(--pencil-soft,#8a8578);box-shadow:none;animation:none}
+:root[data-style='sketch'] .shot.kept img{outline:2px solid var(--shot-red);outline-offset:2px;box-shadow:none;filter:none}
+@media(prefers-reduced-motion:reduce){.shot.kept{animation:none}}
+/* 输入框里攒的摘录：一行一枚，和输入框连成一体，悬停看全文。 */
+.ai-excerpts{display:flex;flex-direction:column;gap:4px;padding:9px 10px 0}
+.excerpt-chip{display:flex;align-items:center;gap:6px;min-width:0;height:24px;padding:0 3px 0 8px;border-left:2px solid color-mix(in srgb,var(--accent) 65%,transparent);border-radius:3px 7px 7px 3px;background:color-mix(in srgb,var(--accent) 7%,transparent);color:var(--secondary);font-size:12px}
+.excerpt-chip .note-icon{flex:none;opacity:.7}
+.excerpt-chip .note-text{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.excerpt-chip .note-remove{opacity:.55}
+.excerpt-chip:hover .note-remove{opacity:1}
+.excerpt-chip.arrived{animation:note-arrive 1.1s var(--ease-out)}
+.excerpt-enter-active,.excerpt-leave-active{transition:opacity var(--dur-2) var(--ease-out),translate var(--dur-2) var(--ease-out)}
+.excerpt-enter-from{opacity:0;translate:0 6px}.excerpt-leave-to{opacity:0}
+.sent-context .sent-excerpt{display:inline-flex;gap:4px}
+.attach-button{display:grid;place-items:center;flex-shrink:0;width:30px;height:30px;padding:0;border:0;border-radius:var(--r-control);background:transparent;box-shadow:none;color:var(--muted)}
+.attach-button:hover:not(:disabled){background:var(--frost-hover);color:var(--ink)}
+.attach-file{display:none}
+.composer-actions{display:flex;align-items:center;gap:6px;min-width:0;padding:4px 8px 8px}
+.composer-space{flex:1}
+/* 文档上下文：芯片里带一枚小开关。开 = 实心墨色胶囊、圆点在右；关 = 空心描边、圆点在左。
+   墨色跟随 glass-contrast 的深浅判断，所以浅色底图上是深色实心，深色底图上是浅色实心，都一眼可辨。 */
+/* 文档上下文：一枚圆角方块开关（与其他控件一样偏方）。关闭时是安静的描边小书本，图标上划一道斜线；开启时整枚胶囊带上主色的玻璃底，
+   书本与文字变成主色，斜线收起。深色、浅色主题和深浅字色的玻璃上都用同一套主色。 */
+.context-switch{--context-on:var(--accent);position:relative;display:inline-flex;align-items:center;gap:6px;min-width:0;flex-shrink:0;height:30px;padding:0 11px 0 9px;border:1px solid transparent;border-radius:var(--r-control);background:transparent;font-size:12px;font-weight:550;color:var(--muted);cursor:pointer;white-space:nowrap;transition:background var(--dur-2) var(--ease-out),border-color var(--dur-2) var(--ease-out),color var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out),transform var(--dur-press) var(--spring-press)}
+.context-switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.context-switch:hover{background:var(--frost);color:var(--secondary)}
+.context-switch:active{transform:scale(.96)}
+.context-switch.on{border-color:color-mix(in srgb,var(--context-on) 34%,transparent);background:color-mix(in srgb,var(--context-on) 15%,transparent);color:var(--context-on);font-weight:650;box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 35%,transparent),0 3px 10px -6px color-mix(in srgb,var(--context-on) 70%,transparent)}
+.context-switch.on:hover{background:color-mix(in srgb,var(--context-on) 21%,transparent)}
+.context-switch:focus-within{box-shadow:0 0 0 2px var(--accent-ring)}
+.context-glyph{position:relative;display:grid;place-items:center;flex-shrink:0;width:16px;height:16px;pointer-events:none}
+.context-glyph svg{transition:transform var(--dur-bounce) var(--spring-bouncy)}
+.context-switch.on .context-glyph svg{transform:scale(1.08)}
+.context-slash{position:absolute;left:50%;top:50%;width:19px;height:1.6px;margin:-.8px 0 0 -9.5px;border-radius:2px;background:currentColor;box-shadow:0 0 0 1.2px var(--bar-glass);transform:rotate(-45deg) scaleX(1);transition:transform var(--dur-3) var(--spring-snappy),opacity var(--dur-2) var(--ease-out)}
+.context-switch.on .context-slash{opacity:0;transform:rotate(-45deg) scaleX(0)}
+.context-label{min-width:0;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+/* 玻璃按身后的明暗换成相反字色时，主色也换成对应的深浅，保证开启状态读得清楚。 */
+:root:not([data-theme='dark']) .ai-pane[data-glass-ink='light'] .context-switch{--context-on:color-mix(in srgb,var(--accent) 45%,#fff)}
+:root[data-theme='dark'] .ai-pane[data-glass-ink='dark'] .context-switch{--context-on:color-mix(in srgb,var(--accent) 60%,#000)}
+.context-ring{--ratio:0;display:grid;place-items:center;width:24px;height:24px;flex-shrink:0}
+.context-ring svg{width:18px;height:18px;rotate:-90deg}
+.context-ring circle{fill:none;stroke:color-mix(in srgb,var(--ink) 14%,transparent);stroke-width:2.6}
+.context-ring .ring-value{stroke:var(--secondary);stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--ratio) * 100);transition:stroke-dashoffset var(--dur-smooth) var(--spring-smooth)}
+.model-picker-host{position:relative;min-width:0;display:flex}
+.model-picker{display:flex;align-items:center;gap:6px;min-width:64px;max-width:190px;flex-shrink:1;height:30px;padding:0 9px 0 11px;border:1px solid transparent;border-radius:var(--r-control);background:none;box-shadow:none;font-size:12px;color:var(--secondary)}
+.model-picker:hover:not(:disabled),.model-picker[aria-expanded='true']{background:var(--frost);border-color:var(--hairline);color:var(--ink)}
+.picker-model{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.model-picker.empty .picker-model{color:var(--accent)}
+.picker-effort{flex:0 0 auto;font-weight:500;color:var(--muted)}
+.picker-fast{flex:none;margin-left:-2px;color:var(--accent)}
+.picker-chevron{flex:0 0 auto;opacity:.55;transition:transform var(--dur-3) var(--spring-snappy)}
+.model-picker[aria-expanded='true'] .picker-chevron{transform:rotate(180deg)}
+.send-button{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;padding:0;border:1px solid transparent;border-radius:var(--r-control);background:color-mix(in srgb,var(--accent) 84%,transparent);box-shadow:inset 0 1px 0 rgb(255 255 255 / .25);color:var(--accent-on,#fff);transition:transform var(--dur-press) var(--spring-press),opacity var(--dur-1) var(--ease-soft),background var(--dur-1) var(--ease-soft)}
+.send-button:hover:not(:disabled){background:var(--accent);color:var(--accent-on,#fff);transform:scale(1.05)}
+.send-button:active:not(:disabled){transform:scale(.94)}
+.send-button:disabled{background:var(--frost);border-color:var(--hairline);color:var(--muted);box-shadow:none;opacity:1}
+.send-button.stop{background:var(--frost-hover);border-color:var(--hairline);color:var(--ink)}
+.stop-square{width:10px;height:10px;border-radius:2px;background:currentColor}
+/* 模型与强度抽屉：高度从 0 弹到内容高度（interpolate-size 让 auto 也能过渡），内容随之从上方滑入、淡入。 */
+.composer-drawer{interpolate-size:allow-keywords;height:0;overflow:hidden;padding:0 8px;opacity:0;transition:height var(--dur-bounce) var(--spring-snappy),opacity var(--dur-2) var(--ease-out)}
+.composer-drawer.open{height:auto;opacity:1}
+.composer-drawer>*{translate:0 -10px;transition:translate var(--dur-bounce) var(--spring-snappy)}
+.composer-drawer.open>*{translate:0 0}
+.composer-drawer:not(.open){visibility:hidden;transition:height var(--dur-spring) var(--spring-snappy),opacity var(--dur-1) var(--ease-out),visibility 0s linear var(--dur-spring)}
+@media(prefers-reduced-motion:reduce){.composer-drawer,.composer-drawer>*{transition:none}}
+@media(prefers-reduced-motion:reduce){.ai-message,.thinking-label,.question-editor,.prompt-ghost{animation:none!important}}
+@media(prefers-reduced-transparency:reduce),(prefers-contrast:more){.ai-body{-webkit-mask-image:none;mask-image:none}}
+</style>
