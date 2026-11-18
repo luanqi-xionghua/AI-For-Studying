@@ -43,7 +43,7 @@
 
 ## 手动升级
 
-在[桌面版 0.10.54 发布页](https://github.com/graohene10-spec/pdf-copilot/releases/tag/desktop-v0.10.54)选择对应附件；以后升级可从[发布列表](https://github.com/graohene10-spec/pdf-copilot/releases)选择较新的 `desktop-v` 版本。
+在[桌面版 0.10.54 发布页](https://github.com/graohene10-spec/pdf-copilot/releases/tag/desktop-v0.10.54)选择对应附件；以后升级可从[发布列表](https://github.com/luanqi-xionghua/AI-For-Reading/releases)选择较新的 `desktop-v` 版本。
 
 **安装版**：下载 `kaizhi_0.10.54_x64-setup.exe`，关闭开智后运行安装包即可。从 0.10.1 及更早版本升级时，新版装进 `%LOCALAPPDATA%\OpenIntelligence`，旧的「开智」安装会在新版第一次启动时静默卸载。无需先卸载，也无需重新导入文档。
 

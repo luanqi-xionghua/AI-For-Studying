@@ -3,8 +3,8 @@
  * comparison, desktop release selection and checksum lookup. The desktop app
  * performs the same selection natively (backend/src/updater.rs).
  */
-export const RELEASES_API = 'https://api.github.com/repos/graohene10-spec/pdf-copilot/releases?per_page=30'
-export const REPO_PAGE = 'https://github.com/graohene10-spec/pdf-copilot'
+export const RELEASES_API = 'https://api.github.com/repos/luanqi-xionghua/AI-For-Reading/releases?per_page=30'
+export const REPO_PAGE = 'https://github.com/luanqi-xionghua/AI-For-Reading'
 export const RELEASES_PAGE = `${REPO_PAGE}/releases`
 export const DESKTOP_TAG_PREFIX = 'desktop-v'
 export const SETUP_SUFFIX = '_x64-setup.exe'

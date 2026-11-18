@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseVersion, formatVersion, compareVersionText, selectRelease, checksumFor, setupAsset, truncateNotes, toUpdateInfo, isReleasePage, isRepoPage, shouldOffer, MAX_NOTES_CHARS } from '../../src/ui/update-select.ts'
 
-const release = (tag, extra = {}) => ({ tag_name: tag, draft: false, prerelease: false, html_url: `https://github.com/graohene10-spec/pdf-copilot/releases/tag/${tag}`, assets: [], ...extra })
+const release = (tag, extra = {}) => ({ tag_name: tag, draft: false, prerelease: false, html_url: `https://github.com/luanqi-xionghua/AI-For-Reading/releases/tag/${tag}`, assets: [], ...extra })
 
 test('semver parsing and precedence follow SemVer 2.0, including beta.N ordering', () => {
   assert.deepEqual(parseVersion('0.3.0-beta.2'), { major: 0, minor: 3, patch: 0, pre: ['beta', 2] })
@@ -50,15 +50,15 @@ test('update info is bounded, labels test builds and only links to the repositor
   assert.equal(info.version, '0.3.0-beta.1')
   assert.equal(info.name, '开智 0.3.0-beta.1')
   assert.equal(info.prerelease, true)
-  assert.equal(info.htmlUrl, 'https://github.com/graohene10-spec/pdf-copilot/releases/tag/desktop-v0.3.0-beta.1')
+  assert.equal(info.htmlUrl, 'https://github.com/luanqi-xionghua/AI-For-Reading/releases/tag/desktop-v0.3.0-beta.1')
   assert.equal([...info.notes].length, MAX_NOTES_CHARS + 3)
   assert.equal(truncateNotes('短'), '短')
-  assert.ok(isReleasePage('https://github.com/graohene10-spec/pdf-copilot/releases/tag/desktop-v0.2.2'))
-  assert.ok(isRepoPage('https://github.com/graohene10-spec/pdf-copilot/blob/desktop-v0.2.2/desktop/README.md'))
-  for (const url of ['https://github.com/graohene10-spec/pdf-copilot/blob/main/README.md', 'http://github.com/graohene10-spec/pdf-copilot/releases', 'https://github.com/graohene10-spec/pdf-copilot-evil/releases', 'https://github.com.evil/graohene10-spec/pdf-copilot/releases', 'https://github.com/graohene10-spec/pdf-copilot/releases?x=1', 'https://github.com/graohene10-spec/pdf-copilot/releases/%22', 'javascript:alert(1)']) {
+  assert.ok(isReleasePage('https://github.com/luanqi-xionghua/AI-For-Reading/releases/tag/desktop-v0.2.2'))
+  assert.ok(isRepoPage('https://github.com/luanqi-xionghua/AI-For-Reading/blob/desktop-v0.2.2/desktop/README.md'))
+  for (const url of ['https://github.com/luanqi-xionghua/AI-For-Reading/blob/main/README.md', 'http://github.com/luanqi-xionghua/AI-For-Reading/releases', 'https://github.com/luanqi-xionghua/AI-For-Reading-evil/releases', 'https://github.com.evil/luanqi-xionghua/AI-For-Reading/releases', 'https://github.com/luanqi-xionghua/AI-For-Reading/releases?x=1', 'https://github.com/luanqi-xionghua/AI-For-Reading/releases/%22', 'javascript:alert(1)']) {
     assert.equal(isReleasePage(url), false, url)
   }
-  assert.equal(isRepoPage('https://github.com/graohene10-spec/pdf-copilot/../other/repo'), false)
+  assert.equal(isRepoPage('https://github.com/luanqi-xionghua/AI-For-Reading/../other/repo'), false)
 })
 
 test('automatic checks respect a skipped version; manual checks offer it again', () => {

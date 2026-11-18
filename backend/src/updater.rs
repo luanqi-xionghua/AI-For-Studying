@@ -18,10 +18,10 @@ use std::{
 };
 use tauri::ipc::Channel;
 
-const RELEASES_API: &str = "https://api.github.com/repos/graohene10-spec/pdf-copilot/releases?per_page=30";
-const REPO_PAGES: &str = "/graohene10-spec/pdf-copilot";
-const RELEASE_PAGES: &str = "/graohene10-spec/pdf-copilot/releases";
-const ASSET_PATH: &str = "/graohene10-spec/pdf-copilot/releases/download/desktop-v";
+const RELEASES_API: &str = "https://api.github.com/repos/luanqi-xionghua/AI-For-Reading/releases?per_page=30";
+const REPO_PAGES: &str = "/luanqi-xionghua/AI-For-Reading";
+const RELEASE_PAGES: &str = "/luanqi-xionghua/AI-For-Reading/releases";
+const ASSET_PATH: &str = "/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v";
 const TAG_PREFIX: &str = "desktop-v";
 const SETUP_SUFFIX: &str = "_x64-setup.exe";
 const PORTABLE_SUFFIX: &str = "_x64-portable.zip";
@@ -635,22 +635,22 @@ mod tests {
         assert_eq!(checksum_for(sums, "kaizhi_0.2.2_x64-setup.exe").unwrap(), "6d7ab464b7eb83313671108742cdfab2b3ac81f5b5e4d71b924c77c6184c19a9");
         assert!(checksum_for(sums, "kaizhi_0.2.2_x64-portable.zip").is_some());
         assert!(checksum_for(sums, "setup.exe").is_none());
-        assert!(validate_asset_url("https://github.com/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe").is_ok());
-        assert!(validate_asset_url("https://github.com/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-portable.zip").is_ok());
-        assert!(validate_asset_url("https://github.com/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_source.zip").is_err());
+        assert!(validate_asset_url("https://github.com/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe").is_ok());
+        assert!(validate_asset_url("https://github.com/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-portable.zip").is_ok());
+        assert!(validate_asset_url("https://github.com/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_source.zip").is_err());
         for url in [
-            "http://github.com/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
-            "https://github.com/other/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
-            "https://github.com/graohene10-spec/pdf-copilot/releases/download/v0.3.3/pdf-copilot-0.3.3.zip",
-            "https://github.com/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/..%2Fevil-setup.exe",
-            "https://evil.example/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
-            "https://github.com:8443/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
+            "http://github.com/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
+            "https://github.com/other/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
+            "https://github.com/luanqi-xionghua/AI-For-Reading/releases/download/v0.3.3/pdf-copilot-0.3.3.zip",
+            "https://github.com/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/..%2Fevil-setup.exe",
+            "https://evil.example/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
+            "https://github.com:8443/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe",
         ] { assert!(validate_asset_url(url).is_err(), "{url}"); }
-        assert!(is_release_page(&Url::parse("https://github.com/graohene10-spec/pdf-copilot/releases/tag/desktop-v0.2.2").unwrap()));
-        assert!(!is_release_page(&Url::parse("https://github.com/graohene10-spec/pdf-copilot-evil/releases").unwrap()));
-        assert!(!is_release_page(&Url::parse("https://github.com/graohene10-spec/pdf-copilot/releasesx").unwrap()));
-        assert!(is_page_under(&Url::parse("https://github.com/graohene10-spec/pdf-copilot/blob/desktop-v0.2.2/desktop/README.md").unwrap(), REPO_PAGES));
-        for url in ["file:///C:/Windows/System32/calc.exe", "https://github.com/graohene10-spec/pdf-copilot-evil", "https://github.com/graohene10-spec/pdf-copilot/releases?x=\"&calc", "https://github.com.evil/graohene10-spec/pdf-copilot", "https://github.com/graohene10-spec/pdf-copilot/%22%26calc"] {
+        assert!(is_release_page(&Url::parse("https://github.com/luanqi-xionghua/AI-For-Reading/releases/tag/desktop-v0.2.2").unwrap()));
+        assert!(!is_release_page(&Url::parse("https://github.com/luanqi-xionghua/AI-For-Reading-evil/releases").unwrap()));
+        assert!(!is_release_page(&Url::parse("https://github.com/luanqi-xionghua/AI-For-Reading/releasesx").unwrap()));
+        assert!(is_page_under(&Url::parse("https://github.com/luanqi-xionghua/AI-For-Reading/blob/desktop-v0.2.2/desktop/README.md").unwrap(), REPO_PAGES));
+        for url in ["file:///C:/Windows/System32/calc.exe", "https://github.com/luanqi-xionghua/AI-For-Reading-evil", "https://github.com/luanqi-xionghua/AI-For-Reading/releases?x=\"&calc", "https://github.com.evil/luanqi-xionghua/AI-For-Reading", "https://github.com/luanqi-xionghua/AI-For-Reading/%22%26calc"] {
             assert!(open_page(url).is_err(), "{url}");
         }
         assert_eq!(truncate_notes(&"字".repeat(MAX_NOTES_CHARS + 5)).chars().count(), MAX_NOTES_CHARS + 3);
@@ -671,7 +671,7 @@ mod tests {
     #[ignore]
     fn live_check_and_download_previous_release() {
         let info = tauri::async_runtime::block_on(check_against(&semver::Version::parse("0.2.1").unwrap(), false, true)).unwrap().expect("a release newer than 0.2.1");
-        assert!(info.tag.starts_with("desktop-v") && info.html_url.starts_with("https://github.com/graohene10-spec/pdf-copilot/releases/"));
+        assert!(info.tag.starts_with("desktop-v") && info.html_url.starts_with("https://github.com/luanqi-xionghua/AI-For-Reading/releases/"));
         let installer = info.installer.expect("installer with checksum");
         eprintln!("{} {} {} bytes sha256={}", info.version, installer.name, installer.size, installer.sha256);
         let dir = std::env::temp_dir().join(format!("kaizhi-update-test-{}", uuid::Uuid::new_v4()));
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn download_rejects_bad_input_and_installer_paths_outside_update_dir() {
         let dir = std::env::temp_dir().join(format!("kaizhi-update-test-{}", uuid::Uuid::new_v4()));
-        let url = "https://github.com/graohene10-spec/pdf-copilot/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe".to_string();
+        let url = "https://github.com/luanqi-xionghua/AI-For-Reading/releases/download/desktop-v0.2.2/kaizhi_0.2.2_x64-setup.exe".to_string();
         let error = tauri::async_runtime::block_on(download_with(url, "not-a-hash".into(), dir.clone(), |_| Ok(()))).unwrap_err();
         assert!(error.contains("校验值"));
         assert!(!dir.exists());

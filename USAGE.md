@@ -188,7 +188,7 @@ PDF 缩放或侧栏适配时，旧画面保留，新位图在后台准备后整�
 
 `npm test` 包含设置、队列、搜索、缓存、笔迹与更新选择等检查（`frontend/tests/unit/`）。`frontend/tests/e2e/` 中另有分屏、同书多开、对话、PDF 标记、搜索、设置和玻璃界面的隔离浏览器检查，以及正式程序的原生检查，均在 `frontend/` 目录下用 `node tests/e2e/<脚本名>.mjs` 运行。检查报告和截图写入被 Git 忽略的 `frontend/artifacts/`。
 
-各版本的构建记录见 [GitHub Actions](https://github.com/graohene10-spec/pdf-copilot/actions/workflows/desktop-release.yml)。
+各版本的构建记录见 [GitHub Actions](https://github.com/luanqi-xionghua/AI-For-Reading/actions/workflows/desktop-release.yml)。
 
 ## 当前边界
 

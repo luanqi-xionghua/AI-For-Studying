@@ -13,7 +13,7 @@
 
 | 产品 | 最新正式版 | 下载与说明 |
 | --- | --- | --- |
-| 开智 Windows 桌面版 | **0.10.54** | [下载](https://github.com/graohene10-spec/pdf-copilot/releases/tag/desktop-v0.10.54) · [使用说明](USAGE.md) · [更新日志](docs/CHANGELOG.md) |
+| 开智 Windows 桌面版 | **0.10.54**（本仓库尚未发布安装包） | [发布页](https://github.com/luanqi-xionghua/AI-For-Reading/releases) · [使用说明](USAGE.md) · [更新日志](docs/CHANGELOG.md) |
 | PDF Copilot 浏览器扩展 | **v0.3.3** | [下载](https://github.com/graohene10-spec/pdf-copilot/releases/tag/v0.3.3) · [扩展说明](extension/README.md) · [扩展教程](extension/docs/USER_GUIDE.md) |
 
 浏览器扩展是同仓库维护的独立产品，版本号分别管理；开智前端复用了扩展中的 PDF 阅读、文档检索与请求队列模块。
