@@ -1,0 +1,35 @@
+# Python 虚拟环境与缓存
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# PyInstaller 打包产物（.spec 由 scripts/freeze.ps1 运行时生成）
+/build/
+/dist/
+*.spec
+
+# 前端依赖与生成物
+/frontend/node_modules/
+/frontend/dist/
+/frontend/public/vendor/
+/frontend/artifacts/
+/frontend/test-results/
+
+# 日志
+*.log
+
+# 本地改动前快照，不入库
+/work/
+
+# 本机配置
+.env
+.env.*
+!.env.example
+.claude/
+
+# 本机书库与独立测试数据不随源码分发
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+/user-data/
