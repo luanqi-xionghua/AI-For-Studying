@@ -1,3 +1,3 @@
-"""Local Python backend for the Kaizhi reading workspace."""
+"""阅迁星穹（原「开智」）的本机 Python 服务。"""
 
-VERSION = "0.10.54"
+VERSION = "1.0.0"

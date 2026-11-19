@@ -1,4 +1,4 @@
-"""桌面版入口：源码运行 `python backend/main.py`，打包后即 KaizhiPython.exe。"""
+"""阅迁星穹入口：源码运行 `python backend/main.py`，打包后即 YueqianXingqiong.exe。"""
 
 import argparse
 import sys

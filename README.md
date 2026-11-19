@@ -4,6 +4,8 @@
 
 ![阅读助手与翻译助手](docs/images/reading-assistants.jpg)
 
+**下载**：到 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载 `YueqianXingqiong-<版本>-setup.exe`（安装版，推荐）或 `-portable.exe`（免安装版）。支持 Windows 10 / 11 x64，不需要另装 Python、Node 或其他运行环境。使用方法见 [使用手册](USAGE.md)。
+
 ## 核心能力
 
 - **本地文档库**：PDF、Markdown 直接阅读；Word（.doc / .docx）加入时先用本机 Word、WPS 或 LibreOffice 转成 PDF。只记录原文件路径，不复制、不修改原文件。支持收藏、分组、标签、全文搜索、排序与框选批量操作。
@@ -69,15 +71,20 @@
     src/settings/ src/shared/ src/ui/ src/styles/  偏好设置、共享协议、界面工具、样式
     tests/unit/、tests/sim/  前端单测、Vue 组件模拟测试
   harness/                  Node 模型运行时（独立 npm 工程，和 frontend 并列）
-  scripts/                  Windows 打包、冻结与安装包脚本
+  scripts/                  Windows 打包（build-windows.ps1）、安装包（installer.nsi）、图标与版本信息生成
   docs/                     开发交接（HANDOFF.md）与 README 截图（images/）
 ```
 
 ## 本地启动
 
-### 方式一：独立版（推荐使用）
+### 方式一：安装版 / 免安装版（推荐使用）
 
-运行打包好的 `dist\KaizhiPython.exe` 即可，不需要另装 Python、Node 或 Harness CLI。Git 分支只提供源码，不包含生成的 EXE；打包方法见下文。
+从 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载：
+
+- **安装版** `YueqianXingqiong-<版本>-setup.exe`：只为当前用户安装（不需要管理员权限），装到 `%LOCALAPPDATA%\Programs\YueqianXingqiong`，在开始菜单和「设置 → 应用」里显示为「阅迁星穹」，可选桌面快捷方式，支持应用内自动更新。
+- **免安装版** `YueqianXingqiong-<版本>-portable.exe`：单个文件，放在任意位置双击运行；应用内更新会替换这个文件本身。
+
+两种版本共用同一个数据目录。下载后可用同一页面的 `SHA256SUMS.txt` 核对文件。安装包和程序没有代码签名证书，首次运行时 Windows SmartScreen 可能提示「已保护你的电脑」，确认来源后点「更多信息 → 仍要运行」。
 
 ### 方式二：源码运行（推荐开发）
 
@@ -98,17 +105,18 @@ npm.cmd --prefix frontend run build
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install 'PyInstaller>=6.18,<7'
-powershell.exe -NoProfile -File scripts\build-windows.ps1 -Test
+winget install NSIS.NSIS --source winget          # 只有生成安装包时需要
+powershell.exe -NoProfile -File scripts\build-windows.ps1 -Test -Release
 ```
 
-先关闭正在运行的 `KaizhiPython.exe`，否则无法覆盖 `dist` 里的文件。`-Test` 会先跑前后端测试，打包后再实际启动 EXE 检查 Harness 和 PDF。PowerShell 执行策略受限时加 `-ExecutionPolicy Bypass`。默认只生成桌面 EXE；如需安装包，安装 NSIS、确认 `makensis.exe` 在 PATH 后加 `-Installer`。源码、免安装版和安装版使用相同的数据目录。构建会把锁定的 Harness 与 Node 一并放进 EXE；默认用 Node 26.13.0 打包，更换 Node 时用 `KAIZHI_NODE_LICENSE` 指向对应版本的 LICENSE。
+先关闭正在运行的阅迁星穹，否则无法覆盖 `dist` 里的文件。`-Test` 会先跑前后端测试，打包后再实际启动 EXE 检查 Harness 和 PDF；`-Installer` 另用 NSIS 生成安装包；`-Release` 含 `-Installer`，并在 `dist\release\` 放好发布用的安装包、便携版和 `SHA256SUMS.txt`。PowerShell 执行策略受限时加 `-ExecutionPolicy Bypass`。图标由 `scripts/make-icon.py` 从 `frontend/public/favicon.svg` 生成，EXE 的版本信息由 `scripts/make-version-info.py` 按 `backend/__init__.py` 的 `VERSION` 生成。构建会把锁定的 Harness 与 Node 一并放进 EXE；默认用 Node 26.13.0 打包，更换 Node 时用 `KAIZHI_NODE_LICENSE` 指向对应版本的 LICENSE。
 
 ## 环境变量
 
 | 变量 | 作用 |
 | --- | --- |
 | `KAIZHI_DATA_DIR` | 改用别的数据目录（同 `--data-dir`）。默认 `%APPDATA%\com.phydog.reading.python` |
-| `KAIZHI_RELEASE_REPO` | 检查更新用的 GitHub 仓库，默认 `luanqi-xionghua/AI-For-Reading` |
+| `KAIZHI_RELEASE_REPO` | 检查更新用的 GitHub 仓库，默认 `luanqi-xionghua/AI-For-Studying` |
 | `KAIZHI_NODE_LICENSE` | 打包时随 EXE 附带的 Node 许可文件 |
 | `KAIZHI_TEST_OFFICE=1` | 测试时用本机 Word / WPS / LibreOffice 做一次真实转换 |
 
@@ -123,7 +131,7 @@ npm.cmd --prefix frontend run build                                   # 类型�
 .\.venv\Scripts\python.exe backend\main.py --smoke                    # 临时书库导入合成 PDF，检查渲染与本地接口
 .\.venv\Scripts\python.exe backend\main.py --harness-smoke            # 本机模拟 API 检查模型运行时，不用真实密钥
 # 打包后：等待 GUI 程序退出，ExitCode 应为 0
-(Start-Process .\dist\KaizhiPython.exe -ArgumentList '--smoke' -WindowStyle Hidden -Wait -PassThru).ExitCode
+(Start-Process .\dist\YueqianXingqiong.exe -ArgumentList '--smoke' -WindowStyle Hidden -Wait -PassThru).ExitCode
 ```
 
 关键入口：
@@ -153,7 +161,13 @@ npm.cmd --prefix frontend run build                                   # 类型�
 
 ## 更新与发布
 
-更新器只认 `python-vX.Y.Z` 标签及带 SHA-256 摘要的 `KaizhiPython-X.Y.Z-portable.exe` / `KaizhiPython-X.Y.Z-setup.exe`；便携版运行文件名为 `KaizhiPython.exe`。软件已改名「阅迁星穹」，但这些文件名、数据目录和 `KAIZHI_*` 变量保持不变，更新器和已有书库都依赖它们。源码模式只提示新版本。推送源码分支不会自动生成 Release。
+版本号只在 `backend/__init__.py` 的 `VERSION` 里改一处，EXE 版本信息、安装包和更新器都从这里读。发布新版本：
+
+1. 改 `VERSION`，运行 `scripts\build-windows.ps1 -Test -Release`。
+2. 在 GitHub 新建 Release，标签 `vX.Y.Z`，上传 `dist\release\` 里的三个文件，例如：
+   `gh release create vX.Y.Z dist\release\* --repo luanqi-xionghua/AI-For-Studying --title "阅迁星穹 X.Y.Z" --notes-file <说明文件>`
+
+应用内更新器只认 `vX.Y.Z`（也接受旧的 `python-vX.Y.Z`）标签下、GitHub 记录了 SHA-256 摘要的 `YueqianXingqiong-X.Y.Z-setup.exe`（安装版用）或 `YueqianXingqiong-X.Y.Z-portable.exe`（免安装版用），下载后校验摘要再安装；安装版以 `/S` 静默更新并自动重新打开。数据目录 `com.phydog.reading.python` 和 `KAIZHI_*` 变量沿用旧名，原来的书库升级后照常使用。源码模式只提示新版本。推送源码不会自动生成 Release。
 
 变更记录、验收边界和后续事项见 [开发交接](docs/HANDOFF.md)，使用方法见 [使用手册](USAGE.md)。
 

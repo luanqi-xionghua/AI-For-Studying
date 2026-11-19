@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from aiohttp import ClientSession, web
 
+from backend import VERSION
 from backend.services.library import Library
 from backend.api.server import DesktopService
 from backend.core.windows import Credentials
@@ -326,7 +327,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 404)
 
     async def test_update_unverified_rejected(self):
-        self.assertEqual((await self.call("update_status"))["current"], "0.10.54")
+        self.assertEqual((await self.call("update_status"))["current"], VERSION)
         self.assertRaises(
             ValueError, self.service.up.update_open_page, "https://example.invalid"
         )
@@ -338,12 +339,13 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         up = self.service.up
         data = b"synthetic package"
         h = hashlib.sha256(data).hexdigest()
-        name = "KaizhiPython-1.0.0-portable.exe"
-        url = f"{up.page}/releases/download/python-v1.0.0/{name}"
+        name = "YueqianXingqiong-1.0.1-portable.exe"
+        url = f"{up.page}/releases/download/v1.0.1/{name}"
         releases = [
             {"tag_name": "desktop-v99.0.0"},
+            {"tag_name": "v1.0.0"},  # the running version is never offered again
             {
-                "tag_name": "python-v1.0.0",
+                "tag_name": "v1.0.1",
                 "assets": [
                     dict(
                         name=name,
@@ -384,7 +386,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(up, "emit", AsyncMock()),
         ):
             info = await up.update_check()
-            self.assertEqual(info["version"], "1.0.0")
+            self.assertEqual(info["version"], "1.0.1")
             self.assertIsNone(info["installer"])
             with self.assertRaises(ValueError):
                 await up.update_download(url, h, "ch")

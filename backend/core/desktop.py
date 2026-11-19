@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QFileDialog
@@ -139,7 +139,11 @@ def run(dist, data_dir=None, smoke=False):
     if not (dist / "index.html").is_file():
         raise SystemExit("请先在 frontend 目录运行 npm ci 和 npm run build。")
     app = QApplication([])
-    app.setApplicationName("KaizhiPython")
+    app.setApplicationName("KaizhiPython")  # 内部名：Qt 的缓存与配置路径沿用旧名
+    app.setApplicationDisplayName("阅迁星穹")
+    icon = Path(dist) / "app.ico"  # frontend/public/app.ico，由 scripts/make-icon.py 生成
+    if icon.is_file():
+        app.setWindowIcon(QIcon(str(icon)))
     view = QWebEngineView()
     gui = Gui(view)
     root = Path(

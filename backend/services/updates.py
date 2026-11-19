@@ -1,4 +1,4 @@
-"""Only verified Python-edition release assets can update this app."""
+"""Only verified release assets of 阅迁星穹 can update this app."""
 
 import asyncio
 import hashlib
@@ -18,8 +18,11 @@ from packaging.version import InvalidVersion, Version
 
 from .. import VERSION
 
-REPO = "luanqi-xionghua/AI-For-Reading"
-EXE = "KaizhiPython.exe"
+# 发布仓库与文件名：Release 附件为 YueqianXingqiong-X.Y.Z-setup.exe / -portable.exe，标签 vX.Y.Z。
+REPO = "luanqi-xionghua/AI-For-Studying"
+APP = "YueqianXingqiong"
+EXE = APP + ".exe"
+UNINSTALLER = f"Uninstall-{APP}.exe"
 MAX = 768 * 1024**2
 
 
@@ -43,7 +46,7 @@ class Updates:
         return dict(
             current=VERSION,
             installed=(
-                Path(sys.executable).parent / "Uninstall-KaizhiPython.exe"
+                Path(sys.executable).parent / UNINSTALLER
             ).is_file()
             and getattr(sys, "frozen", False),
         )
@@ -68,7 +71,7 @@ class Updates:
             r = await self.client.get(
                 url,
                 allow_redirects=False,
-                headers={"User-Agent": "Kaizhi-Python-Updater"},
+                headers={"User-Agent": "YueqianXingqiong-Updater"},
             )
             if r.status in (301, 302, 303, 307, 308):
                 url = urljoin(url, r.headers.get("Location", ""))
@@ -92,7 +95,7 @@ class Updates:
         best = None
         for rel in json.loads(data):
             tag = rel.get("tag_name", "")
-            m = re.fullmatch(r"python-v(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)", tag)
+            m = re.fullmatch(r"(?:python-)?v(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)", tag)
             if not m or rel.get("draft"):
                 continue
             try:
@@ -113,7 +116,7 @@ class Updates:
         tag = rel["tag_name"]
         info = None
         setup = self.update_status()["installed"]
-        name = f"KaizhiPython-{version}-" + ("setup.exe" if setup else "portable.exe")
+        name = f"{APP}-{version}-" + ("setup.exe" if setup else "portable.exe")
         for a in rel.get("assets", []):
             url = f"{self.page}/releases/download/{tag}/{name}"
             digest = a.get("digest") or ""

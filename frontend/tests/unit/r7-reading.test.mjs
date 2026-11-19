@@ -31,8 +31,10 @@ test('every classical line ends with a full stop (or a question mark)', () => {
 })
 
 test('placeholders and thinking verbs are picked deterministically', () => {
-  assert.equal(PLACEHOLDERS.length, 13)
-  assert.ok(PLACEHOLDERS.includes('来一个最直白、最直接、最不绕弯子的解释。'))
+  // 提示语由用户审定、会随时调整：只检查形状，不锁定具体句子和条数。
+  assert.ok(PLACEHOLDERS.length > 0)
+  assert.ok(PLACEHOLDERS.every(line => typeof line === 'string' && line.trim() === line && line.length > 0), 'placeholders are trimmed, non-empty lines')
+  assert.equal(new Set(PLACEHOLDERS).size, PLACEHOLDERS.length, 'no duplicate placeholders')
   assert.ok(PLACEHOLDERS.includes(placeholderFor(.5)))
   assert.equal(placeholderFor(.5), placeholderFor(.5))
   assert.ok(THINKING_VERBS.includes(thinkingVerb('message-1')))

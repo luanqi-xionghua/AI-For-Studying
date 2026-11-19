@@ -18,8 +18,13 @@
 
 ## 二、启动
 
-- **独立版**：双击 `KaizhiPython.exe`。窗口标题是「阅迁星穹」；EXE 沿用旧文件名，是为了让自动更新和原来的书库继续可用。
+- **安装版（推荐）**：从 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载 `YueqianXingqiong-<版本>-setup.exe`，双击按向导安装。只装给当前用户，不需要管理员权限；装好后在开始菜单（以及可选的桌面快捷方式）里打开「阅迁星穹」。以后有新版本时，程序会提示并可一键更新。
+- **免安装版**：下载 `YueqianXingqiong-<版本>-portable.exe`，放在任意文件夹双击运行。
 - **源码版**：按 README 准备好环境后，双击项目根目录的 `Start.cmd`。
+
+安装包和程序没有代码签名证书。第一次运行时如果 Windows 提示「Windows 已保护你的电脑」，确认是从上面的 Releases 页面下载的之后，点「更多信息 → 仍要运行」。
+
+**卸载**：在 Windows「设置 → 应用 → 已安装的应用」里找到「阅迁星穹」卸载。书库、阅读进度、AI 对话和设置保存在 `%APPDATA%\com.phydog.reading.python`，卸载时会保留；要彻底清除，卸载后手动删掉这个文件夹。
 
 同一个书库只能开一个窗口。第一次安装打开时，外观是「暖色极简」，文档库是空的，主页只有背景里慢慢转动的线稿；点左上角「加入文档」开始。
 

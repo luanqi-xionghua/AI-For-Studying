@@ -1,12 +1,25 @@
 # 阅迁星穹（原「开智」）Python 桌面版 · 开发交接
 
-**2026-11-19（上海时间）｜分支：`main--from-rust-to-python`｜应用版本：`0.10.54`（未发新版本）**
+**2026-11-19（上海时间）｜仓库：`luanqi-xionghua/AI-For-Studying`（`main`）｜应用版本：`1.0.0`（首个公开发行版，Release `v1.0.0`）**
 
 ## 接手先看
 
-以本分支的 `README.md` 为运行和打包依据，`USAGE.md` 是给使用者的手册。产品只有 Windows 桌面版：运行 `Start.cmd`（源码）或 `dist\KaizhiPython.exe`。不可把 Python 版的可写数据目录指向历史版本；默认书库仍在 `%APPDATA%\com.phydog.reading.python`。本轮未迁移书库，未改历史项目、原版主分支、浏览器安装或系统注册项。
+以 `README.md` 为运行、打包和发布依据，`USAGE.md` 是给使用者的手册。产品只有 Windows 桌面版：使用者从 Releases 下载安装版或免安装版；开发时运行 `Start.cmd`（源码）。不可把可写数据目录指向历史版本；默认书库在 `%APPDATA%\com.phydog.reading.python`。
 
-软件已改名「阅迁星穹」，**只改了显示名**（窗口标题、网页标题、侧栏、界面提示、备份默认文件名、安装包显示名与开始菜单快捷方式）。EXE 文件名 `KaizhiPython.exe`、数据目录、`KAIZHI_*` 环境变量、`kaizhi.*` 存储键、`X-Kaizhi-Token` 等内部标识保持不变：更新器只认 `KaizhiPython-X.Y.Z-*.exe`，已有书库也靠数据目录找到，不要顺手改掉。
+软件名「阅迁星穹」，发行文件用拼音 ASCII 名 `YueqianXingqiong`（GitHub 会把附件名里的中文改成点号）：程序 `YueqianXingqiong.exe`，发布附件 `YueqianXingqiong-X.Y.Z-setup.exe` / `-portable.exe`，标签 `vX.Y.Z`。**数据目录 `com.phydog.reading.python`、`KAIZHI_*` 环境变量、`kaizhi.*` 存储键、`X-Kaizhi-Token`、Qt 内部应用名 `KaizhiPython` 沿用旧名**：原来的书库、设置和保存的密钥升级后照常使用，不要顺手改掉。
+
+## 1.0.0 发行版（11-19 晚）
+
+| 项 | 做法 |
+| --- | --- |
+| 版本号 | 只在 `backend/__init__.py` 的 `VERSION` 改；EXE 版本信息（`scripts/make-version-info.py`）、安装包（`makensis /DVERSION`）、更新器都从这里读 |
+| 图标 | `scripts/make-icon.py` 把 `frontend/public/favicon.svg` 渲染成 `frontend/public/app.ico`（16–256 px）；用于 EXE、安装包和窗口 / 任务栏（`backend/core/desktop.py` 设置 `setWindowIcon`） |
+| 安装包 | `scripts/installer.nsi`（NSIS 3，Modern UI 2，简体中文）：欢迎页、MIT 许可页、可选桌面快捷方式、选择目录、完成后可运行。按用户安装到 `%LOCALAPPDATA%\Programs\YueqianXingqiong`，不要管理员权限；登记到「设置 → 应用」（HKCU Uninstall 键，含版本、发布者、图标、大小）；附带 `LICENSE.txt` 与 `THIRD_PARTY_NOTICES.md`；程序在运行时会等它关闭。卸载保留书库与设置，并在确认页说明数据位置 |
+| 应用内更新 | `backend/services/updates.py`：仓库 `AI-For-Studying`，标签 `vX.Y.Z`（兼容旧的 `python-vX.Y.Z`），附件名见上，校验 GitHub 记录的 SHA-256。安装版以 `/S` 静默安装到原目录（`InstallDirRegKey`），完成后自动重新打开；免安装版用 `--replace-portable` 替换自身 |
+| 构建 | `scripts\build-windows.ps1 -Test -Release`：测试 → 打包 → 打包后冒烟 → NSIS → `dist\release\`（setup、portable、`SHA256SUMS.txt`）。找不到 `makensis` 时会看 NSIS 默认安装目录 |
+| 未做 | 没有代码签名证书，首次运行可能出现 SmartScreen 提示（README / USAGE 已说明）。Anthropic Serif 字体与阅读助手按钮的菊花图标按用户决定原样保留，授权由用户负责（见 `THIRD_PARTY_NOTICES.md`） |
+
+验收（发行文件本身）：静默安装到临时目录后，四个文件齐全；「应用」列表显示阅迁星穹 1.0.0、发布者与大小；开始菜单快捷方式存在；EXE 属性的产品名与版本正确；安装完自动重新打开，窗口标题为「阅迁星穹」（用临时书库）；正常关闭后静默卸载，程序、注册表项、快捷方式都已移除，用户数据保留。
 
 ## 删除了什么，留下了什么
 
@@ -62,16 +75,16 @@
 - Windows，Python 3.13.5 / PySide6 6.12.0 / Node 26.13.0 / PyInstaller 6.22.3。
 - 前端：`npm.cmd --prefix frontend test` **143/143**（含新增 `import-queue.test.mjs`）；类型检查与 Vite 构建通过。Vue 组件模拟测试（`tests/sim/`）在 Harness 重构时为 16/16，下午未重跑：所需测试依赖不在 `package.json` 里，需要临时安装。
 - Python：`unittest discover -s backend/tests -t .` **29 项：28 通过，1 跳过**（可选 Office 测试）。新增 `backend/tests/test_import_feedback.py`（导入错误原因、模拟 Word / LibreOffice 缺失、失败、超时、占用时的原因与进度步骤）和进度事件经 HTTP + WebSocket 送达的测试。另开 `KAIZHI_TEST_OFFICE=1` 时 `backend.tests.test_word_integration` 用本机 Word 真实转换通过。
-- Qt：`backend\main.py --smoke` 与最终 `dist\KaizhiPython.exe` 的 `--smoke`、`--harness-smoke` 均返回 0；临时书库导入合成 PDF（经过新的导入队列）。最终 EXE 的 `--office` 能把真实 .docx 转成有效 PDF，EXE 内含 `ImportDialog` 资源，窗口标题为「阅迁星穹」。
+- Qt：`backend\main.py --smoke` 与最终 `dist\YueqianXingqiong.exe` 的 `--smoke`、`--harness-smoke` 均返回 0；临时书库导入合成 PDF（经过新的导入队列）。最终 EXE 的 `--office` 能把真实 .docx 转成有效 PDF，EXE 内含 `ImportDialog` 资源，窗口标题为「阅迁星穹」。
 - 界面改动和「加入文档」窗口另用本地脚本驱动隐藏的真实 Qt 窗口（临时书库）逐步检查并截图，覆盖：自动打开阅读助手、翻译助手隐藏 / 恢复 / 关闭、新装暖色极简与老用户保持液态玻璃、真实 Word 转换进度、失败原因与建议、打开文档、纯 PDF 拖入不弹窗。这些脚本是一次性的，未纳入仓库。
-- 本机构建目录 `dist/` 只有 `KaizhiPython.exe`；源码分支不含 EXE、虚拟环境、依赖缓存、书库、密钥或本地备份。
+- 源码仓库不含 EXE、虚拟环境、依赖缓存、书库、密钥或本地备份；发行文件只在 GitHub Releases。
 
 ## 版本控制、恢复与下一步
 
 目标分支原先只有占位 README（`da617d6`）；清理阶段沿用该提交历史，不基于旧主分支，也不推送清理前源码，提交为 `6916ea8`。改动前已在本机保存并校验 303 个源文件的归档。恢复某个已移除文件时，请在独立目录解包比对，不要覆盖正在使用的项目。
 
-**当前开发分支是 `main--from-rust-to-python--my-own`。** 它在 `6916ea8` 之后有两步：`0ea9f1b` 是在 GitHub 网页上传的 Harness 重构与 11-19 下午的全部改动；其后的提交是上面的目录结构整理。`main--from-rust-to-python` 仍停在 `6916ea8`，没有这些改动。新增的 Node 工程 `harness/`（含 `package-lock.json` 与 `licenses/`）必须随源码提交；`harness/node_modules`、`harness/dist`、`frontend/dist` 是生成物，不入库。
+**发行仓库是 `luanqi-xionghua/AI-For-Studying` 的 `main`。** 它在仓库自带的 Initial commit 之上合入了原 `AI-For-Reading` 的完整历史（`6916ea8` 清理 → `0ea9f1b` Harness 重构与 11-19 下午的改动 → `5d304a8` 目录结构整理 → 1.0.0 发行改造），所以 `git log --follow` 能追到旧文件。`AI-For-Reading` 的 `main--from-rust-to-python--my-own` 停在 `5d304a8`，不含发行改造。新增的 Node 工程 `harness/`（含 `package-lock.json` 与 `licenses/`）必须随源码提交；`harness/node_modules`、`harness/dist`、`frontend/dist`、`dist/` 是生成物，不入库。
 
-AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -Test` 可检查打包好的 EXE 是否能独立完成本机模拟模型请求。打包前先关闭正在运行的 `KaizhiPython.exe`，否则无法覆盖 `dist` 里的文件。原来的登录或密钥不会被使用，首次需在设置中重新填入对应端点的 API Key。
+AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -Test` 可检查打包好的 EXE 是否能独立完成本机模拟模型请求。打包前先关闭正在运行的阅迁星穹，否则无法覆盖 `dist` 里的文件。原来的登录或密钥不会被使用，首次需在设置中重新填入对应端点的 API Key。
 
-下一轮如改 PDF 或 AI，请同时跑前后端单测和 Qt 冒烟，再手工检查并排阅读、框选和长文档滚动；改导入或 Word 转换时再开 `KAIZHI_TEST_OFFICE=1` 跑一次真实转换。建议的后续：给 Word 转换加取消（结束 `--office` / LibreOffice 子进程并清理临时文件），重跑 Vue 组件模拟测试。尚未验收：付费 AI 端到端会话、真实覆盖升级和 NSIS 安装/卸载（本机未发现编译器）。分支上已推送的是**源码**，不是 GitHub Release。正式分发前请补齐 `THIRD_PARTY_NOTICES.md` 标出的独立字体授权说明。
+下一轮如改 PDF 或 AI，请同时跑前后端单测和 Qt 冒烟，再手工检查并排阅读、框选和长文档滚动；改导入或 Word 转换时再开 `KAIZHI_TEST_OFFICE=1` 跑一次真实转换。建议的后续：给 Word 转换加取消（结束 `--office` / LibreOffice 子进程并清理临时文件），重跑 Vue 组件模拟测试。尚未验收：付费 AI 端到端会话、从 1.0.0 升到下一版的真实在线更新（需要先发布更高版本）、在没有装过开发环境的干净 Windows 上安装。`THIRD_PARTY_NOTICES.md` 标出的独立字体授权说明仍待补齐。

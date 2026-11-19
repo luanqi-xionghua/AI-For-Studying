@@ -5,3 +5,4 @@
 *.zip binary
 *.exe binary
 *.woff2 binary
+*.ico binary

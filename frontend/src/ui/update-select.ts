@@ -1,5 +1,5 @@
 // Release selection, asset verification and installation live in backend/services/updates.py.
-export const REPO_PAGE = 'https://github.com/luanqi-xionghua/AI-For-Reading'
+export const REPO_PAGE = 'https://github.com/luanqi-xionghua/AI-For-Studying'
 
 export type UpdateInstaller = { name: string; url: string; size: number; sha256: string; kind: 'setup' | 'portable' }
 export type UpdateInfo = {

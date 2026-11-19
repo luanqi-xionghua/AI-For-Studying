@@ -6,6 +6,7 @@
 - KaTeX 0.19.0 用于本地公式排版；MIT 许可在前端构建时复制到 `vendor/KaTeX-LICENSE.txt`。
 - 桌面窗口和 WebEngine 来自 PySide6 / Qt；Python 依赖列于 `backend/requirements.txt`。分发二进制前应核对实际打包的组件与各自附带的许可、声明文件。
 - Word、WPS、LibreOffice 均由用户单独安装，不随本项目分发。
+- 发布用的安装包由 NSIS（zlib/libpng 许可）生成；安装目录里附带本项目的 `LICENSE.txt` 和本文件。PySide6 / Qt 按 LGPL-3.0 使用，未修改其源码。
 
 桌面版复用 PDF.js 和 KaTeX，另使用 Vue、Mermaid、perfect-freehand。锁定版本及声明许可见 [frontend/package-lock.json](frontend/package-lock.json)：Vue、Mermaid、perfect-freehand 声明为 MIT；`@fontsource-variable/source-serif-4` 包声明为 OFL-1.1。分发这些依赖时应保留各自许可文本。
 
