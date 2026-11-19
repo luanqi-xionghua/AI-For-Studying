@@ -33,3 +33,6 @@ __pycache__/
 *.sqlite3-wal
 *.sqlite3-shm
 /user-data/
+
+/harness/node_modules/
+/harness/dist/

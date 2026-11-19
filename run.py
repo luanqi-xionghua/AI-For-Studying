@@ -4,12 +4,22 @@ from pathlib import Path
 
 
 def main():
-    parser = argparse.ArgumentParser(description="开智 Python 桌面版")
+    parser = argparse.ArgumentParser(description="阅迁星穹 Python 桌面版")
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument(
+        "--harness-smoke",
+        action="store_true",
+        help="test the AI runtime with a local mock provider",
+    )
     parser.add_argument("--office", nargs=2)
     parser.add_argument("--replace-portable", nargs=3)
     a = parser.parse_args()
+    if a.harness_smoke:
+        import asyncio
+        from backend.harness_smoke import smoke
+
+        return asyncio.run(smoke())
     if a.office:
         from backend.word import office
 
