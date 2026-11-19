@@ -57,7 +57,8 @@ try {
         Copy-Item (Join-Path $root "dist\$app-$version-setup.exe") $out
         Copy-Item $exe (Join-Path $out "$app-$version-portable.exe")
         $sums = Get-ChildItem $out -Filter *.exe | Sort-Object Name | ForEach-Object { '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
-        [IO.File]::WriteAllLines((Join-Path $out 'SHA256SUMS.txt'), [string[]]$sums)
+        # LF 换行：sha256sum -c（Git Bash、WSL、Linux）遇到 CRLF 会读错文件名。
+        [IO.File]::WriteAllText((Join-Path $out 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"))
         Write-Output "Release files in dist\release:"
         $sums | Write-Output
     }
