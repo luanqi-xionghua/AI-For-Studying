@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import MarkdownIt from 'markdown-it'
-import { installGithubFlavor } from '../../src/components/markdown-github.ts'
+import { installGithubFlavor } from '../../src/components/markdown/markdown-github.ts'
 
 const render = source => { const markdown = new MarkdownIt({ html: false, linkify: true }); installGithubFlavor(markdown); return markdown.render(source) }
 

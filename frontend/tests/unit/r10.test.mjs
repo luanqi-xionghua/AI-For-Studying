@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import MarkdownIt from 'markdown-it'
-import { installCjkEmphasis, fixCjkEmphasis } from '../../src/components/markdown-cjk.ts'
+import { installCjkEmphasis, fixCjkEmphasis } from '../../src/components/markdown/markdown-cjk.ts'
 import { protocolOf, PROVIDERS } from '../../src/ai/providers.mjs'
 
 test('bold next to Chinese punctuation renders', () => {

@@ -10,7 +10,7 @@ it('阅读助手输入栏：抽屉里切换预设，模型按钮与模型胶囊�
     { id: 'a', name: '', provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.4', effort: 'high' },
     { id: 'b', name: '深读', provider: 'anthropic', baseUrl: 'https://api.anthropic.com', protocol: 'anthropic', model: 'claude-sonnet-5-5', effort: 'max' },
   ], assistantPreset: 'a', translationPreset: 'b', explainPreset: 'b' }))
-  const AiPane = (await import('../../src/components/AiPane.vue')).default
+  const AiPane = (await import('../../src/components/assistant/AiPane.vue')).default
   const w = mount(AiPane, { attachTo: document.body, props: { document: { id: 'doc-1', title: '示例.pdf', kind: 'pdf' }, context: { page: 1, selection: {} } } })
   await flushPromises()
   const button = () => w.find('.model-picker')

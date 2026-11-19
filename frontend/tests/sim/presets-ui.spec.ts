@@ -5,8 +5,8 @@
 //   npx vitest run tests/sim
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import AiSettings from '../../src/components/AiSettings.vue'
-import ModelPicker from '../../src/components/ModelPicker.vue'
+import AiSettings from '../../src/components/settings/AiSettings.vue'
+import ModelPicker from '../../src/components/assistant/ModelPicker.vue'
 
 const KEY = 'paperdesk.ai.settings.v1'
 const stored = () => JSON.parse(localStorage.getItem(KEY) || '{}')
@@ -257,7 +257,7 @@ describe('设置 → AI：测试连接与获取模型列表', () => {
 
 describe('没有预设时的阅读助手输入栏与翻译栏', () => {
   it('模型按钮写「未设置模型」，点了直接打开设置，不拉开抽屉', async () => {
-    const AiPane = (await import('../../src/components/AiPane.vue')).default
+    const AiPane = (await import('../../src/components/assistant/AiPane.vue')).default
     const w = mount(AiPane, { attachTo: document.body, props: { document: { id: 'doc-empty', title: '示例.pdf', kind: 'pdf' }, context: { page: 1, selection: {} } } })
     await flushPromises()
     expect(w.find('.model-picker').text()).toContain('未设置模型')
@@ -267,7 +267,7 @@ describe('没有预设时的阅读助手输入栏与翻译栏', () => {
     w.unmount()
   })
   it('翻译栏的 AI 标签写「未设置模型预设」，点了打开设置', async () => {
-    const TranslatePane = (await import('../../src/components/TranslatePane.vue')).default
+    const TranslatePane = (await import('../../src/components/translate/TranslatePane.vue')).default
     const w = mount(TranslatePane, { attachTo: document.body })
     await flushPromises()
     const chip = w.find('[aria-label="翻译用的模型预设"]')

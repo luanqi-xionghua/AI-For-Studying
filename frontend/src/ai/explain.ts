@@ -7,7 +7,7 @@ import { looksMathy, selectionImage } from '../reader/selection-image'
 import { IMAGE_NOTE } from './translate'
 import { complete, unsupportedImage } from './complete'
 import { library } from '../sdk'
-import ExplainNote from '../components/ExplainNote.vue'
+import ExplainNote from '../components/assistant/ExplainNote.vue'
 
 export type ExplainMode = 'plain' | 'deeper' | 'example' | 'simpler'
 export type Explain = { id: string; term: string; context: string; mode: ExplainMode; text: string; reasoning: string; status: 'running' | 'done' | 'error'; error: string; startedAt: number; ms: number; /** 选区的截图（PDF 里的公式以图为准）。 */ image?: string }

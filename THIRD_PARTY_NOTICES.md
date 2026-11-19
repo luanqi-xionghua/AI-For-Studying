@@ -4,7 +4,7 @@
 
 - PDF.js / pdfjs-dist 6.4.299 用于本地 PDF 阅读。前端构建保留 `vendor/pdfjs/LICENSE`，以及 CMaps、标准字体、色彩和 WebAssembly 资源附带的许可文本。
 - KaTeX 0.19.0 用于本地公式排版；MIT 许可在前端构建时复制到 `vendor/KaTeX-LICENSE.txt`。
-- 桌面窗口和 WebEngine 来自 PySide6 / Qt；Python 依赖列于 `requirements.txt`。分发二进制前应核对实际打包的组件与各自附带的许可、声明文件。
+- 桌面窗口和 WebEngine 来自 PySide6 / Qt；Python 依赖列于 `backend/requirements.txt`。分发二进制前应核对实际打包的组件与各自附带的许可、声明文件。
 - Word、WPS、LibreOffice 均由用户单独安装，不随本项目分发。
 
 桌面版复用 PDF.js 和 KaTeX，另使用 Vue、Mermaid、perfect-freehand。锁定版本及声明许可见 [frontend/package-lock.json](frontend/package-lock.json)：Vue、Mermaid、perfect-freehand 声明为 MIT；`@fontsource-variable/source-serif-4` 包声明为 OFL-1.1。分发这些依赖时应保留各自许可文本。

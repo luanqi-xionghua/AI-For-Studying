@@ -4,8 +4,8 @@
  * only generated HTML comes from markdown-it, KaTeX and Mermaid (strict mode).
  */
 import MarkdownIt from 'markdown-it'
-import { installMarkdownMath } from '../components/markdown-math'
-import { installCjkEmphasis } from '../components/markdown-cjk'
+import { installMarkdownMath } from '../components/markdown/markdown-math'
+import { installCjkEmphasis } from '../components/markdown/markdown-cjk'
 
 // 代码块右上角的复制按钮：一枚小图标，复制成功后换成对勾（AiPane 切换 .copied）。
 const icon = (d: string, name: string) => `<svg class="copy-${name}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`

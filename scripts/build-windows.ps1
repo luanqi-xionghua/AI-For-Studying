@@ -12,13 +12,13 @@ try {
     & npm.cmd --prefix frontend run build
     if ($LASTEXITCODE) { throw 'Frontend build failed' }
     if ($Test) {
-        & $python -m unittest discover -s tests -v
+        & $python -m unittest discover -s backend/tests -t . -v
         if ($LASTEXITCODE) { throw 'Python tests failed' }
         & npm.cmd --prefix frontend test
         if ($LASTEXITCODE) { throw 'Frontend tests failed' }
     }
     . (Join-Path $PSScriptRoot 'freeze.ps1')
-    Invoke-KaizhiFreeze $root @('--noconfirm','--onefile','--windowed','--name','KaizhiPython','--add-data','frontend/dist;frontend/dist','--add-data','harness/dist;harness/dist','--hidden-import=win32timezone','--exclude-module=numpy','--exclude-module=matplotlib','--exclude-module=tkinter','run.py')
+    Invoke-KaizhiFreeze $root @('--noconfirm','--onefile','--windowed','--name','KaizhiPython','--add-data','frontend/dist;frontend/dist','--add-data','harness/dist;harness/dist','--paths','.','--hidden-import=win32timezone','--exclude-module=numpy','--exclude-module=matplotlib','--exclude-module=tkinter','backend/main.py')
     if ($Test) {
         foreach ($check in @('--harness-smoke','--smoke')) {
             $probe = Start-Process -FilePath (Join-Path $root 'dist\KaizhiPython.exe') -ArgumentList $check -WindowStyle Hidden -Wait -PassThru

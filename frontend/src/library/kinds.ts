@@ -1,4 +1,4 @@
-// 文档类型。Word 文档（.docx / 老式 .doc）在加入文档库时已由后端转成 PDF（backend/word.py），
+// 文档类型。Word 文档（.docx / 老式 .doc）在加入文档库时已由后端转成 PDF（backend/services/word.py），
 // 读出来的就是 PDF：阅读器、页码、封面、阅读助手、搜索索引都按 PDF 处理，只是卡片和标签上注明它原来是 Word。
 export type DocKind = 'pdf' | 'markdown' | 'word'
 

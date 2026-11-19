@@ -88,8 +88,11 @@ test('assistant greeting and prediction preferences normalize and validate', () 
 })
 
 test('scoped styles never put a selector after :global(...), which Vue would apply to :root itself', async () => {
+  // 组件按业务分在子目录里（assistant/、reader/……），要逐层扫描，不能只看顶层。
   const folder = new URL('../../src/components/', import.meta.url)
-  for (const name of (await readdir(folder)).filter(file => file.endsWith('.vue'))) {
+  const names = (await readdir(folder, { recursive: true })).map(file => file.replaceAll('\\', '/')).filter(file => file.endsWith('.vue'))
+  assert.ok(names.length >= 25, `expected the component tree, found ${names.length} .vue files`)
+  for (const name of names) {
     const source = await readFile(new URL(name, folder), 'utf8')
     const style = source.slice(source.indexOf('<style'))
     assert.doesNotMatch(style, /:global\([^)]*\)\s*[.#:[a-z]/i, `${name}: write ":global(:root[x] .y)" or ":root[x] .y" instead`)

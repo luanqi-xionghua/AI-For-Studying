@@ -1,79 +1,162 @@
-# 阅迁星穹 · Windows 桌面阅读器（Python 版）
+# 阅迁星穹
 
-软件原名「开智」，界面、窗口标题与安装包里的显示名已改为「阅迁星穹」。为了让更新器和已有书库照常工作，EXE 文件名 `KaizhiPython.exe`、数据目录 `com.phydog.reading.python` 和 `KAIZHI_*` 环境变量保持不变。
+阅迁星穹（原名「开智」）是一款 Windows 桌面 AI 阅读器：把 PDF、Markdown 和 Word 文档放进本地文档库，边读边问「阅读助手」、随手交给「翻译助手」翻译。界面是 Vue 3，外壳是 PySide6 / Qt WebEngine，文件、书库和凭据由本机 Python 服务管理，模型请求经本机 DeepSeek Harness 发给用户自己配置的 API。
 
-本分支只维护 Windows 桌面程序。Vue 3 / TypeScript 界面由 PySide6 / Qt WebEngine 加载，文件、SQLite 与系统凭据由 Python 后端管理；模型请求由它交给本机 DeepSeek Harness。没有浏览器扩展，也不提供独立网页版；不需安装 Rust 工具链或浏览器助手。
+![阅读助手与翻译助手](docs/images/reading-assistants.jpg)
 
-## 启动与构建
+## 核心能力
 
-已有独立版时，直接运行 `dist\KaizhiPython.exe`，不需要另装 Python 或启动服务。Git 分支提供源码，不包含生成的 EXE。首次在 Windows 从源码启动，需 Python 3.13 x64、Node.js 和 npm（本轮用 Node 26 验证）：
+- **本地文档库**：PDF、Markdown 直接阅读；Word（.doc / .docx）加入时先用本机 Word、WPS 或 LibreOffice 转成 PDF。只记录原文件路径，不复制、不修改原文件。支持收藏、分组、标签、全文搜索、排序与框选批量操作。
+- **阅读**：连续滚动的 PDF 渲染、文档内搜索、目录、书签、钢笔 / 荧光笔 / 下划线标记，最多三份文档并排阅读。
+- **阅读助手**：打开文档时默认开启，按需检索当前文档、引用页内证据回答；可框选图表公式提问，可同时开多个助手窗口。
+- **翻译助手与快速解释**：选中文字右键「机翻」或按 Ctrl+T；翻译模式下选中即译；选中后按鼠标中键快速解释。
+- **用户自带 API**：Chat Completions、Responses、Anthropic Messages 三种协议，密钥按服务商与完整端点隔离，可用 Windows DPAPI 加密保存。
+- **四种外观**：液态玻璃、新液态玻璃、暖色极简（新装默认）、铅笔草稿，浅色 / 深色跟随系统。
+
+## 界面预览
+
+### 加入文档与 Word 转换
+
+拖入或选择文件；Word 显示转换进度，失败时写明原因并建议先手动另存为 PDF。
+
+![加入文档窗口](docs/images/import-dialog.jpg)
+
+### 暖色极简文档库
+
+![文档库](docs/images/library.jpg)
+
+## 技术架构
+
+| 层 | 技术 | 作用 |
+| --- | --- | --- |
+| 界面 | Vue 3 / TypeScript / Vite，PDF.js，KaTeX，Mermaid | 文档库、阅读器、助手面板、设置 |
+| 桌面外壳 | PySide6 / Qt WebEngine | 窗口、拖放、原生文件对话框、全屏 |
+| 本机服务 | Python / aiohttp，SQLite | 只监听 IPv4 回环地址；令牌鉴权的 HTTP 命令与 WebSocket 事件 |
+| 模型运行时 | DeepSeek Harness（Node.js 子进程） | 统一调用用户选择的模型 API，流式输出、工具回传、取消 |
+| 文档转换 | 本机 Word / WPS / LibreOffice | Word 转 PDF，结果缓存在数据目录 |
+
+所有模型请求只走一条路：**阅读器界面 → 已认证的本机 Python 服务 → Harness 子进程 → 用户选择的 API 地址**。没有前端直连、通用 HTTP 代理或本机 Codex 登录。
+
+## 项目结构
+
+```text
+阅迁星穹/
+  README.md / USAGE.md      项目说明 / 使用手册
+  Start.cmd                 源码环境一键启动
+  backend/                  Python 本机服务
+    main.py                 入口（源码运行与打包后的 EXE 共用）：--smoke、--harness-smoke、--office 等参数
+    requirements.txt        Python 依赖
+    api/                    HTTP / WebSocket 接口、鉴权与命令分派（server.py）
+    core/                   桌面外壳：Qt 窗口与原生对话框（desktop.py），Windows 凭据与子进程作业（windows.py）
+    runtime/                模型运行时：Harness 子进程管理、请求与取消（harness.py）
+    services/               业务服务：文档库 SQLite（library.py）、Word 转 PDF（word.py）、版本更新（updates.py）
+    scripts/                自检脚本：PDF 导入渲染（pdf_smoke.py）、模型运行时（harness_smoke.py）
+    tests/                  后端测试
+  frontend/                 Vue 3 前端
+    src/components/         按业务分组的界面组件
+      assistant/            阅读助手、模型选择、用量、快速解释卡片
+      translate/            翻译助手、选中即译浮窗
+      reader/               PDF / Markdown 阅读器、文档内搜索、书签、并排选择、标记工具（ink/）
+      library/              加入文档窗口
+      settings/             设置、AI 预设、更新
+      layout/               文件标签、右键菜单、计时器、背景流形
+      markdown/             Markdown 渲染扩展（中文强调、GitHub 语法、公式）
+      ui/                   图标等基础组件
+    src/ai/                 模型预设、统一调用、翻译、解释、阅读助手工作区
+    src/reader/ src/document/  PDF 渲染核心、选区、标记数据、文档会话
+    src/library/            文档种类、书签、封面、分组、加入文档队列
+    src/sdk/                界面与本机 Python 服务之间的命令和事件通道
+    src/settings/ src/shared/ src/ui/ src/styles/  偏好设置、共享协议、界面工具、样式
+    tests/unit/、tests/sim/  前端单测、Vue 组件模拟测试
+  harness/                  Node 模型运行时（独立 npm 工程，和 frontend 并列）
+  scripts/                  Windows 打包、冻结与安装包脚本
+  docs/                     开发交接（HANDOFF.md）与 README 截图（images/）
+```
+
+## 本地启动
+
+### 方式一：独立版（推荐使用）
+
+运行打包好的 `dist\KaizhiPython.exe` 即可，不需要另装 Python、Node 或 Harness CLI。Git 分支只提供源码，不包含生成的 EXE；打包方法见下文。
+
+### 方式二：源码运行（推荐开发）
+
+需要 Windows、Python 3.13 x64、Node.js（本项目用 Node 26 x64）和 npm。在项目根目录执行：
 
 ```powershell
 py -3.13 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 npm.cmd --prefix harness ci
 npm.cmd --prefix frontend ci
 npm.cmd --prefix frontend run build
-.\.venv\Scripts\python.exe run.py
+.\.venv\Scripts\python.exe backend\main.py
 ```
 
-配置好后也可以双击 `Start.cmd`。改了前端请重新构建并重启窗口；只改 Python 则重启即可。打开前端网址不会启动阅读器。
+配置好后也可以双击 `Start.cmd`。改了前端请重新构建并重启窗口；只改 Python 则重启即可。直接打开前端网址不会启动阅读器。
+
+### 打包
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install 'PyInstaller>=6.18,<7'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+powershell.exe -NoProfile -File scripts\build-windows.ps1 -Test
 ```
 
-默认只生成桌面 EXE。如需额外生成桌面安装包，安装 NSIS、确认 `makensis.exe` 在 PATH 后给脚本加 `-Installer`。源码、免安装版和安装版使用相同的 Python 版数据目录。
+先关闭正在运行的 `KaizhiPython.exe`，否则无法覆盖 `dist` 里的文件。`-Test` 会先跑前后端测试，打包后再实际启动 EXE 检查 Harness 和 PDF。PowerShell 执行策略受限时加 `-ExecutionPolicy Bypass`。默认只生成桌面 EXE；如需安装包，安装 NSIS、确认 `makensis.exe` 在 PATH 后加 `-Installer`。源码、免安装版和安装版使用相同的数据目录。构建会把锁定的 Harness 与 Node 一并放进 EXE；默认用 Node 26.13.0 打包，更换 Node 时用 `KAIZHI_NODE_LICENSE` 指向对应版本的 LICENSE。
 
-## 文档与本地数据
+## 环境变量
 
-- 默认数据目录是 `%APPDATA%\com.phydog.reading.python`。不要将 `--data-dir` 或 `KAIZHI_DATA_DIR` 指向原版书库，也不要让两版同时写同一个数据库。
-- 文档库记录原文件路径，不复制或删除原文档。设置 → 文档库可以导出 SQLite 备份；恢复会**替换当前书库**，包括进度、书签、分组和 AI 对话，不含原文件和单独加密的 API 密钥。文件移动后可在书卡重新定位，保留原 ID 和阅读记录。
-- 需要试读历史书库时，请先退出两版并备份，将 `library.sqlite3` 与存在的 `-wal` / `-shm` 一并复制至**新的空目录**，再运行 `run.py --data-dir "副本的绝对路径"`。如需迁移凭据，单独复制 `credentials`；DPAPI 加密数据须由原 Windows 用户访问。界面偏好不会从旧 WebView 自动迁移。
-- PDF、Markdown 可直接阅读。转换 `.doc` / `.docx` 需安装 Word、WPS 或 LibreOffice。翻译、阅读助手、解释、问题预判、压缩均只通过本机 DeepSeek Harness 调用用户选定的模型 API，不再读取 Codex 登录。
-
-## AI：用户自带 API Key
-
-设置 → AI → 新建或编辑模型预设，填写服务商、API 地址、模型 ID 和 Key，保存后可「测试连接」（会产生一次模型请求）。翻译、解释、阅读助手可以共用一个预设，也可分开选择。自定义网关支持 Chat Completions、Responses 或 Anthropic Messages。本机兼容服务可免密；远程须 HTTPS 与显式 Key。模型是否支持页图、工具及推理强度以服务商为准。当前适配器不提供旧的 Fast 优先计费通道。
-
-升级后仍使用原书库，历史对话和可用 API 预设保留；本机 Codex 预设不再使用。**旧密钥不自动转移，请为使用的 API 地址重新输入一次。** 密钥按服务商和完整端点隔离，可只放内存，选「记住」才写 Windows DPAPI；客户端不能读回明文。不会回退到其他账号或服务商。运行时只装载 Harness 的模型服务和多服务商适配器，不加载 Shell、磁盘工具、用户的 Harness 配置或会话日志插件。发给模型的选区、检索证据和截图仍由用户所选服务商接收。
-
-源码模式需要 Node.js（本项目使用 Node 26 x64）和 `npm.cmd --prefix harness ci`。Windows 构建会把锁定的模型运行时及 Node 一并放进 EXE，无需用户另装 Node、dsh 或登录 CLI。默认使用 Node 26.13.0 打包；若更换构建用的 Node，请用 `KAIZHI_NODE_LICENSE` 指向该版本对应的 LICENSE。执行 `run.py --harness-smoke`（打包后对应参数相同）可用合成数据和本机模拟 API 验证，不用真实密钥。
-
-### 后续接入学习功能
-
-生成练习题或解释错题可以复用 `frontend/src/ai/complete.ts` 的单次任务入口：扩展任务用量分类，传入所需选文、提示和取消信号，沿用一个用户预设。需要引用当前 PDF 的问答可复用 `streamDocumentChat`，由阅读器提供本题范围内的只读工具。学习进度、错题和复习安排属于应用数据，不放在 Harness 会话里。当前版本未新增学习界面或自动发送学习材料。
-
-## 关键入口
-
-| 功能 | 位置 |
+| 变量 | 作用 |
 | --- | --- |
-| 启动、窗口、选择文件、拖放与全屏 | `run.py`、`backend/desktop.py` |
-| 桌面命令、二进制响应、流式事件与鉴权 | `backend/server.py`、`frontend/src/sdk/python.ts` |
-| SQLite、全文检索、备份恢复、重定位 | `backend/library.py` |
-| Word 转换、Windows 凭据 | `backend/word.py`、`backend/windows.py` |
-| AI 运行时、取消、文档工具回传 | `backend/harness.py`、`harness/runtime.mjs`、`frontend/src/ai/harness.mjs` |
-| PDF 连续渲染/选区/索引、AI 文档工具与请求队列 | `frontend/src/reader/core/`、`frontend/src/shared/` |
-| 更新筛选、SHA-256 验证与安装 | `backend/updates.py` |
+| `KAIZHI_DATA_DIR` | 改用别的数据目录（同 `--data-dir`）。默认 `%APPDATA%\com.phydog.reading.python` |
+| `KAIZHI_RELEASE_REPO` | 检查更新用的 GitHub 仓库，默认 `luanqi-xionghua/AI-For-Reading` |
+| `KAIZHI_NODE_LICENSE` | 打包时随 EXE 附带的 Node 许可文件 |
+| `KAIZHI_TEST_OFFICE=1` | 测试时用本机 Word / WPS / LibreOffice 做一次真实转换 |
 
-本地服务只监听 IPv4 回环地址。特权请求校验 Host、来源和每次启动生成的令牌，WebSocket 也须认证。同一数据目录不能同时运行两个实例。不要将接口暴露到局域网或公网。
-
-## 验证与更新
+## 开发与测试
 
 先构建前端，再在项目根目录执行：
 
 ```powershell
-npm.cmd --prefix frontend test
-$env:KAIZHI_TEST_OFFICE='1'  # 可选：用本机办公软件转换临时合成文档
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe run.py --smoke
+npm.cmd --prefix frontend test                                        # 前端单测
+npm.cmd --prefix frontend run build                                   # 类型检查与构建
+.\.venv\Scripts\python.exe -m unittest discover -s backend/tests -t . -v   # 后端测试
+.\.venv\Scripts\python.exe backend\main.py --smoke                    # 临时书库导入合成 PDF，检查渲染与本地接口
+.\.venv\Scripts\python.exe backend\main.py --harness-smoke            # 本机模拟 API 检查模型运行时，不用真实密钥
 # 打包后：等待 GUI 程序退出，ExitCode 应为 0
 (Start-Process .\dist\KaizhiPython.exe -ArgumentList '--smoke' -WindowStyle Hidden -Wait -PassThru).ExitCode
 ```
 
-`--smoke` 在临时库和独立 Qt 配置中导入合成 PDF，检查 PDF.js Worker、画布、文字层及本地 RPC；不使用真实书库。Python 测试还验证普通网页不能启动桌面界面。
+关键入口：
 
-更新器只认 `python-vX.Y.Z` 标签及具有 SHA-256 摘要的 `KaizhiPython-X.Y.Z-portable.exe` / `KaizhiPython-X.Y.Z-setup.exe`；便携版运行文件名为 `KaizhiPython.exe`。默认仓库为 `luanqi-xionghua/AI-For-Reading`，可用 `KAIZHI_RELEASE_REPO` 覆盖。源码模式只提示新版本。推送源码分支不会自动生成 Release。
+| 功能 | 位置 |
+| --- | --- |
+| 启动、窗口、选择文件、拖放与全屏 | `backend/main.py`、`backend/core/desktop.py` |
+| 桌面命令、二进制响应、流式事件与鉴权 | `backend/api/server.py`、`frontend/src/sdk/python.ts` |
+| SQLite、全文检索、备份恢复、重定位、导入校验 | `backend/services/library.py` |
+| Word 转换与失败原因、Windows 凭据 | `backend/services/word.py`、`backend/core/windows.py` |
+| 加入文档窗口与导入队列 | `frontend/src/components/library/ImportDialog.vue`、`frontend/src/library/importer.ts` |
+| AI 运行时、取消、文档工具回传 | `backend/runtime/harness.py`、`harness/runtime.mjs`、`frontend/src/ai/harness.mjs` |
+| 单次任务（翻译、解释、出题）入口 | `frontend/src/ai/complete.ts` |
+| PDF 连续渲染/选区/索引、AI 文档工具与请求队列 | `frontend/src/reader/core/`、`frontend/src/shared/` |
+| 更新筛选、SHA-256 验证与安装 | `backend/services/updates.py` |
 
-本轮变更、验收边界和后续事项见 [开发交接](docs/HANDOFF.md)。
+后续接入学习功能时，生成练习题或解释错题可以复用 `frontend/src/ai/complete.ts` 的单次任务入口；需要引用当前 PDF 的问答可复用 `streamDocumentChat`。学习进度、错题和复习安排属于应用数据，不放在 Harness 会话里。当前版本还没有学习界面。
+
+## 数据、隐私与安全说明
+
+- 默认数据目录是 `%APPDATA%\com.phydog.reading.python`。不要把 `--data-dir` 或 `KAIZHI_DATA_DIR` 指向原版书库，也不要让两个实例同时写同一个数据库。
+- 设置 → 文档库可以导出 SQLite 备份；恢复会**替换当前书库**（进度、书签、分组和 AI 对话），不含原文件和单独加密的 API 密钥。文件移动后可在书卡重新定位，保留原 ID 和阅读记录。
+- 需要试读历史书库时，先退出程序并备份，把 `library.sqlite3` 与存在的 `-wal` / `-shm` 一并复制到**新的空目录**，再运行 `backend\main.py --data-dir "副本的绝对路径"`。凭据需单独复制 `credentials`，DPAPI 数据只能由原 Windows 用户读取。界面偏好不会从旧 WebView 自动迁移。
+- **API 密钥**：旧密钥不自动转移，请为使用的 API 地址重新输入一次。密钥按服务商和完整端点隔离，可只放内存，勾选「记住」才写入 Windows DPAPI；界面不能读回明文，也不会回退到其他账号或服务商。远程 API 须 HTTPS，本机兼容服务可用回环 HTTP。
+- **发给模型的内容**：选区、阅读器检索出的证据和按需截图会发给用户所选的服务商。Harness 只装载模型服务和多服务商适配器，不加载 Shell、磁盘工具、用户的 Harness 配置或会话日志插件。
+- 本地服务只监听 IPv4 回环地址；特权请求校验 Host、来源和每次启动生成的令牌，WebSocket 也须认证。不要把接口暴露到局域网或公网。
+
+## 更新与发布
+
+更新器只认 `python-vX.Y.Z` 标签及带 SHA-256 摘要的 `KaizhiPython-X.Y.Z-portable.exe` / `KaizhiPython-X.Y.Z-setup.exe`；便携版运行文件名为 `KaizhiPython.exe`。软件已改名「阅迁星穹」，但这些文件名、数据目录和 `KAIZHI_*` 变量保持不变，更新器和已有书库都依赖它们。源码模式只提示新版本。推送源码分支不会自动生成 Release。
+
+变更记录、验收边界和后续事项见 [开发交接](docs/HANDOFF.md)，使用方法见 [使用手册](USAGE.md)。
+
+## License
+
+项目代码使用 [MIT 许可](LICENSE)；第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

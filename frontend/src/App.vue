@@ -4,18 +4,18 @@ import { library, importDocument, selectDocumentFile } from './sdk'
 import { groups, members, groupFilter, currentGroup, loadGroups, createGroup, renameGroup, removeGroup, assignGroup } from './library/groups'
 import { readsAsPdf, documentTitle, formatLabel, kindIcon, kindName, DOCUMENT_PATTERN } from './library/kinds'
 import type { Doc } from './sdk/types'
-import AppIcon from './components/AppIcon.vue'
-import ClockChip from './components/ClockChip.vue'
-import FileTabs from './components/FileTabs.vue'
-import CaptureQuickPrompt from './components/CaptureQuickPrompt.vue'
+import AppIcon from './components/ui/AppIcon.vue'
+import ClockChip from './components/layout/ClockChip.vue'
+import FileTabs from './components/layout/FileTabs.vue'
+import CaptureQuickPrompt from './components/assistant/CaptureQuickPrompt.vue'
 import { chatPhase, chatState, sendChat, closeChat, closeAllChats, configureRequests, stopChat, notices, dismissNotice, selectConversation, keepImage, pendingImages, setPendingImages, type Notice } from './ai/workspace'
 import { forgetPassword, forgetAllPasswords } from './document/passwords.mjs'
 import { useSettings, matchShortcut, matchWheelShortcut, shortcutFromEvent, shortcutLabel, UI_FONTS, READING_FONTS, SKETCH_ANSWER_FONTS, fontChoices, isGlassStyle } from './settings'
 import { retainReaderEntries } from './reader/cache-policy.mjs'
 import { installGlassContrast } from './ui/glass-contrast'
 import { restoreLeavingPanel } from './ui/panel-transition'
-import BookmarkRail from './components/BookmarkRail.vue'
-import ClaudeBurst from './components/ClaudeBurst.vue'
+import BookmarkRail from './components/reader/BookmarkRail.vue'
+import ClaudeBurst from './components/assistant/ClaudeBurst.vue'
 import { nudgeGlassMotion } from './ui/glass-motion'
 import { bookmarks, loadBookmarks, addBookmark, removeBookmark, clearBookmarks, renameBookmark, neighbour, type BookmarkPosition } from './library/bookmarks'
 import { useFullscreen } from './ui/fullscreen'
@@ -25,23 +25,23 @@ import { useRubberBand } from './ui/rubber-band'
 import { translator, translate, type Translation } from './ai/translate'
 import { explainCards, closeCard, closeLooseCards, explainTarget, runExplain } from './ai/explain'
 import { looksMathy, selectionImage } from './reader/selection-image'
-import ExplainCard from './components/ExplainCard.vue'
-import SelectionTranslation from './components/SelectionTranslation.vue'
+import ExplainCard from './components/assistant/ExplainCard.vue'
+import SelectionTranslation from './components/translate/SelectionTranslation.vue'
 import { startAutoCheck, stopAutoCheck } from './ui/updater'
 import { registerCustomFonts } from './ui/custom-fonts'
 import { covers, loadCovers, setCover, imageCover, pageCover, type Cover } from './library/covers'
 import { importer, enqueue, runQueue, clearFinished } from './library/importer'
 import { saveFailures, retrySave } from './ui/save-errors'
-const PdfReader = defineAsyncComponent(() => import('./components/PdfReader.vue'))
-const MarkdownReader = defineAsyncComponent(() => import('./components/MarkdownReader.vue'))
-const AiPane = defineAsyncComponent(() => import('./components/AiPane.vue'))
-const SettingsDialog = defineAsyncComponent(() => import('./components/SettingsDialog.vue'))
-const SplitPicker = defineAsyncComponent(() => import('./components/SplitPicker.vue'))
-const UpdateCard = defineAsyncComponent(() => import('./components/UpdateCard.vue'))
-const ContextMenu = defineAsyncComponent(() => import('./components/ContextMenu.vue'))
-const ManifoldDoodle = defineAsyncComponent(() => import('./components/ManifoldDoodle.vue'))
-const TranslatePane = defineAsyncComponent(() => import('./components/TranslatePane.vue'))
-const ImportDialog = defineAsyncComponent(() => import('./components/ImportDialog.vue'))
+const PdfReader = defineAsyncComponent(() => import('./components/reader/PdfReader.vue'))
+const MarkdownReader = defineAsyncComponent(() => import('./components/reader/MarkdownReader.vue'))
+const AiPane = defineAsyncComponent(() => import('./components/assistant/AiPane.vue'))
+const SettingsDialog = defineAsyncComponent(() => import('./components/settings/SettingsDialog.vue'))
+const SplitPicker = defineAsyncComponent(() => import('./components/reader/SplitPicker.vue'))
+const UpdateCard = defineAsyncComponent(() => import('./components/settings/UpdateCard.vue'))
+const ContextMenu = defineAsyncComponent(() => import('./components/layout/ContextMenu.vue'))
+const ManifoldDoodle = defineAsyncComponent(() => import('./components/layout/ManifoldDoodle.vue'))
+const TranslatePane = defineAsyncComponent(() => import('./components/translate/TranslatePane.vue'))
+const ImportDialog = defineAsyncComponent(() => import('./components/library/ImportDialog.vue'))
 const { preferences, effectiveAppearance, load: loadPreferences, save: savePreferences } = useSettings()
 
 const documents = ref<Doc[]>([])

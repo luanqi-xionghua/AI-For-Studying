@@ -12,7 +12,7 @@ it('翻译栏：只用 AI 翻译，显示所选预设，点开可换成别的预
     { id: 'a', name: '', provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.4', effort: 'high' },
     { id: 'b', name: '快译', provider: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', effort: '' },
   ], assistantPreset: 'a', translationPreset: 'b', explainPreset: 'b' }))
-  const TranslatePane = (await import('../../src/components/TranslatePane.vue')).default
+  const TranslatePane = (await import('../../src/components/translate/TranslatePane.vue')).default
   const w = mount(TranslatePane, { attachTo: document.body })
   await flushPromises()
   // 没有谷歌 / 谷歌云 / 有道可选了
@@ -53,7 +53,7 @@ it('翻译栏：只用 AI 翻译，显示所选预设，点开可换成别的预
 })
 
 it('翻译栏：翻译模式开关在「文档上下文」的位置，点一下切换', async () => {
-  const TranslatePane = (await import('../../src/components/TranslatePane.vue')).default
+  const TranslatePane = (await import('../../src/components/translate/TranslatePane.vue')).default
   const { translator } = await import('../../src/ai/translate')
   translator.auto = false
   const w = mount(TranslatePane, { attachTo: document.body })

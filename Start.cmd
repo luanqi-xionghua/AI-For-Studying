@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 if not exist ".venv\Scripts\python.exe" goto setup
-".venv\Scripts\python.exe" run.py
+".venv\Scripts\python.exe" backend\main.py
 if errorlevel 1 pause
 exit /b
 :setup
