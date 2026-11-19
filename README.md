@@ -4,7 +4,7 @@
 
 ![阅读助手与翻译助手](docs/images/reading-assistants.jpg)
 
-**下载**：到 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载 `YueqianXingqiong-<版本>-setup.exe`（安装版，推荐）或 `-portable.exe`（免安装版）。支持 Windows 10 / 11 x64，不需要另装 Python、Node 或其他运行环境。使用方法见 [使用手册](USAGE.md)。
+**下载**：到 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载 `YueqianXingqiong-<版本>-setup.exe`（安装版，推荐）或 `-portable.zip`（免安装版，完整解压后打开；旧版 Release 为单文件 EXE）。支持 Windows 10 / 11 x64，不需要另装 Python、Node 或其他运行环境。使用方法见 [使用手册](USAGE.md)。
 
 ## 核心能力
 
@@ -82,7 +82,7 @@
 从 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载：
 
 - **安装版** `YueqianXingqiong-<版本>-setup.exe`：只为当前用户安装（不需要管理员权限），装到 `%LOCALAPPDATA%\Programs\YueqianXingqiong`，在开始菜单和「设置 → 应用」里显示为「阅迁星穹」，可选桌面快捷方式，支持应用内自动更新。
-- **免安装版** `YueqianXingqiong-<版本>-portable.exe`：单个文件，放在任意位置双击运行；应用内更新会替换这个文件本身。
+- **免安装版** `YueqianXingqiong-<版本>-portable.zip`：完整解压后运行文件夹中的 `YueqianXingqiong.exe`，不要从压缩包内启动或只移动 EXE。更新会就地刷新这个文件夹，不写卸载项或快捷方式。旧版单文件用户请从发布页手动迁移一次；书库和设置不用搬。
 
 两种版本共用同一个数据目录。下载后可用同一页面的 `SHA256SUMS.txt` 核对文件。安装包和程序没有代码签名证书，首次运行时 Windows SmartScreen 可能提示「已保护你的电脑」，确认来源后点「更多信息 → 仍要运行」。
 
@@ -109,7 +109,7 @@ winget install NSIS.NSIS --source winget          # 只有生成安装包时需�
 powershell.exe -NoProfile -File scripts\build-windows.ps1 -Test -Release
 ```
 
-先关闭正在运行的阅迁星穹，否则无法覆盖 `dist` 里的文件。`-Test` 会先跑前后端测试，打包后再实际启动 EXE 检查 Harness 和 PDF；`-Installer` 另用 NSIS 生成安装包；`-Release` 含 `-Installer`，并在 `dist\release\` 放好发布用的安装包、便携版和 `SHA256SUMS.txt`。PowerShell 执行策略受限时加 `-ExecutionPolicy Bypass`。图标由 `scripts/make-icon.py` 从 `frontend/public/favicon.svg` 生成，EXE 的版本信息由 `scripts/make-version-info.py` 按 `backend/__init__.py` 的 `VERSION` 生成。构建会把锁定的 Harness 与 Node 一并放进 EXE；默认用 Node 26.13.0 打包，更换 Node 时用 `KAIZHI_NODE_LICENSE` 指向对应版本的 LICENSE。
+先关闭正在运行的阅迁星穹，否则无法覆盖 `dist` 里的文件。`-Test` 会先跑前后端测试，打包后再实际启动 EXE 检查 Harness 和 PDF；`-Installer` 另用 NSIS 生成安装包；`-Release` 含 `-Installer`，并在 `dist\release\` 放好发布用的安装包、便携版和 `SHA256SUMS.txt`。PowerShell 执行策略受限时加 `-ExecutionPolicy Bypass`。图标由 `scripts/make-icon.py` 从 `frontend/public/favicon.svg` 生成，EXE 的版本信息由 `scripts/make-version-info.py` 按 `backend/__init__.py` 的 `VERSION` 生成。安装版和便携版共用 PyInstaller 目录构建：Qt、前端、Harness 和 Node 位于 EXE 旁的专用运行库目录，启动时不再解包；默认用 Node 26.13.0 打包，更换 Node 时用 `KAIZHI_NODE_LICENSE` 指向对应版本的 LICENSE。
 
 ## 环境变量
 
@@ -131,7 +131,7 @@ npm.cmd --prefix frontend run build                                   # 类型�
 .\.venv\Scripts\python.exe backend\main.py --smoke                    # 临时书库导入合成 PDF，检查渲染与本地接口
 .\.venv\Scripts\python.exe backend\main.py --harness-smoke            # 本机模拟 API 检查模型运行时，不用真实密钥
 # 打包后：等待 GUI 程序退出，ExitCode 应为 0
-(Start-Process .\dist\YueqianXingqiong.exe -ArgumentList '--smoke' -WindowStyle Hidden -Wait -PassThru).ExitCode
+(Start-Process .\dist\YueqianXingqiong\YueqianXingqiong.exe -ArgumentList '--smoke' -WindowStyle Hidden -Wait -PassThru).ExitCode
 ```
 
 关键入口：
@@ -167,7 +167,7 @@ npm.cmd --prefix frontend run build                                   # 类型�
 2. 在 GitHub 新建 Release，标签 `vX.Y.Z`，上传 `dist\release\` 里的三个文件，例如：
    `gh release create vX.Y.Z dist\release\* --repo luanqi-xionghua/AI-For-Studying --title "阅迁星穹 X.Y.Z" --notes-file <说明文件>`
 
-应用内更新器只认 `vX.Y.Z`（也接受旧的 `python-vX.Y.Z`）标签下、GitHub 记录了 SHA-256 摘要的 `YueqianXingqiong-X.Y.Z-setup.exe`（安装版用）或 `YueqianXingqiong-X.Y.Z-portable.exe`（免安装版用），下载后校验摘要再安装；安装版以 `/S` 静默更新并自动重新打开。数据目录 `com.phydog.reading.python` 和 `KAIZHI_*` 变量保持既有命名，已保存的书库与设置继续可用。源码模式只提示新版本。推送源码不会自动生成 Release。
+应用内更新器只认 `vX.Y.Z`（也接受旧的 `python-vX.Y.Z`）标签下、GitHub 记录了 SHA-256 摘要的 `YueqianXingqiong-X.Y.Z-setup.exe`，下载后校验摘要再静默更新并自动重新打开。便携版还会确认该 Release 提供同版本 `-portable.zip`，使用同一已校验更新包的便携模式，仅更新自己的目录。数据目录 `com.phydog.reading.python` 和 `KAIZHI_*` 变量保持既有命名，已保存的书库与设置继续可用。源码模式只提示新版本。推送源码不会自动生成 Release。
 
 变更记录、验收边界和后续事项见 [开发交接](docs/HANDOFF.md)，使用方法见 [使用手册](USAGE.md)。
 

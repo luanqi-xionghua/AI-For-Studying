@@ -19,7 +19,7 @@
 ## 二、启动
 
 - **安装版（推荐）**：从 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载 `YueqianXingqiong-<版本>-setup.exe`，双击按向导安装。只装给当前用户，不需要管理员权限；装好后在开始菜单（以及可选的桌面快捷方式）里打开「阅迁星穹」。以后有新版本时，程序会提示并可一键更新。
-- **免安装版**：下载 `YueqianXingqiong-<版本>-portable.exe`，放在任意文件夹双击运行。
+- **免安装版**：下载 `YueqianXingqiong-<版本>-portable.zip`，先完整解压，再双击其中的 `YueqianXingqiong.exe`。请保留同目录的运行库，不要直接在 ZIP 内双击。若正在使用旧版单文件 EXE，请到发布页手动下载并解压新版一次；书库与设置会保留，后续支持应用内更新。
 - **源码版**：按 README 准备好环境后，双击项目根目录的 `Start.cmd`。
 
 安装包和程序没有代码签名证书。第一次运行时如果 Windows 提示「Windows 已保护你的电脑」，确认是从上面的 Releases 页面下载的之后，点「更多信息 → 仍要运行」。

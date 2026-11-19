@@ -8,12 +8,30 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtGui import QColor, QDesktopServices, QIcon
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from ..api.server import DesktopService
+
+
+def startup_canvas(settings, system_dark):
+    """Base canvas only; Vue owns the full theme, wallpaper, fonts and live previews."""
+    try:
+        appearance = json.loads(settings["stored"] or "{}").get("appearance", {})
+    except (ValueError, AttributeError, RecursionError):
+        appearance = {}
+    if not isinstance(appearance, dict):
+        appearance = {}
+    style = "warm" if settings["fresh"] else appearance.get("style")
+    theme = appearance.get("theme") or settings["legacyTheme"]
+    dark = theme == "dark" if theme in ("light", "dark") else system_dark
+    if style == "warm":
+        return "#262624" if dark else "#f5f4ed"
+    if style == "sketch":
+        return "#22211e" if dark else "#efe9db"
+    return "#1f2427" if dark else "#f6f8f8"
 
 
 class Page(QWebEnginePage):
@@ -177,6 +195,9 @@ def run(dist, data_dir=None, smoke=False):
         profile.setPersistentStoragePath(str(root / "web"))
         profile.setCachePath(str(root / "web-cache"))
     page = Page(profile, service.origin, view)
+    canvas = startup_canvas(service.lib.get_startup_settings(),
+                            app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
+    page.setBackgroundColor(QColor(canvas))
     view.setPage(page)
     view.setWindowTitle("阅迁星穹")
     view.resize(1440, 940)

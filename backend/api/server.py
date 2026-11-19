@@ -14,7 +14,7 @@ from ..services.library import Library
 from ..services.updates import Updates
 from ..core.windows import Credentials
 
-DATA = "list_documents import_documents relocate_document backup_database restore_database read_document update_document remove_document read_asset index_document get_setting set_setting delete_setting".split()
+DATA = "get_startup_settings list_documents import_documents relocate_document backup_database restore_database read_document update_document remove_document read_asset index_document get_setting set_setting delete_setting".split()
 AI = {"ai_start", "ai_cancel", "ai_tool_result", "ai_set_key", "ai_has_key"}
 UPDATE = "update_status update_check update_download update_cancel update_install update_open_page".split()
 GUI = [

@@ -42,7 +42,8 @@ const ContextMenu = defineAsyncComponent(() => import('./components/layout/Conte
 const ManifoldDoodle = defineAsyncComponent(() => import('./components/layout/ManifoldDoodle.vue'))
 const TranslatePane = defineAsyncComponent(() => import('./components/translate/TranslatePane.vue'))
 const ImportDialog = defineAsyncComponent(() => import('./components/library/ImportDialog.vue'))
-const { preferences, effectiveAppearance, load: loadPreferences, save: savePreferences } = useSettings()
+const props = defineProps<{ startupError?: string }>()
+const { preferences, effectiveAppearance, save: savePreferences } = useSettings()
 
 const documents = ref<Doc[]>([])
 type CaptureFrame = { left: number; top: number; width: number; height: number }
@@ -1709,7 +1710,7 @@ onMounted(async () => {
   window.addEventListener('resize', dismissSelectionAction)
   window.addEventListener('resize', captureViewportChanged)
   systemTheme.addEventListener('change', applyTheme)
-  try { await loadPreferences() } catch (error) { notify(`设置加载失败：${reason(error)}`) }
+  if (props.startupError) notify(`设置加载失败：${props.startupError}`)
   await loadLibraryOrder()
   await loadGroups()
   void loadCovers()

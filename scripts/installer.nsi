@@ -14,6 +14,9 @@ SetCompressor /SOLID lzma
 !define APP "YueqianXingqiong"
 !define NAME "阅迁星穹"
 !define EXE "${APP}.exe"
+!define RUNTIME "${APP}.runtime"
+Var PortableUpdate
+Var Stage
 !define UNINSTALLER "Uninstall-${APP}.exe"
 !define PUBLISHER "luanqi-xionghua"
 !define URL "https://github.com/luanqi-xionghua/AI-For-Studying"
@@ -57,13 +60,33 @@ VIAddVersionKey /LANG=2052 "LegalCopyright" "MIT License"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
-; 旧版本还开着时，程序文件被占用，无法覆盖。静默更新时程序正在退出，最多等 30 秒；手动安装时请用户先关掉。
+Function .onInit
+  ; The verified setup can also refresh an existing extracted copy. In this mode
+  ; use only the explicitly marked directory; do not touch HKCU or shortcuts.
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/PORTABLE" $1
+  IfErrors done
+  IfSilent 0 bad
+  ReadEnvStr $INSTDIR "YUEQIAN_PORTABLE_DIR"
+  StrCmp $INSTDIR "" bad
+  IfFileExists "$INSTDIR\${UNINSTALLER}" bad
+  IfFileExists "$INSTDIR\${EXE}" 0 bad
+  IfFileExists "$INSTDIR\${RUNTIME}\.yueqian-runtime" 0 bad
+  StrCpy $PortableUpdate 1
+  Goto done
+  bad:
+    Abort "便携版更新目标无效。"
+  done:
+FunctionEnd
+
+; Move old files aside only after the entire new bundle is ready on the same volume.
 Function WaitForApp
   StrCpy $0 0
   retry:
     IfFileExists "$INSTDIR\${EXE}" 0 done
     ClearErrors
-    Delete "$INSTDIR\${EXE}"
+    Rename "$INSTDIR\${EXE}" "$Stage\previous.exe"
     IfErrors 0 done
     IfSilent 0 ask
       IntOp $0 $0 + 1
@@ -80,10 +103,47 @@ FunctionEnd
 Section "${NAME}（必需）" SecMain
   SectionIn RO
   SetOutPath "$INSTDIR"
+  ; Refuse to overwrite an unrelated directory with the same name.
+  IfFileExists "$INSTDIR\${RUNTIME}\*.*" 0 runtime_ok
+  IfFileExists "$INSTDIR\${RUNTIME}\.yueqian-runtime" runtime_ok
+    Abort "运行库目录已存在且不属于本应用。"
+  runtime_ok:
+  ClearErrors
+  GetTempFileName $Stage "$INSTDIR"
+  IfErrors stage_failed
+  Delete "$Stage"
+  SetOutPath "$Stage\${RUNTIME}"
+  File /r "..\dist\${APP}\${RUNTIME}\*.*"
+  SetOutPath "$Stage"
+  File "..\dist\${APP}\${EXE}"
+  SetOutPath "$INSTDIR"
+  IfErrors stage_failed
+
   Call WaitForApp
-  File "..\dist\${EXE}"
+  ClearErrors
+  IfFileExists "$INSTDIR\${RUNTIME}\.yueqian-runtime" 0 activate
+    Rename "$INSTDIR\${RUNTIME}" "$Stage\previous.runtime"
+    IfErrors rollback_exe
+  activate:
+    Rename "$Stage\${RUNTIME}" "$INSTDIR\${RUNTIME}"
+    IfErrors rollback_runtime
+    Rename "$Stage\${EXE}" "$INSTDIR\${EXE}"
+    IfErrors 0 activated
+    Rename "$INSTDIR\${RUNTIME}" "$Stage\${RUNTIME}"
+  rollback_runtime:
+    IfFileExists "$Stage\previous.runtime\.yueqian-runtime" 0 rollback_exe
+      Rename "$Stage\previous.runtime" "$INSTDIR\${RUNTIME}"
+  rollback_exe:
+    IfFileExists "$Stage\previous.exe" 0 stage_failed
+      Rename "$Stage\previous.exe" "$INSTDIR\${EXE}"
+  stage_failed:
+    ; Leave any backups for recovery instead of deleting them on an I/O failure.
+    Abort "未能更新程序目录。请关闭应用、检查空间后重试。暂存目录：$Stage"
+  activated:
+    RMDir /r "$Stage"
   File "/oname=LICENSE.txt" "..\LICENSE"
   File "/oname=THIRD_PARTY_NOTICES.md" "..\THIRD_PARTY_NOTICES.md"
+  StrCmp $PortableUpdate 1 done
   WriteUninstaller "$INSTDIR\${UNINSTALLER}"
 
   ; 旧版安装留下的快捷方式一并清掉。
@@ -104,9 +164,11 @@ Section "${NAME}（必需）" SecMain
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" "$0"
+  done:
 SectionEnd
 
 Section "桌面快捷方式" SecDesktop
+  StrCmp $PortableUpdate 1 skip
   ; 静默更新不重新创建用户已经删掉的桌面快捷方式。
   IfSilent 0 create
     IfFileExists "$DESKTOP\${NAME}.lnk" 0 skip
@@ -137,6 +199,8 @@ Section "Uninstall"
     give_up:
       Abort "${NAME} 正在运行，无法卸载。"
   removed:
+  IfFileExists "$INSTDIR\${RUNTIME}\.yueqian-runtime" 0 +2
+    RMDir /r "$INSTDIR\${RUNTIME}"
   Delete "$INSTDIR\LICENSE.txt"
   Delete "$INSTDIR\THIRD_PARTY_NOTICES.md"
   Delete "$INSTDIR\${UNINSTALLER}"

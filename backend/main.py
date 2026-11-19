@@ -21,7 +21,6 @@ def main():
         help="test the AI runtime with a local mock provider",
     )
     parser.add_argument("--office", nargs=2)
-    parser.add_argument("--replace-portable", nargs=3)
     a = parser.parse_args()
     if a.harness_smoke:
         import asyncio
@@ -32,11 +31,6 @@ def main():
         from backend.services.word import office
 
         return office(*map(Path, a.office))
-    if a.replace_portable:
-        from backend.services.updates import replace_portable
-
-        replace_portable(*a.replace_portable)
-        return 0
     from backend.core.desktop import run
 
     dist = ROOT / "frontend/dist"

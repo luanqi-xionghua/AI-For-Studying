@@ -1,31 +1,36 @@
 # 阅迁星穹 Python 桌面版 · 开发交接
 
-**2026-11-19（上海时间）｜仓库：`luanqi-xionghua/AI-For-Studying`（`main`）｜应用版本：`1.0.0`（首个公开发行版，Release `v1.0.0`）**
+**2026-11-19（上海时间）｜仓库：`luanqi-xionghua/AI-For-Studying`（`main`）｜源码版本：`1.0.1`（首个公开发行版为 `v1.0.0`）**
 
 ## 接手先看
 
 以 `README.md` 为运行、打包和发布依据，`USAGE.md` 是给使用者的手册。产品只有 Windows 桌面版：使用者从 Releases 下载安装版或免安装版；开发时运行 `Start.cmd`（源码）。不可把可写数据目录指向别的已有书库；默认书库在 `%APPDATA%\com.phydog.reading.python`。
 
-软件名「阅迁星穹」，发行文件用拼音 ASCII 名 `YueqianXingqiong`（GitHub 会把附件名里的中文改成点号）：程序 `YueqianXingqiong.exe`，发布附件 `YueqianXingqiong-X.Y.Z-setup.exe` / `-portable.exe`，标签 `vX.Y.Z`。**数据目录 `com.phydog.reading.python`、`KAIZHI_*` 环境变量、`kaizhi.*` 存储键、`X-Kaizhi-Token`、Qt 内部应用名 `KaizhiPython` 为兼容既有安装保持不变**：已保存的书库、设置和密钥继续可用，不要顺手改掉。
+软件名「阅迁星穹」，发行文件用拼音 ASCII 名 `YueqianXingqiong`（GitHub 会把附件名里的中文改成点号）：程序 `YueqianXingqiong.exe`，发布附件 `YueqianXingqiong-X.Y.Z-setup.exe` / `-portable.zip`，标签 `vX.Y.Z`。**数据目录 `com.phydog.reading.python`、`KAIZHI_*` 环境变量、`kaizhi.*` 存储键、`X-Kaizhi-Token`、Qt 内部应用名 `KaizhiPython` 为兼容既有安装保持不变**：已保存的书库、设置和密钥继续可用，不要顺手改掉。
 
-## 1.0.0 发行版（11-19 晚）
+## 1.0.1 启动回归与验证
+
+- 启动对照：同一台 Windows 主机，在独立桌面上交错启动 1.0.0 单文件和 1.0.1 目录版，各三次，使用独立测试数据目录。从创建进程到首次检测到可见的「阅迁星穹」主窗口，中位数分别为 10.63 秒与 1.34 秒。未重置系统磁盘缓存；这是本机抽样，不是冷启动上限，也不是书架可交互时间。
+- 外观回归测试在真实 Qt WebEngine 中延迟设置响应，验证默认风格没有挂载、随后第一次挂载就是保存的风格、启动不调用换肤过渡。首次安装保留暖色、旧设置保留玻璃，主动切换仍沿用原动画。
+
+## Windows 发行与更新
 
 | 项 | 做法 |
 | --- | --- |
 | 版本号 | 只在 `backend/__init__.py` 的 `VERSION` 改；EXE 版本信息（`scripts/make-version-info.py`）、安装包（`makensis /DVERSION`）、更新器都从这里读 |
 | 图标 | `scripts/make-icon.py` 把 `frontend/public/favicon.svg` 渲染成 `frontend/public/app.ico`（16–256 px）；用于 EXE、安装包和窗口 / 任务栏（`backend/core/desktop.py` 设置 `setWindowIcon`） |
 | 安装包 | `scripts/installer.nsi`（NSIS 3，Modern UI 2，简体中文）：欢迎页、MIT 许可页、可选桌面快捷方式、选择目录、完成后可运行。按用户安装到 `%LOCALAPPDATA%\Programs\YueqianXingqiong`，不要管理员权限；登记到「设置 → 应用」（HKCU Uninstall 键，含版本、发布者、图标、大小）；附带 `LICENSE.txt` 与 `THIRD_PARTY_NOTICES.md`；程序在运行时会等它关闭。卸载保留书库与设置，并在确认页说明数据位置 |
-| 应用内更新 | `backend/services/updates.py`：仓库 `AI-For-Studying`，标签 `vX.Y.Z`（兼容旧的 `python-vX.Y.Z`），附件名见上，校验 GitHub 记录的 SHA-256。安装版以 `/S` 静默安装到原目录（`InstallDirRegKey`），完成后自动重新打开；免安装版用 `--replace-portable` 替换自身 |
+| 应用内更新 | `backend/services/updates.py`：仓库 `AI-For-Studying`，标签 `vX.Y.Z`（兼容旧的 `python-vX.Y.Z`），附件名见上，校验 GitHub 记录的 SHA-256。安装版以 `/S` 静默安装到原目录（`InstallDirRegKey`），完成后自动重新打开；目录便携版使用同一已验证 setup 的 `/S /PORTABLE` 模式原地更新，不写注册表或快捷方式。旧单文件用户手动迁移一次 |
 | 构建 | `scripts\build-windows.ps1 -Test -Release`：测试 → 打包 → 打包后冒烟 → NSIS → `dist\release\`（setup、portable、`SHA256SUMS.txt`）。找不到 `makensis` 时会看 NSIS 默认安装目录 |
 | 未做 | 没有代码签名证书，首次运行可能出现 SmartScreen 提示（README / USAGE 已说明）。Anthropic Serif 字体与阅读助手按钮的菊花图标按用户决定原样保留，授权由用户负责（见 `THIRD_PARTY_NOTICES.md`） |
 
-验收（发行文件本身）：静默安装到临时目录后，四个文件齐全；「应用」列表显示阅迁星穹 1.0.0、发布者与大小；开始菜单快捷方式存在；EXE 属性的产品名与版本正确；安装完自动重新打开，窗口标题为「阅迁星穹」（用临时书库）；正常关闭后静默卸载，程序、注册表项、快捷方式都已移除，用户数据保留。
+历史验收（1.0.0 发行文件本身）：静默安装到临时目录后，四个文件齐全；「应用」列表显示阅迁星穹 1.0.0、发布者与大小；开始菜单快捷方式存在；EXE 属性的产品名与版本正确；安装完自动重新打开，窗口标题为「阅迁星穹」（用临时书库）；正常关闭后静默卸载，程序、注册表项、快捷方式都已移除，用户数据保留。
 
 ## 删除了什么，留下了什么
 
 | 变更 | 接手时要知道的原因 |
 | --- | --- |
-| 移除整个扩展、浏览器消息 Host、独立 Host 入口、构建/注册/检查脚本及本地旧 Host 产物 | 命令行不再分派扩展消息；桌面打包只产出一个 EXE，NSIS 也只携带桌面程序。历史安装如曾注册助手，本轮不自动注销，以免误动既有安装的配置。 |
+| 移除整个扩展、浏览器消息 Host、独立 Host 入口、构建/注册/检查脚本及本地旧 Host 产物 | 命令行不再分派扩展消息；只有桌面程序入口；从 1.0.1 起其依赖目录随安装包和 ZIP 一并交付。历史安装如曾注册助手，本轮不自动注销，以免误动既有安装的配置。 |
 | 迁出仍在使用的纯前端模块 | PDF 几何、选区、文本索引与渲染基类在 `frontend/src/reader/core/`；文档工具协议、限流队列及 API 地址校验在 `frontend/src/shared/`。桌面阅读、框选、AI 工具仍使用这些实现，不依赖扩展源码。 |
 | 移除旧桌面打包/发布工具和旧 UI 验收脚本 | 删除指向原工具链、旧安装包、浏览器预览或已不存在 fixture 的脚本。桌面验收入口改为真实 Qt `--smoke`；不等于所有旧 UI 场景都已有 Qt 自动化覆盖。 |
 | 移除独立网页版 | 不再创建浏览器文档库；无桌面令牌的页面只提示从桌面启动。选文件、拖放、全屏、更新和 AI 请求均由桌面桥接处理。Qt WebEngine 是桌面界面的渲染引擎，不能删除。 |

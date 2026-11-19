@@ -31,6 +31,7 @@ export const library: Library = {
   remove: id => call('remove_document', { id }),
   async readAsset(id, relativePath) { return { data: bytes(await call<ArrayBuffer>('read_asset', { id, relativePath })), mime: assetMime(relativePath) }; },
   index: (id, text) => call('index_document', { id, text }),
+  getStartupSettings: () => call('get_startup_settings', {}),
   getSetting: key => call('get_setting', { key }),
   setSetting: (key, value) => call('set_setting', { key, value }),
   deleteSetting: key => call('delete_setting', { key }),

@@ -5,10 +5,8 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import webbrowser
 from pathlib import Path
@@ -18,7 +16,7 @@ from packaging.version import InvalidVersion, Version
 
 from .. import VERSION
 
-# 发布仓库与文件名：Release 附件为 YueqianXingqiong-X.Y.Z-setup.exe / -portable.exe，标签 vX.Y.Z。
+# 发布仓库与文件名：Release 附件为 YueqianXingqiong-X.Y.Z-setup.exe / -portable.zip，标签 vX.Y.Z。
 REPO = "luanqi-xionghua/AI-For-Studying"
 APP = "YueqianXingqiong"
 EXE = APP + ".exe"
@@ -116,13 +114,22 @@ class Updates:
         tag = rel["tag_name"]
         info = None
         setup = self.update_status()["installed"]
-        name = f"{APP}-{version}-" + ("setup.exe" if setup else "portable.exe")
+        # The same verified NSIS package updates installed and extracted copies. Only
+        # use portable mode for releases shipping the new directory-format ZIP.
+        portable_zip = f"{APP}-{version}-portable.zip"
+        portable_url = f"{self.page}/releases/download/{tag}/{portable_zip}"
+        directory_release = any(
+            a.get("name") == portable_zip and a.get("browser_download_url") == portable_url
+            for a in rel.get("assets", [])
+        )
+        name = f"{APP}-{version}-setup.exe"
         for a in rel.get("assets", []):
             url = f"{self.page}/releases/download/{tag}/{name}"
             digest = a.get("digest") or ""
             size = a.get("size", 0)
             if (
-                a.get("name") == name
+                (setup or directory_release)
+                and a.get("name") == name
                 and a.get("browser_download_url") == url
                 and 0 < size <= MAX
                 and re.fullmatch("sha256:[0-9a-f]{64}", digest)
@@ -201,56 +208,17 @@ class Updates:
         with open(path, "rb") as f:
             if hashlib.file_digest(f, "sha256").hexdigest() != a["sha256"]:
                 raise ValueError("更新文件已改变")
-        args = (
-            [path, "/S"]
-            if a["kind"] == "setup"
-            else [path, "--replace-portable", str(exe), str(os.getpid()), a["sha256"]]
-        )
+        args = [path, "/S"]
+        env = os.environ | {"PYINSTALLER_RESET_ENVIRONMENT": "1"}
+        if a["kind"] == "portable":
+            if not (exe.parent / f"{APP}.runtime" / ".yueqian-runtime").is_file():
+                raise ValueError("请先将便携版 ZIP 完整解压到单独的文件夹")
+            args.append("/PORTABLE")
+            env["YUEQIAN_PORTABLE_DIR"] = str(exe.parent)
         subprocess.Popen(
             args,
             close_fds=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
-            env=os.environ | {"PYINSTALLER_RESET_ENVIRONMENT": "1"},
+            env=env,
         )
         await self.quit()
-
-
-def replace_portable(target, pid, checksum):
-    import win32api
-    import win32event
-
-    target = Path(target).resolve(strict=True)
-    source = Path(sys.executable).resolve()
-    if (
-        not getattr(sys, "frozen", False)
-        or target.name != EXE
-        or target == source
-        or not re.fullmatch("[a-f0-9]{64}", checksum)
-    ):
-        raise ValueError("便携更新目标无效")
-    with source.open("rb") as f:
-        if hashlib.file_digest(f, "sha256").hexdigest() != checksum:
-            raise ValueError("更新文件校验失败")
-    try:
-        parent = win32api.OpenProcess(0x00100000, False, int(pid))
-    except Exception:
-        parent = None
-    if parent:
-        try:
-            if win32event.WaitForSingleObject(parent, 60000) != 0:
-                raise ValueError("等待旧版本退出超时")
-        finally:
-            parent.Close()
-    with tempfile.TemporaryDirectory(dir=target.parent) as td:
-        new = Path(td) / "new.exe"
-        shutil.copyfile(source, new)
-        backup = Path(td) / "previous.exe"
-        shutil.copyfile(target, backup)
-        try:
-            os.replace(new, target)
-            subprocess.Popen(
-                [str(target)], env=os.environ | {"PYINSTALLER_RESET_ENVIRONMENT": "1"}
-            )
-        except OSError:
-            os.replace(backup, target)
-            raise

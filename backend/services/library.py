@@ -430,6 +430,16 @@ class Library:
         if old and old["kind"] == "word":
             word.forget(Path(old["path"]), self.converted)
 
+    def get_startup_settings(self):
+        # Never enumerate/stat document paths just to distinguish a first run from an upgrade.
+        with self.connection() as cx:
+            stored, legacy, has_books = cx.execute("""SELECT
+                (SELECT value FROM settings WHERE key='app.preferences.v1'),
+                (SELECT value FROM settings WHERE key='appearance.theme'),
+                EXISTS(SELECT 1 FROM documents)""").fetchone()
+        return dict(stored=stored, legacyTheme=legacy if not stored else None,
+                    fresh=not (stored or legacy or has_books))
+
     def get_setting(self, key):
         if not KEY.fullmatch(key):
             raise ValueError("无效设置名")

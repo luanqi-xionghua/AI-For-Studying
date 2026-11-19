@@ -29,8 +29,13 @@ try {
     & $python scripts/make-version-info.py build/version-info.txt
     if ($LASTEXITCODE) { throw 'Version resource generation failed' }
     . (Join-Path $PSScriptRoot 'freeze.ps1')
-    Invoke-KaizhiFreeze $root @('--noconfirm','--onefile','--windowed','--name',$app,'--icon','frontend/public/app.ico','--version-file','build/version-info.txt','--add-data','frontend/dist;frontend/dist','--add-data','harness/dist;harness/dist','--paths','.','--hidden-import=win32timezone','--exclude-module=numpy','--exclude-module=matplotlib','--exclude-module=tkinter','backend/main.py')
-    $exe = Join-Path $root "dist\$app.exe"
+    Invoke-KaizhiFreeze $root @('--noconfirm','--onedir','--contents-directory',"$app.runtime",'--windowed','--name',$app,'--icon','frontend/public/app.ico','--version-file','build/version-info.txt','--add-data','frontend/dist;frontend/dist','--add-data','harness/dist;harness/dist','--paths','.','--hidden-import=win32timezone','--exclude-module=numpy','--exclude-module=matplotlib','--exclude-module=tkinter','backend/main.py')
+    $bundle = Join-Path $root "dist\$app"
+    $exe = Join-Path $bundle "$app.exe"
+    Copy-Item LICENSE (Join-Path $bundle "LICENSE.txt")
+    Copy-Item THIRD_PARTY_NOTICES.md -Destination $bundle
+    # Ownership marker for installer upgrades; never treat an arbitrary folder as our runtime.
+    Set-Content -LiteralPath (Join-Path $bundle "$app.runtime\.yueqian-runtime") -Value $app -Encoding ascii
     if ($Test) {
         foreach ($check in @('--harness-smoke','--smoke')) {
             $probe = Start-Process -FilePath $exe -ArgumentList $check -WindowStyle Hidden -Wait -PassThru
@@ -52,11 +57,16 @@ try {
     if ($Release) {
         # 发布附件名必须是 ASCII（GitHub 会把中文改成点号），也是应用内更新器认的名字。
         $out = Join-Path $root 'dist\release'
-        if (Test-Path $out) { Remove-Item -Recurse -Force $out }
-        New-Item -ItemType Directory $out | Out-Null
+        New-Item -ItemType Directory -Force $out | Out-Null
+        # Keep unrelated files intact; do not leave obsolete release binaries for upload.
+        Get-ChildItem -LiteralPath $out -File | Where-Object { $_.Name -match '^YueqianXingqiong-[0-9.]+-(setup\.exe|portable\.(exe|zip))$' } | ForEach-Object { Remove-Item -LiteralPath $_.FullName }
         Copy-Item (Join-Path $root "dist\$app-$version-setup.exe") $out
-        Copy-Item $exe (Join-Path $out "$app-$version-portable.exe")
-        $sums = Get-ChildItem $out -Filter *.exe | Sort-Object Name | ForEach-Object { '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+        $zip = Join-Path $out "$app-$version-portable.zip"
+        # Include the containing folder and dotfiles; extract once, then run its EXE in place.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip }
+        [IO.Compression.ZipFile]::CreateFromDirectory($bundle, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
+        $sums = Get-Item $zip,(Join-Path $out "$app-$version-setup.exe") | Sort-Object Name | ForEach-Object { '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
         # LF 换行：sha256sum -c（Git Bash、WSL、Linux）遇到 CRLF 会读错文件名。
         [IO.File]::WriteAllText((Join-Path $out 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"))
         Write-Output "Release files in dist\release:"

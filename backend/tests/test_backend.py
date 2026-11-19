@@ -40,6 +40,16 @@ class DataTests(unittest.TestCase):
         self.assertEqual(lib.list_documents(), [])
         self.assertTrue(self.md.is_file())
 
+    def test_startup_settings_do_not_scan_source_files(self):
+        self.assertTrue(self.lib.get_startup_settings()["fresh"])
+        self.lib.import_documents([str(self.md)])
+        with patch("backend.services.library.doc", side_effect=AssertionError("document scan")):
+            self.assertFalse(self.lib.get_startup_settings()["fresh"])
+            self.lib.set_setting("appearance.theme", "dark")
+            self.assertEqual(self.lib.get_startup_settings()["legacyTheme"], "dark")
+            self.lib.set_setting("app.preferences.v1", "{}")
+            self.assertEqual(self.lib.get_startup_settings(), dict(stored="{}", legacyTheme=None, fresh=False))
+
     def test_invalid_batch_atomic(self):
         bad = self.root / "bad.pdf"
         bad.write_bytes(b"not PDF")
@@ -335,11 +345,13 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.service.up.update_install(str(self.root / "unverified.exe"))
 
+    @patch("backend.services.updates.VERSION", "1.0.0")
     async def test_updates_select_verify(self):
         up = self.service.up
         data = b"synthetic package"
         h = hashlib.sha256(data).hexdigest()
-        name = "YueqianXingqiong-1.0.1-portable.exe"
+        name = "YueqianXingqiong-1.0.1-setup.exe"
+        portable = "YueqianXingqiong-1.0.1-portable.zip"
         url = f"{up.page}/releases/download/v1.0.1/{name}"
         releases = [
             {"tag_name": "desktop-v99.0.0"},
@@ -347,6 +359,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
             {
                 "tag_name": "v1.0.1",
                 "assets": [
+                    dict(name=portable, browser_download_url=f"{up.page}/releases/download/v1.0.1/{portable}"),
                     dict(
                         name=name,
                         browser_download_url=url,
@@ -392,3 +405,16 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
                 await up.update_download(url, h, "ch")
             out = await up.update_download(url, h, "ch")
             self.assertEqual(Path(out).read_bytes(), data)
+            self.assertEqual(up.ready[out]["kind"], "portable")
+            exe = self.root / "portable folder" / "YueqianXingqiong.exe"
+            runtime = exe.parent / "YueqianXingqiong.runtime"
+            runtime.mkdir(parents=True)
+            with (patch("sys.frozen", True, create=True), patch("sys.executable", str(exe)),
+                  patch("subprocess.Popen") as launch, patch.object(up, "quit", AsyncMock())):
+                with self.assertRaises(ValueError):
+                    await up.update_install(out)
+                launch.assert_not_called()
+                (runtime / ".yueqian-runtime").write_text("YueqianXingqiong")
+                await up.update_install(out)
+                self.assertEqual(launch.call_args.args[0], [out, "/S", "/PORTABLE"])
+                self.assertEqual(launch.call_args.kwargs["env"]["YUEQIAN_PORTABLE_DIR"], str(exe.parent))

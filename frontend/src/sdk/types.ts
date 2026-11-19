@@ -26,6 +26,7 @@ export interface Library {
   remove(id: string): Promise<void>;
   readAsset(id: string, relativePath: string): Promise<{data: Uint8Array; mime: string}>;
   index(id: string, text: string): Promise<void>;
+  getStartupSettings(): Promise<{ stored: string | null; legacyTheme: string | null; fresh: boolean }>;
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
   deleteSetting(key: string): Promise<void>;
