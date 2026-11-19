@@ -86,7 +86,7 @@ Section "${NAME}（必需）" SecMain
   File "/oname=THIRD_PARTY_NOTICES.md" "..\THIRD_PARTY_NOTICES.md"
   WriteUninstaller "$INSTDIR\${UNINSTALLER}"
 
-  ; 旧名字（开智 / Kaizhi Python）留下的快捷方式一并清掉。
+  ; 旧版安装留下的快捷方式一并清掉。
   Delete "$SMPROGRAMS\Kaizhi Python.lnk"
   CreateShortcut "$SMPROGRAMS\${NAME}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 SW_SHOWNORMAL "" "${NAME}：桌面 AI 阅读器"
 

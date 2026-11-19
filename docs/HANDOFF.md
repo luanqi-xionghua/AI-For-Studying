@@ -1,12 +1,12 @@
-# 阅迁星穹（原「开智」）Python 桌面版 · 开发交接
+# 阅迁星穹 Python 桌面版 · 开发交接
 
 **2026-11-19（上海时间）｜仓库：`luanqi-xionghua/AI-For-Studying`（`main`）｜应用版本：`1.0.0`（首个公开发行版，Release `v1.0.0`）**
 
 ## 接手先看
 
-以 `README.md` 为运行、打包和发布依据，`USAGE.md` 是给使用者的手册。产品只有 Windows 桌面版：使用者从 Releases 下载安装版或免安装版；开发时运行 `Start.cmd`（源码）。不可把可写数据目录指向历史版本；默认书库在 `%APPDATA%\com.phydog.reading.python`。
+以 `README.md` 为运行、打包和发布依据，`USAGE.md` 是给使用者的手册。产品只有 Windows 桌面版：使用者从 Releases 下载安装版或免安装版；开发时运行 `Start.cmd`（源码）。不可把可写数据目录指向别的已有书库；默认书库在 `%APPDATA%\com.phydog.reading.python`。
 
-软件名「阅迁星穹」，发行文件用拼音 ASCII 名 `YueqianXingqiong`（GitHub 会把附件名里的中文改成点号）：程序 `YueqianXingqiong.exe`，发布附件 `YueqianXingqiong-X.Y.Z-setup.exe` / `-portable.exe`，标签 `vX.Y.Z`。**数据目录 `com.phydog.reading.python`、`KAIZHI_*` 环境变量、`kaizhi.*` 存储键、`X-Kaizhi-Token`、Qt 内部应用名 `KaizhiPython` 沿用旧名**：原来的书库、设置和保存的密钥升级后照常使用，不要顺手改掉。
+软件名「阅迁星穹」，发行文件用拼音 ASCII 名 `YueqianXingqiong`（GitHub 会把附件名里的中文改成点号）：程序 `YueqianXingqiong.exe`，发布附件 `YueqianXingqiong-X.Y.Z-setup.exe` / `-portable.exe`，标签 `vX.Y.Z`。**数据目录 `com.phydog.reading.python`、`KAIZHI_*` 环境变量、`kaizhi.*` 存储键、`X-Kaizhi-Token`、Qt 内部应用名 `KaizhiPython` 为兼容既有安装保持不变**：已保存的书库、设置和密钥继续可用，不要顺手改掉。
 
 ## 1.0.0 发行版（11-19 晚）
 
@@ -25,7 +25,7 @@
 
 | 变更 | 接手时要知道的原因 |
 | --- | --- |
-| 移除整个扩展、浏览器消息 Host、独立 Host 入口、构建/注册/检查脚本及本地旧 Host 产物 | 命令行不再分派扩展消息；桌面打包只产出一个 EXE，NSIS 也只携带桌面程序。历史安装如曾注册助手，本轮不自动注销，以免误动原版配置。 |
+| 移除整个扩展、浏览器消息 Host、独立 Host 入口、构建/注册/检查脚本及本地旧 Host 产物 | 命令行不再分派扩展消息；桌面打包只产出一个 EXE，NSIS 也只携带桌面程序。历史安装如曾注册助手，本轮不自动注销，以免误动既有安装的配置。 |
 | 迁出仍在使用的纯前端模块 | PDF 几何、选区、文本索引与渲染基类在 `frontend/src/reader/core/`；文档工具协议、限流队列及 API 地址校验在 `frontend/src/shared/`。桌面阅读、框选、AI 工具仍使用这些实现，不依赖扩展源码。 |
 | 移除旧桌面打包/发布工具和旧 UI 验收脚本 | 删除指向原工具链、旧安装包、浏览器预览或已不存在 fixture 的脚本。桌面验收入口改为真实 Qt `--smoke`；不等于所有旧 UI 场景都已有 Qt 自动化覆盖。 |
 | 移除独立网页版 | 不再创建浏览器文档库；无桌面令牌的页面只提示从桌面启动。选文件、拖放、全屏、更新和 AI 请求均由桌面桥接处理。Qt WebEngine 是桌面界面的渲染引擎，不能删除。 |
@@ -60,7 +60,7 @@
 | 修复：退出文档后翻译栏残留 | 翻译助手属于阅读工作区：回文档库时隐藏、回到文档时恢复，关掉最后一个文档时关闭；文档库里 Ctrl+T 与「机翻」不生效 | `App.vue` 的 `translateShown`、`clearWorkspace` |
 | 首次安装默认「暖色极简」 | 没有保存过设置**且**文档库为空才算新装，用暖色极简并立即写入设置；已有书的老用户、老设置里缺少界面风格时按液态玻璃处理，外观不变。「恢复默认」回到暖色极简 | `frontend/src/settings/index.ts` 的 `firstRunPreferences`、`model.ts` 的 `LEGACY_UI_STYLE` |
 | 「翻译」改为「翻译助手」 | 顶栏按钮与阅读助手同款胶囊；面板标题与提示同步改名（面板宽度 ≤360px 时标题只显示图标，是原有规则） | `App.vue`、`frontend/src/components/translate/TranslatePane.vue` |
-| 改名「阅迁星穹」 | 见「接手先看」；`installer.nsi` 改为带 BOM 的 UTF-8，覆盖安装会删除旧的「Kaizhi Python」快捷方式 | `frontend/index.html`、`App.vue`、`backend/core/desktop.py`、`scripts/installer.nsi` |
+| 发行名「阅迁星穹」 | 见「接手先看」；`installer.nsi` 改为带 BOM 的 UTF-8，覆盖安装会清掉旧版快捷方式 | `frontend/index.html`、`App.vue`、`backend/core/desktop.py`、`scripts/installer.nsi` |
 | 「加入文档」窗口 | 见下一节 | `frontend/src/components/library/ImportDialog.vue`、`frontend/src/library/importer.ts` |
 
 ## 「加入文档」窗口与 Word 转换反馈
@@ -85,6 +85,6 @@
 
 **发行仓库是 `luanqi-xionghua/AI-For-Studying` 的 `main`。** 它在仓库自带的 Initial commit 之上合入了原 `AI-For-Reading` 的完整历史（`6916ea8` 清理 → `0ea9f1b` Harness 重构与 11-19 下午的改动 → `5d304a8` 目录结构整理 → 1.0.0 发行改造），所以 `git log --follow` 能追到旧文件。`AI-For-Reading` 的 `main--from-rust-to-python--my-own` 停在 `5d304a8`，不含发行改造。新增的 Node 工程 `harness/`（含 `package-lock.json` 与 `licenses/`）必须随源码提交；`harness/node_modules`、`harness/dist`、`frontend/dist`、`dist/` 是生成物，不入库。
 
-AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -Test` 可检查打包好的 EXE 是否能独立完成本机模拟模型请求。打包前先关闭正在运行的阅迁星穹，否则无法覆盖 `dist` 里的文件。原来的登录或密钥不会被使用，首次需在设置中重新填入对应端点的 API Key。
+AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -Test` 可检查打包好的 EXE 是否能独立完成本机模拟模型请求。打包前先关闭正在运行的阅迁星穹，否则无法覆盖 `dist` 里的文件。首次使用需在设置中填入对应端点的 API Key。
 
 下一轮如改 PDF 或 AI，请同时跑前后端单测和 Qt 冒烟，再手工检查并排阅读、框选和长文档滚动；改导入或 Word 转换时再开 `KAIZHI_TEST_OFFICE=1` 跑一次真实转换。建议的后续：给 Word 转换加取消（结束 `--office` / LibreOffice 子进程并清理临时文件），重跑 Vue 组件模拟测试。尚未验收：付费 AI 端到端会话、从 1.0.0 升到下一版的真实在线更新（需要先发布更高版本）、在没有装过开发环境的干净 Windows 上安装。`THIRD_PARTY_NOTICES.md` 标出的独立字体授权说明仍待补齐。

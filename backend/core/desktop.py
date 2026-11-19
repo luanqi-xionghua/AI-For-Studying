@@ -139,7 +139,7 @@ def run(dist, data_dir=None, smoke=False):
     if not (dist / "index.html").is_file():
         raise SystemExit("请先在 frontend 目录运行 npm ci 和 npm run build。")
     app = QApplication([])
-    app.setApplicationName("KaizhiPython")  # 内部名：Qt 的缓存与配置路径沿用旧名
+    app.setApplicationName("KaizhiPython")  # 内部名：Qt 的缓存与配置路径保持既有名称
     app.setApplicationDisplayName("阅迁星穹")
     icon = Path(dist) / "app.ico"  # frontend/public/app.ico，由 scripts/make-icon.py 生成
     if icon.is_file():

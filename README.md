@@ -152,10 +152,10 @@ npm.cmd --prefix frontend run build                                   # 类型�
 
 ## 数据、隐私与安全说明
 
-- 默认数据目录是 `%APPDATA%\com.phydog.reading.python`。不要把 `--data-dir` 或 `KAIZHI_DATA_DIR` 指向原版书库，也不要让两个实例同时写同一个数据库。
+- 默认数据目录是 `%APPDATA%\com.phydog.reading.python`。不要把 `--data-dir` 或 `KAIZHI_DATA_DIR` 指向已有书库所在的目录，也不要让两个实例同时写同一个数据库。
 - 设置 → 文档库可以导出 SQLite 备份；恢复会**替换当前书库**（进度、书签、分组和 AI 对话），不含原文件和单独加密的 API 密钥。文件移动后可在书卡重新定位，保留原 ID 和阅读记录。
-- 需要试读历史书库时，先退出程序并备份，把 `library.sqlite3` 与存在的 `-wal` / `-shm` 一并复制到**新的空目录**，再运行 `backend\main.py --data-dir "副本的绝对路径"`。凭据需单独复制 `credentials`，DPAPI 数据只能由原 Windows 用户读取。界面偏好不会从旧 WebView 自动迁移。
-- **API 密钥**：旧密钥不自动转移，请为使用的 API 地址重新输入一次。密钥按服务商和完整端点隔离，可只放内存，勾选「记住」才写入 Windows DPAPI；界面不能读回明文，也不会回退到其他账号或服务商。远程 API 须 HTTPS，本机兼容服务可用回环 HTTP。
+- 需要试读另一份书库时，先退出程序并备份，把 `library.sqlite3` 与存在的 `-wal` / `-shm` 一并复制到**新的空目录**，再运行 `backend\main.py --data-dir "副本的绝对路径"`。凭据需单独复制 `credentials`，DPAPI 数据只能由原 Windows 用户读取。界面偏好不会随书库一起迁移。
+- **API 密钥**：请在设置里为使用的 API 地址输入一次；密钥按服务商和完整端点隔离，可只放内存，勾选「记住」才写入 Windows DPAPI；界面不能读回明文，也不会回退到其他账号或服务商。远程 API 须 HTTPS，本机兼容服务可用回环 HTTP。
 - **发给模型的内容**：选区、阅读器检索出的证据和按需截图会发给用户所选的服务商。Harness 只装载模型服务和多服务商适配器，不加载 Shell、磁盘工具、用户的 Harness 配置或会话日志插件。
 - 本地服务只监听 IPv4 回环地址；特权请求校验 Host、来源和每次启动生成的令牌，WebSocket 也须认证。不要把接口暴露到局域网或公网。
 
@@ -167,7 +167,7 @@ npm.cmd --prefix frontend run build                                   # 类型�
 2. 在 GitHub 新建 Release，标签 `vX.Y.Z`，上传 `dist\release\` 里的三个文件，例如：
    `gh release create vX.Y.Z dist\release\* --repo luanqi-xionghua/AI-For-Studying --title "阅迁星穹 X.Y.Z" --notes-file <说明文件>`
 
-应用内更新器只认 `vX.Y.Z`（也接受旧的 `python-vX.Y.Z`）标签下、GitHub 记录了 SHA-256 摘要的 `YueqianXingqiong-X.Y.Z-setup.exe`（安装版用）或 `YueqianXingqiong-X.Y.Z-portable.exe`（免安装版用），下载后校验摘要再安装；安装版以 `/S` 静默更新并自动重新打开。数据目录 `com.phydog.reading.python` 和 `KAIZHI_*` 变量沿用旧名，原来的书库升级后照常使用。源码模式只提示新版本。推送源码不会自动生成 Release。
+应用内更新器只认 `vX.Y.Z`（也接受旧的 `python-vX.Y.Z`）标签下、GitHub 记录了 SHA-256 摘要的 `YueqianXingqiong-X.Y.Z-setup.exe`（安装版用）或 `YueqianXingqiong-X.Y.Z-portable.exe`（免安装版用），下载后校验摘要再安装；安装版以 `/S` 静默更新并自动重新打开。数据目录 `com.phydog.reading.python` 和 `KAIZHI_*` 变量保持既有命名，已保存的书库与设置继续可用。源码模式只提示新版本。推送源码不会自动生成 Release。
 
 变更记录、验收边界和后续事项见 [开发交接](docs/HANDOFF.md)，使用方法见 [使用手册](USAGE.md)。
 

@@ -305,7 +305,7 @@ defineExpose({ save, hasChanges: () => edited.value })
     <div v-if="!embedded" class="settings-heading"><strong>AI 设置</strong><button class="text-button" @click="emit('close')">返回</button></div>
 
     <div class="group-head"><strong>模型预设</strong><button type="button" class="text-button" :disabled="presets.length >= MAX_PRESETS" @click="addPreset">＋ 新建预设</button></div>
-    <p class="settings-note">点「新建预设」填写一个新的模型预设，点「编辑预设」（或直接点这个预设）可以修改它；再在下面给阅读助手、翻译和快速解释各选一个。所有调用均通过本机 DeepSeek Harness；仅相同服务商与 API 地址共用密钥。旧版密钥需要重新输入。「测试连接」会用这个预设发一句极短的消息，看地址、密钥和模型能不能用。</p>
+    <p class="settings-note">点「新建预设」填写一个新的模型预设，点「编辑预设」（或直接点这个预设）可以修改它；再在下面给阅读助手、翻译和快速解释各选一个。所有调用均通过本机 DeepSeek Harness；仅相同服务商与 API 地址共用密钥。「测试连接」会用这个预设发一句极短的消息，看地址、密钥和模型能不能用。</p>
     <div class="preset-list">
       <p v-if="!presets.length" class="preset-empty">还没有模型预设。点右上角「＋ 新建预设」，选好服务商、填上 API Key 和模型，阅读助手、翻译和快速解释就能用了。</p>
       <div v-for="item in presets" :key="item.id" class="preset-item">

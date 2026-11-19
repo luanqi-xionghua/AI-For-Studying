@@ -9,7 +9,7 @@ const katex = dirname(require.resolve('katex/package.json'));
 const vendor = resolve(root, 'public/vendor/pdfjs');
 await mkdir(vendor, { recursive: true });
 await cp(resolve(katex, 'LICENSE'), resolve(root, 'public/vendor/KaTeX-LICENSE.txt'));
-await cp(resolve(root, '../LICENSE'), resolve(root, 'public/vendor/开智-LICENSE.txt'));
+await cp(resolve(root, '../LICENSE'), resolve(root, 'public/vendor/YueqianXingqiong-LICENSE.txt'));
 await rm(resolve(root, 'public/vendor/Phydog-LICENSE.txt'), { force: true });
 for (const name of ['cmaps', 'standard_fonts', 'wasm', 'iccs', 'LICENSE']) {
   await cp(resolve(pdf, name), resolve(vendor, name), { recursive: true });
