@@ -4,6 +4,8 @@ import { supportsFast } from './settings.mjs'
 
 export type Preset = { id: string; name: string; provider: string; baseUrl: string; protocol: string; model: string; effort: string; fast: boolean }
 export type PresetModel = { id: string; name?: string; efforts?: string[]; defaultEffort?: string; vision?: boolean }
+/** 记忆总结的思考强度。'' = 模型默认（不发强度参数）。 */
+export type MemoryEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 
 export const EFFORT_NAMES: Record<string, string> = { '': '模型默认', none: '不思考', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '极致' }
 

@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadAiSettings, normalizeAiSettings, saveAiSettings, saveModelChoice, saveTranslationChoice, saveTaskPreset, translationSettings, explainSettings, presetFor, credentialSlot, hasPresets, MAX_PRESETS, PRESETS_VERSION } from '../../src/ai/settings.mjs'
+import { loadAiSettings, normalizeAiSettings, saveAiSettings, saveModelChoice, saveTranslationChoice, saveTaskPreset, translationSettings, explainSettings, presetFor, credentialSlot, hasPresets, MAX_PRESETS, PRESETS_VERSION, memorySettings } from '../../src/ai/settings.mjs'
 import { presetTitle, presetDetail } from '../../src/ai/presets.ts'
 
 const KEY = 'paperdesk.ai.settings.v1'
@@ -15,6 +15,8 @@ test('presets: a fresh install has no presets — nothing is built in or generat
   const settings = loadAiSettings()
   assert.deepEqual(settings.presets, [])
   assert.deepEqual([settings.assistantPreset, settings.translationPreset, settings.explainPreset], ['', '', ''])
+  assert.deepEqual([settings.memoryPreset, settings.memoryEffort], ['', ''])
+  assert.equal(memorySettings(settings).preset, null)
   assert.equal(settings.presetsVersion, PRESETS_VERSION)
   assert.equal(hasPresets(settings), false)
   assert.equal(presetFor(settings, 'assistant'), undefined)
@@ -110,6 +112,7 @@ test('presets: each feature switches to another preset; only the assistant moves
 test('presets: missing choices fall back (assistant → first, translation → assistant, explain → translation)', () => {
   const settings = normalizeAiSettings({ presets: [{ id: 'x', provider: 'kimi', model: 'kimi-latest' }, { id: 'y', provider: 'glm', model: 'glm-4.6' }], assistantPreset: 'gone', translationPreset: 'y', explainPreset: 'gone' })
   assert.deepEqual([settings.assistantPreset, settings.translationPreset, settings.explainPreset], ['x', 'y', 'y'])
+  assert.equal(settings.memoryPreset, 'x')
   assert.equal(presetFor(settings, 'explain').provider, 'glm')
   // 一个预设都不剩：三处都是空的。
   const empty = normalizeAiSettings({ presets: [], assistantPreset: 'x', translationPreset: 'y' })
