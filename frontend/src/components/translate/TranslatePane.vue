@@ -27,6 +27,7 @@ const aiPicker = ref(false)
 const drawerMounted = ref(false)
 const composerField = ref<HTMLElement>()
 const pickerHost = ref<HTMLElement>()
+const tempPreset = ref<string>('') // 临时选择的预设，点击确定后才应用
 function refreshAi() { aiSettings.value = translationSettings(loadAiSettings()) }
 const presetChips = computed(() => (aiSettings.value.presets || []).map((item: any) => ({ id: item.id, name: presetTitle(item), detail: presetDetail(item) })))
 // 翻译实际会用的模型与强度：就是所选预设的，不替换、不降级（强度在输入栏里给这个预设选过才有，没选过是模型默认）。
@@ -35,7 +36,12 @@ refreshAi()
 // 抽屉开着时，点输入栏以外的地方就收起（同阅读助手）。
 function pickerOutside(event: PointerEvent) { if (event.target instanceof Node && !composerField.value?.contains(event.target)) aiPicker.value = false }
 watch(aiPicker, open => {
-  if (open) { refreshAi(); drawerMounted.value = true; document.addEventListener('pointerdown', pickerOutside, true) }
+  if (open) {
+    refreshAi()
+    tempPreset.value = aiSettings.value.preset?.id || ''
+    drawerMounted.value = true
+    document.addEventListener('pointerdown', pickerOutside, true)
+  }
   else document.removeEventListener('pointerdown', pickerOutside, true)
 })
 onBeforeUnmount(() => document.removeEventListener('pointerdown', pickerOutside, true))
@@ -48,8 +54,14 @@ const effortLabel = computed(() => aiSettings.value.preset && aiChoice.value.eff
 function toggleAiPicker() { if (!aiPicker.value) refreshAi(); if (!aiSettings.value.preset) { aiPicker.value = false; emit('settings') } else aiPicker.value = !aiPicker.value }
 const aiFast = computed(() => supportsFast(aiSettings.value.provider) ? Boolean(aiSettings.value.fast) : undefined)
 function choosePreset(id: string) {
-  if (id === aiSettings.value.preset?.id) return
-  saveTaskPreset('translate', id); refreshAi()
+  tempPreset.value = id
+}
+function confirmPreset() {
+  if (tempPreset.value && tempPreset.value !== aiSettings.value.preset?.id) {
+    saveTaskPreset('translate', tempPreset.value)
+    refreshAi()
+  }
+  closePicker()
 }
 function managePresets() { aiPicker.value = false; emit('settings') }
 
@@ -125,7 +137,7 @@ defineExpose({ focus })
           <button type="button" class="send-button" :disabled="!draft.trim()" aria-label="开始翻译" data-tip="翻译" data-tip-key="Enter" @click="submit"><AppIcon name="arrow-up" :size="17" /></button>
         </div>
         <div id="tp-preset-drawer" class="composer-drawer" :class="{ open: aiPicker }" :inert="!aiPicker || undefined">
-          <ModelPicker v-if="drawerMounted" presets-only :presets="presetChips" :preset="aiSettings.preset?.id" model="" effort="" :models="[]" @preset="choosePreset" @manage="managePresets" @close="closePicker" />
+          <ModelPicker v-if="drawerMounted" presets-only show-confirm :presets="presetChips" :preset="tempPreset" model="" effort="" :models="[]" @preset="choosePreset" @manage="managePresets" @confirm="confirmPreset" @close="closePicker" />
         </div>
       </div>
     </div>
