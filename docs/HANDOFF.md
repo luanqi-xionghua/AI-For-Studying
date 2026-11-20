@@ -121,6 +121,7 @@ AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -T
 - 共用表单 `components/memory/OnboardingFields.vue` 增加两个问题与字数计数；`library/importer.ts` 的 `learningReady` / `currentLearningAnswers` 要求目标非空，导入弹窗的「点选择区/拖放」都会在缺目标时拦截并提示。
 - 记忆页「补填自评」与编辑表单同步显示/可编辑学习目标与偏好；`DocumentMemoryDetail` 展示这两项，`MemoryEditForm` 的 patch 会写回。
 - 归一化、合并证据、两份总结输入、对话/阅读助手等注入文本都包含学习目标与偏好：`normalizeOnboarding`、`applyOnboarding`、`onboardingSummary`、`buildDocumentInput`、`buildGlobalInput`、`buildInjection`。
+- 导入弹窗内容区改为可滚动（标题固定，滚轮/滚动条查看下面的问题与列表），学习模式展开后不再溢出窗口底部。
 - 测试：`import-learning`（目标必填/截断）、`memory-normalize`、`memory-prompts` 同步更新；前端 **344/344** 通过，构建通过。
 
 ### 存储键

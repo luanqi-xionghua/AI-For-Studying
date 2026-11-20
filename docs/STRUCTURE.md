@@ -245,7 +245,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 
 | 文件 | 作用 |
 | --- | --- |
-| `library/ImportDialog.vue` | 「加入文档」弹窗：拖放/选择、逐份进度、学习模式区块与校验。 |
+| `library/ImportDialog.vue` | 「加入文档」弹窗：拖放/选择、逐份进度、学习模式区块与校验；内容区可滚动，学习模式展开后仍能看到底部问题。 |
 | `reader/PdfReader.vue` | PDF 阅读器：连续滚动、目录、搜索、框选、标记、并排布局入口。 |
 | `reader/MarkdownReader.vue` | Markdown 阅读器：渲染、搜索、框选转截图、标记。 |
 | `reader/ReaderSearch.vue` | 文档内搜索栏与结果列表。 |

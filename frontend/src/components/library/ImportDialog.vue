@@ -71,6 +71,7 @@ const finished = computed(() => importer.items.length > 0 && !importer.running)
         <button type="button" class="icon-button" data-tip="关闭" aria-label="关闭加入文档窗口" @click="emit('close')"><AppIcon name="close" :size="16" /></button>
       </header>
 
+      <div class="import-body">
       <button ref="dropzone" type="button" class="import-drop" :class="{ dragging: props.dragging }" :disabled="choosing" aria-describedby="import-note" @click="choose">
         <span class="import-drop-icon"><AppIcon name="import" :size="26" /></span>
         <strong>{{ props.dragging ? '松开即可加入' : '把文件拖到这里' }}</strong>
@@ -114,15 +115,18 @@ const finished = computed(() => importer.items.length > 0 && !importer.running)
         <button type="button" @click="emit('close')">{{ failed ? '知道了' : '完成' }}</button>
         <button v-if="imported.length" type="button" class="primary-button" @click="emit('open', imported[0]!)">打开「{{ documentTitle(imported[0]!.name) }}」</button>
       </div>
+      </div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.import-dialog { width: 480px; max-width: 92vw; max-height: min(720px, 88vh); display: flex; flex-direction: column; text-align: left; padding: 18px 20px 20px; }
+.import-dialog { width: 480px; max-width: 92vw; max-height: min(760px, 90vh); display: flex; flex-direction: column; text-align: left; padding: 18px 20px 20px; }
 .import-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .import-head h2 { margin: 0; }
 .import-head .icon-button { width: 32px; height: 32px; }
+/* 学习模式展开后内容会超过窗口高度：标题固定，下面的内容用滚轮/滚动条查看。 */
+.import-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; padding-right: 2px; }
 
 .import-drop { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; padding: 26px 16px 22px; border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent); border-radius: var(--r-xl); background: color-mix(in srgb, var(--fill-3) 60%, transparent); box-shadow: none; color: var(--ink); cursor: pointer; transition: border-color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out); }
 .import-drop:hover:not(:disabled), .import-drop:focus-visible { border-color: color-mix(in srgb, var(--accent) 70%, transparent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
@@ -135,7 +139,7 @@ const finished = computed(() => importer.items.length > 0 && !importer.running)
 .import-dialog .import-note { margin: 10px 2px 0; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
 .import-dialog .import-choose-error { margin: 6px 2px 0; font-size: 12px; color: var(--danger); }
 
-.import-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.import-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .import-item { padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--r-lg); background: color-mix(in srgb, var(--surface, #fff) 40%, transparent); }
 .import-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .import-kind { flex: none; color: var(--secondary); }
