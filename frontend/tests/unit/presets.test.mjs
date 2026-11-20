@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadAiSettings, normalizeAiSettings, saveAiSettings, saveModelChoice, saveTaskPreset, translationSettings, explainSettings, presetFor, credentialSlot, hasPresets, MAX_PRESETS, PRESETS_VERSION } from '../../src/ai/settings.mjs'
+import { loadAiSettings, normalizeAiSettings, saveAiSettings, saveModelChoice, saveTranslationChoice, saveTaskPreset, translationSettings, explainSettings, presetFor, credentialSlot, hasPresets, MAX_PRESETS, PRESETS_VERSION } from '../../src/ai/settings.mjs'
 import { presetTitle, presetDetail } from '../../src/ai/presets.ts'
 
 const KEY = 'paperdesk.ai.settings.v1'
@@ -70,6 +70,24 @@ test('presets: the composer picker edits the assistant preset only', () => {
   assert.deepEqual(after.presets.find(item => item.id === 'p-a').model, 'deepseek-v4-pro')
   assert.deepEqual(after.presets.find(item => item.id === 'p-b'), settings.presets.find(item => item.id === 'p-b'))
   assert.equal(stored().model, 'deepseek-v4-pro')
+})
+
+test('translation picker: choices persist per preset without editing shared assistant or explain presets', async () => {
+  const presets = [mine('a', 'openai', 'gpt-5.4', { effort: 'high' }), mine('b', 'deepseek', 'deepseek-flash')]
+  write({ presets, assistantPreset: 'a', translationPreset: 'a', explainPreset: 'a' })
+  saveTranslationChoice('a', 'gpt-5.4-mini', '')
+  assert.deepEqual([translationSettings().model, translationSettings().effort], ['gpt-5.4-mini', ''])
+  assert.deepEqual([loadAiSettings().model, explainSettings().effort], ['gpt-5.4', 'high'])
+  saveTranslationChoice('b', 'deepseek-v4-pro', 'max')
+  assert.deepEqual([translationSettings().model, translationSettings().effort], ['deepseek-v4-pro', 'max'])
+  saveTaskPreset('translate', 'a')
+  assert.deepEqual([translationSettings().model, translationSettings().effort], ['gpt-5.4-mini', ''])
+  saveTranslationChoice('a', presets[0].model, presets[0].effort)
+  assert.equal(Object.hasOwn(loadAiSettings().translationChoices, 'a'), false)
+  const cfg = loadAiSettings(); cfg.presets[1].baseUrl = 'https://new.example/v1'
+  await saveAiSettings(cfg)
+  assert.equal(translationSettings(loadAiSettings(), 'b').model, 'deepseek-flash')
+  assert.throws(() => saveTranslationChoice('unknown', 'm', ''), /找不到/)
 })
 
 test('presets: each feature switches to another preset; only the assistant moves the top-level fields', () => {

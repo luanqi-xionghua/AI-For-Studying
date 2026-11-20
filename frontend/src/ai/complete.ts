@@ -20,12 +20,12 @@ export function unsupportedImage(cause: unknown): boolean {
   return /(?:unsupported|not support(?:ed)?|does not (?:support|accept)|不支持).{0,60}(?:images?|vision|multimodal|图[片像])|(?:images?|vision|multimodal|图[片像]).{0,60}(?:unsupported|not supported|不支持)|(?:only supports?|仅支持).{0,18}(?:text|文本)|text.only model/i.test(message)
 }
 
-export type CompleteOptions = { kind: UsageKind; messages: { role: 'user' | 'assistant' | 'system'; content: string; images?: string[] }[]; fast?: boolean; signal: AbortSignal; onDelta?: (text: string, all: string) => void; onReasoning?: (text: string) => void }
+export type CompleteOptions = { kind: UsageKind; translation?: ReturnType<typeof translationSettings>; messages: { role: 'user' | 'assistant' | 'system'; content: string; images?: string[] }[]; fast?: boolean; signal: AbortSignal; onDelta?: (text: string, all: string) => void; onReasoning?: (text: string) => void }
 
 export async function complete(options: CompleteOptions): Promise<string> {
   // 翻译与快速解释各用自己选的模型预设，其余（/btw、/compress）沿用阅读助手的预设。
   const own = options.kind === 'translate' || options.kind === 'explain'
-  const settings: any = options.kind === 'translate' ? translationSettings(loadAiSettings()) : options.kind === 'explain' ? explainSettings(loadAiSettings()) : loadAiSettings()
+  const settings: any = options.kind === 'translate' ? options.translation ?? translationSettings(loadAiSettings()) : options.kind === 'explain' ? explainSettings(loadAiSettings()) : loadAiSettings()
   // 一个模型预设都还没建：不悄悄用别的配置，提示先去新建。
   if (own ? !settings.preset : !hasPresets(settings)) throw new Error(NO_PRESET_MESSAGE)
   options.signal.throwIfAborted()

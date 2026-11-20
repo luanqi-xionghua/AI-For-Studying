@@ -11,6 +11,15 @@ export const EFFORT_NAMES: Record<string, string> = { '': '模型默认', none: 
 export function presetModels(provider: string): PresetModel[] {
   return (getProvider(provider) as any)?.models || []
 }
+/** 输入栏保留预设里填写的非内置模型，切换模型时只沿用它支持的强度。 */
+export function composerModels(provider: string, ...ids: string[]): (PresetModel & { name: string })[] {
+  const models = presetModels(provider).map(m => ({ ...m, name: m.name || m.id }))
+  const custom = [...new Set(ids)].filter(id => id && !models.some(m => m.id === id))
+  return [...custom.map(id => ({ id, name: id })), ...models]
+}
+export function effortForModel(model: PresetModel | undefined, effort: string) {
+  return effort && model?.efforts && !model.efforts.includes(effort) ? model.defaultEffort || '' : effort
+}
 export function providerName(provider: string) { return (getProvider(provider) as any)?.name || provider }
 export function modelName(preset: Pick<Preset, 'provider' | 'model'>) {
   const found = presetModels(preset.provider).find(item => item.id === preset.model)

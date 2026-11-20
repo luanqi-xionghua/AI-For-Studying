@@ -81,6 +81,7 @@ export function normalizeAiSettings(stored = {}) {
   if (index >= 0 && has(source.assistantPreset) && source.provider !== 'codex' && top.length) presets[index] = normalizePreset({ ...presets[index], ...Object.fromEntries(top.map(field => [field, source[field]])) }, assistantPreset);
   return {
     ...base, ...(base.provider === 'codex' ? {provider:DEFAULTS.provider,baseUrl:DEFAULTS.baseUrl,model:DEFAULTS.model,effort:''} : {}), documentLimits: normalizeDocumentLimits(source.documentLimits), requestLimits: normalizeRequestLimits(source.requestLimits),
+    translationChoices: cleanTranslationChoices(presets, source.translationChoices),
     presetsVersion: PRESETS_VERSION, presets, assistantPreset, translationPreset, explainPreset, ...(index >= 0 ? presetConnection(presets[index]) : {}),
   };
 }
@@ -134,7 +135,30 @@ function taskSettings(main, task) {
   if (!preset) return { ...settings, provider: '', baseUrl: '', protocol: 'chat', model: '', effort: '', fast: false, preset: null };
   return { ...settings, ...presetConnection(preset), fast: Boolean(preset.fast) && supportsFast(preset.provider), preset };
 }
-/** 翻译用的 AI：取翻译所选的预设。模型留空时由调用方换成该服务商的默认模型与最低思考强度。 */
-export function translationSettings(main = loadAiSettings()) { return taskSettings(main, 'translate'); }
+// 翻译栏的选择只属于翻译：即使三种用途共用预设，也不能改写阅读助手或快速解释。
+const translationScope = p => JSON.stringify([p.provider, p.baseUrl, p.protocol]);
+function cleanTranslationChoices(presets, choices) {
+  return Object.fromEntries(presets.flatMap(p => {
+    const c = choices?.[p.id];
+    return c?.scope === translationScope(p) && typeof c.model === 'string' && c.model && typeof c.effort === 'string'
+      ? [[p.id, { scope: c.scope, model: c.model, effort: c.effort }]] : [];
+  }));
+}
+/** 无单独选择时沿用预设；可预览尚未确认的另一个预设，不写入存储。 */
+export function translationSettings(main = loadAiSettings(), id = main.translationPreset) {
+  const settings = taskSettings({ ...main, translationPreset: id }, 'translate');
+  const p = settings.preset, c = p && settings.translationChoices?.[p.id];
+  return p && c?.scope === translationScope(p) ? { ...settings, model: c.model, effort: c.effort } : settings;
+}
+export function saveTranslationChoice(id, model, effort) {
+  const settings = loadAiSettings();
+  const p = settings.presets.find(item => item.id === id);
+  if (!p) throw new Error('找不到这个模型预设。');
+  model = model.trim();
+  if (!model) throw new Error('请输入模型 ID。');
+  const choices = { ...settings.translationChoices, [id]: { scope: translationScope(p), model, effort } };
+  if (model === p.model && effort === p.effort) delete choices[id];
+  writeStored({ ...settings, translationPreset: id, translationChoices: choices });
+}
 /** 快速解释用的 AI：取快速解释所选的预设。 */
 export function explainSettings(main = loadAiSettings()) { return taskSettings(main, 'explain'); }

@@ -24,9 +24,8 @@ it('翻译栏：只用 AI 翻译，显示所选预设，点开可换成别的预
   expect([...actions.element.children].map(node => node.classList[0])).toEqual(['tp-mode', 'composer-space', 'tp-picker-host', 'send-button'])
   expect(w.find('.composer-field textarea').attributes('placeholder')).toBe('输入文字，回车翻译')
   const chip = w.find('[aria-label="翻译用的模型预设"]')
-  // 预设的强度是「模型默认」：照原样，不再换成最低一档，也不写强度
-  expect(chip.find('.tp-picker-model').text()).toBe('快译 · DeepSeek Flash')
-  expect(chip.find('.tp-picker-effort').exists()).toBe(false)
+  expect(chip.find('.tp-picker-model').text()).toBe('DeepSeek Flash')
+  expect(chip.find('.tp-picker-effort').text()).toBe('模型默认')
   // 抽屉第一次拉开前不挂载
   expect(w.find('[aria-label="模型预设"]').exists()).toBe(false)
   await chip.trigger('click')
@@ -35,15 +34,24 @@ it('翻译栏：只用 AI 翻译，显示所选预设，点开可换成别的预
   const radios = w.find('[aria-label="模型预设"]').findAll('[role="radio"]')
   expect(radios.map(r => r.text())).toEqual(['GPT-5.4', '快译'])
   await radios[0].trigger('click')
-  await flushPromises()
+  // 选择新预设后先预览其模型与强度，未确认时仍按原配置翻译。
+  expect(w.get('[aria-label="模型"]').findAll('[role="option"]').map(b => b.text())).toEqual(['GPT-5.4 Mini', 'GPT-5.4'])
+  expect(JSON.parse(localStorage.getItem('paperdesk.ai.settings.v1')!).translationPreset).toBe('b')
+  await w.get('[aria-label="模型"]').findAll('[role="option"]')[0].trigger('click')
+  await w.get('[aria-label="思考强度"]').findAll('[role="radio"]').find(b => b.text() === '低')!.trigger('click')
+  await w.get('[aria-label="确定"]').trigger('click')
   const stored = JSON.parse(localStorage.getItem('paperdesk.ai.settings.v1')!)
   expect([stored.translationPreset, stored.assistantPreset, stored.provider]).toEqual(['a', 'a', 'openai'])
-  expect(w.find('.tp-picker-model').text()).toBe('OpenAI API · GPT-5.4')
-  expect(w.find('.tp-picker-effort').text()).toBe('高')
+  expect([stored.model, stored.effort]).toEqual(['gpt-5.4', 'high'])
+  expect(w.find('.tp-picker-model').text()).toBe('GPT-5.4 Mini')
+  expect(w.find('.tp-picker-effort').text()).toBe('低')
+  await chip.trigger('click')
+  await w.get('[aria-label="模型"]').findAll('[role="option"]')[1].trigger('click')
   // Esc 先收起抽屉（抽屉保持挂载，收起有动画），翻译栏不关
   await w.find('.composer-field textarea').trigger('keydown', { key: 'Escape' })
   expect(w.find('.composer-drawer').classes()).not.toContain('open')
   expect(w.emitted('close')).toBeUndefined()
+  expect(chip.find('.tp-picker-model').text()).toBe('GPT-5.4 Mini')
   await w.find('.composer-field textarea').trigger('keydown', { key: 'Escape' })
   expect(w.emitted('close')).toHaveLength(1)
   await chip.trigger('click')
@@ -98,4 +106,40 @@ it('翻译与快速解释照用预设的模型和思考强度，不降级', asyn
   expect(bodies[0].effort).toBe('')
   // 快速解释：预设强度「最高」→ 照发最高
   expect([bodies[1].model, bodies[1].effort]).toEqual(['deepseek-flash', 'max'])
+})
+
+it('单个自定义预设：确认才保存模型 ID 与强度，并用于实际翻译请求和缓存判断', async () => {
+  localStorage.setItem('paperdesk.ai.settings.v1', JSON.stringify({ presetsVersion: 2, presets: [
+    { id: 'only', provider: 'custom', baseUrl: 'https://gateway.example/v1', protocol: 'responses', model: 'reader-model', effort: 'low' },
+  ], assistantPreset: 'only', translationPreset: 'only', explainPreset: 'only' }))
+  const { default: Pane } = await import('../../src/components/translate/TranslatePane.vue')
+  const { translate, translator } = await import('../../src/ai/translate')
+  const { loadAiSettings, explainSettings } = await import('../../src/ai/settings.mjs')
+  const w = mount(Pane, { attachTo: document.body })
+  const trigger = w.get('.tp-picker'), requests: any[] = [], load = harnessBridge.load
+  harnessBridge.load = (async () => ({ Channel: class {}, invoke: async (_cmd: string, { channel, request }: any) => {
+    requests.push(request); channel.onmessage({ type: 'text-delta', text: '译文' }); channel.onmessage({ type: 'end' })
+  } })) as any
+  try {
+    await trigger.trigger('click')
+    expect(w.find('[aria-label="Fast"]').exists()).toBe(false)
+    await w.get('[aria-label="自定义模型 ID"]').setValue(' ')
+    expect(w.get('[aria-label="确定"]').attributes('disabled')).toBeDefined()
+    await w.get('[aria-label="自定义模型 ID"]').setValue('translator-model')
+    await w.get('[aria-label="思考强度"]').findAll('button').find(b => b.text() === '超高')!.trigger('click')
+    await w.get('[aria-label="确定"]').trigger('click')
+    expect(trigger.text()).toContain('translator-model')
+    expect([loadAiSettings().model, explainSettings().effort]).toEqual(['reader-model', 'low'])
+    await translate('component model check', 'zh')
+    await translate('component model check', 'zh')
+    expect(translator.items.at(-1)?.cached).toBe(true)
+    await trigger.trigger('click')
+    expect((w.get('[aria-label="自定义模型 ID"]').element as HTMLInputElement).value).toBe('translator-model')
+    await w.get('[aria-label="思考强度"]').findAll('button').find(b => b.text() === '默认')!.trigger('click')
+    await w.get('[aria-label="确定"]').trigger('click')
+    await translate('component model check', 'zh')
+    expect(requests.map(({ model, effort, protocol }) => [model, effort, protocol])).toEqual([
+      ['translator-model', 'xhigh', 'responses'], ['translator-model', '', 'responses'],
+    ])
+  } finally { harnessBridge.load = load; w.unmount() }
 })

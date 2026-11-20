@@ -22,11 +22,14 @@ it('阅读助手输入栏：抽屉里切换预设，模型按钮与模型胶囊�
   const radios = group.findAll('[role="radio"]')
   expect(radios.map(r => [r.text(), r.attributes('aria-checked')])).toEqual([['GPT-5.4', 'true'], ['深读', 'false']])
   await radios[1].trigger('click')
+  expect(button().text()).toContain('GPT-5.4')
+  await w.get('[aria-label="确定"]').trigger('click')
   await flushPromises()
   expect(button().text()).toContain('Claude Sonnet 5.5')
   const stored = JSON.parse(localStorage.getItem('paperdesk.ai.settings.v1')!)
   expect([stored.assistantPreset, stored.provider, stored.model, stored.effort]).toEqual(['b', 'anthropic', 'claude-sonnet-5-5', 'max'])
   expect(w.find('.model-chips').findAll('[role="option"]').map(o => o.text())).toContain('Claude Haiku 5.5')
+  await button().trigger('click')
   // 在新预设上改模型：只改这个预设
   const haiku = w.find('.model-chips').findAll('[role="option"]').find(o => o.text() === 'Claude Haiku 5.5')!
   await haiku.trigger('click')

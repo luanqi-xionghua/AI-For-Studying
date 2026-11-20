@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
 import 'katex/dist/katex.min.css'
-import { getProvider } from '../../ai/providers.mjs'
 import { adoptTurns, addExcerpt, removeExcerpt, removeMessage, compressConversation, sideConversation, chatState, sendChat, stopChat, configureRequests, taskSummary, conversations, activeConversationId, selectConversation, newConversation, deleteConversation, loadConversations, conversationTokens, contextWindow, branchConversation, resendQuestion, watchConversation, allConversations, pinMessage, MAX_ATTACHMENTS, pendingImages, setPendingImages, keepImage, type Message, type ChatState } from '../../ai/workspace'
 import { renderMarkdown, renderDiagrams } from '../../ai/render'
 import { mountIntelligentUi } from '../../ai/intelligent-ui'
 import { nudgeGlassMotion } from '../../ui/glass-motion'
 import { vMarquee } from '../../ui/marquee'
 import { loadAiSettings, saveModelChoice, saveTaskPreset, supportsFast, hasPresets } from '../../ai/settings.mjs'
-import { presetTitle, presetDetail } from '../../ai/presets'
+import { composerModels, effortForModel, presetTitle, presetDetail } from '../../ai/presets'
 import { useSettings } from '../../settings'
 import AppIcon from '../ui/AppIcon.vue'
 import { readsAsPdf, documentTitle } from '../../library/kinds'
@@ -516,12 +515,7 @@ const pickerLoading = ref(false)
 const pickerError = ref('')
 const tempPreset = ref<string>('') // 临时选择的预设，点击确定后才应用
 let pickerRequest: AbortController | undefined
-const pickerModels = computed<{ id: string; name: string; efforts?: string[]; defaultEffort?: string }[]>(() => {
-  const list: any[] = getProvider(settings.value.provider)?.models || []
-  const current = settings.value.model || ''
-  const custom = current && !list.some(item => item.id === current) ? [{ id: current, name: current }] : []
-  return [...custom, ...list]
-})
+const pickerModels = computed(() => composerModels(settings.value.provider, settings.value.model || ''))
 // 一个模型预设都没有：模型按钮写「未设置模型」，点它直接打开 设置 → AI 去新建，不拉开抽屉。
 const noPreset = computed(() => !hasPresets(settings.value))
 const modelLabel = computed(() => noPreset.value ? '未设置模型' : pickerModels.value.find(item => item.id === (settings.value.model || ''))?.name || settings.value.model || '默认模型')
@@ -531,9 +525,7 @@ const fastChoice = computed(() => supportsFast(settings.value.provider) ? Boolea
 function chooseFast(value: boolean) { commitChoice(settings.value.model || '', settings.value.effort || '', value) }
 function chooseModel(id: string) {
   const model = pickerModels.value.find(item => item.id === id)
-  let effort = settings.value.effort || ''
-  if (effort && model?.efforts && !model.efforts.includes(effort)) effort = model.defaultEffort || ''
-  commitChoice(id, effort)
+  commitChoice(id, effortForModel(model, settings.value.effort || ''))
 }
 function chooseEffort(value: string) { commitChoice(settings.value.model || '', value) }
 // 模型预设：抽屉最上面一行切换阅读助手用的预设；上面的模型与强度改的是当前这个预设。

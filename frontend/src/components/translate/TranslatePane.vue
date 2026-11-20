@@ -5,8 +5,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import AppIcon from '../ui/AppIcon.vue'
 import { renderMarkdown } from '../../ai/render'
 import ModelPicker from '../assistant/ModelPicker.vue'
-import { loadAiSettings, translationSettings, saveTaskPreset, supportsFast } from '../../ai/settings.mjs'
-import { presetTitle, presetDetail, providerName, modelName, EFFORT_NAMES } from '../../ai/presets'
+import { loadAiSettings, translationSettings, saveTranslationChoice, supportsFast } from '../../ai/settings.mjs'
+import { composerModels, effortForModel, presetTitle, presetDetail, modelName, EFFORT_NAMES, type Preset } from '../../ai/presets'
 import { translator, translate, stopTranslation, removeTranslation, clearTranslations, TARGETS, type Translation } from '../../ai/translate'
 
 defineProps<{ shortcut?: string }>()
@@ -20,25 +20,33 @@ const copied = ref('')
 const LABEL: Record<string, string> = { zh: '中文', en: 'English', ja: '日本語' }
 // 翻译只用 AI；以前的记录里可能还有别的服务翻的，卡片上照旧注明。
 const OLD_ENGINE: Record<string, string> = { google: '谷歌', 'google-api': '谷歌云', youdao: '有道' }
-// 用哪个模型预设：预设在 设置 → AI 里配置，这里只切换。
-const aiSettings = ref<any>(translationSettings(loadAiSettings()))
-// 预设抽屉：和阅读助手的模型抽屉一样，从输入栏下沿拉出；第一次拉开后保持挂载，收起时才有回弹动画。
+// 草稿与生效配置分开：只有「确定」才会影响下一次翻译。
+const mainSettings = ref(loadAiSettings())
+const aiSettings = computed(() => translationSettings(mainSettings.value))
 const aiPicker = ref(false)
 const drawerMounted = ref(false)
 const composerField = ref<HTMLElement>()
 const pickerHost = ref<HTMLElement>()
-const tempPreset = ref<string>('') // 临时选择的预设，点击确定后才应用
-function refreshAi() { aiSettings.value = translationSettings(loadAiSettings()) }
-const presetChips = computed(() => (aiSettings.value.presets || []).map((item: any) => ({ id: item.id, name: presetTitle(item), detail: presetDetail(item) })))
-// 翻译实际会用的模型与强度：就是所选预设的，不替换、不降级（强度在输入栏里给这个预设选过才有，没选过是模型默认）。
-const aiChoice = computed(() => ({ model: String(aiSettings.value.model || ''), effort: String(aiSettings.value.effort || '') }))
-refreshAi()
+const tempPreset = ref(''), tempModel = ref(''), tempEffort = ref('')
+function refreshAi() { mainSettings.value = loadAiSettings() }
+const presetChips = computed(() => mainSettings.value.presets.filter((p): p is Preset => p !== null).map(p => ({ id: p.id, name: presetTitle(p), detail: presetDetail(p) })))
+const preview = computed(() => translationSettings(mainSettings.value, tempPreset.value))
+const pickerModels = computed(() => composerModels(preview.value.provider, preview.value.model, preview.value.preset?.model || ''))
+function choosePreset(id: string) {
+  tempPreset.value = id
+  tempModel.value = preview.value.model
+  tempEffort.value = effortForModel(pickerModels.value.find(m => m.id === tempModel.value), preview.value.effort)
+}
+function chooseModel(id: string) {
+  tempModel.value = id
+  tempEffort.value = effortForModel(pickerModels.value.find(m => m.id === id), tempEffort.value)
+}
 // 抽屉开着时，点输入栏以外的地方就收起（同阅读助手）。
 function pickerOutside(event: PointerEvent) { if (event.target instanceof Node && !composerField.value?.contains(event.target)) aiPicker.value = false }
 watch(aiPicker, open => {
   if (open) {
     refreshAi()
-    tempPreset.value = aiSettings.value.preset?.id || ''
+    choosePreset(aiSettings.value.preset?.id || '')
     drawerMounted.value = true
     document.addEventListener('pointerdown', pickerOutside, true)
   }
@@ -47,20 +55,16 @@ watch(aiPicker, open => {
 onBeforeUnmount(() => document.removeEventListener('pointerdown', pickerOutside, true))
 function closePicker() { aiPicker.value = false; void nextTick(() => pickerHost.value?.querySelector<HTMLElement>('.tp-picker')?.focus()) }
 function drawerEscape(event: KeyboardEvent) { if (!aiPicker.value || event.defaultPrevented) return; event.preventDefault(); event.stopPropagation(); closePicker() }
-// 预设按钮的字样，排法同阅读助手的模型按钮：预设（名字或服务商 · 模型）在前，思考强度用淡色跟在后面（模型默认时不写）。
-const aiLabel = computed(() => !aiSettings.value.preset ? '未设置模型预设' : [aiSettings.value.preset.name || providerName(aiSettings.value.provider), modelName({ provider: aiSettings.value.provider, model: aiChoice.value.model })].filter(Boolean).join(' · '))
-const effortLabel = computed(() => aiSettings.value.preset && aiChoice.value.effort ? EFFORT_NAMES[aiChoice.value.effort] || aiChoice.value.effort : '')
+// 窄栏优先显示实际模型；完整的预设名放在提示里。
+const aiLabel = computed(() => aiSettings.value.preset ? modelName(aiSettings.value) : '未设置模型预设')
+const effortLabel = computed(() => aiSettings.value.preset ? EFFORT_NAMES[aiSettings.value.effort] || aiSettings.value.effort : '')
 // 还没有模型预设：预设按钮点了直接去 设置 → AI 新建，不拉开抽屉。
 function toggleAiPicker() { if (!aiPicker.value) refreshAi(); if (!aiSettings.value.preset) { aiPicker.value = false; emit('settings') } else aiPicker.value = !aiPicker.value }
 const aiFast = computed(() => supportsFast(aiSettings.value.provider) ? Boolean(aiSettings.value.fast) : undefined)
-function choosePreset(id: string) {
-  tempPreset.value = id
-}
 function confirmPreset() {
-  if (tempPreset.value && tempPreset.value !== aiSettings.value.preset?.id) {
-    saveTaskPreset('translate', tempPreset.value)
-    refreshAi()
-  }
+  if (!tempModel.value.trim() || !mainSettings.value.presets.some(p => p?.id === tempPreset.value)) return
+  saveTranslationChoice(tempPreset.value, tempModel.value, tempEffort.value)
+  refreshAi()
   closePicker()
 }
 function managePresets() { aiPicker.value = false; emit('settings') }
@@ -132,12 +136,12 @@ defineExpose({ focus })
           <label class="tp-mode" :class="{ on: translator.auto }" :data-tip="translator.auto ? '已开启：选中文字后自动翻译，译文显示在鼠标旁' : '已关闭：选中文字后不自动翻译'"><input v-model="translator.auto" type="checkbox" role="switch" aria-label="翻译模式" /><span class="tp-mode-glyph" aria-hidden="true"><AppIcon name="translate" :size="14" /><i class="tp-mode-slash" /></span><span class="tp-mode-label">翻译模式</span></label>
           <span class="composer-space" />
           <div ref="pickerHost" class="tp-picker-host">
-            <button type="button" class="tp-picker" :class="{ empty: !aiSettings.preset }" :aria-expanded="aiPicker" aria-controls="tp-preset-drawer" aria-label="翻译用的模型预设" :data-tip="aiSettings.preset ? presetDetail(aiSettings.preset) : '还没有模型预设，点这里去 设置 → AI 新建'" @click="toggleAiPicker"><span class="tp-picker-model">{{ aiLabel }}</span><span v-if="effortLabel" class="tp-picker-effort">{{ effortLabel }}</span><AppIcon v-if="aiFast && aiSettings.preset" name="bolt" :size="11" class="tp-picker-fast" /><AppIcon name="down" :size="12" class="tp-picker-chevron" /></button>
+            <button type="button" class="tp-picker" :class="{ empty: !aiSettings.preset }" :aria-expanded="aiPicker" aria-controls="tp-preset-drawer" aria-label="翻译用的模型预设" :data-tip="aiSettings.preset ? [presetTitle(aiSettings.preset), aiLabel, effortLabel].join(' · ') : '还没有模型预设，点这里去 设置 → AI 新建'" @click="toggleAiPicker"><span class="tp-picker-model">{{ aiLabel }}</span><span v-if="effortLabel" class="tp-picker-effort">{{ effortLabel }}</span><AppIcon v-if="aiFast && aiSettings.preset" name="bolt" :size="11" class="tp-picker-fast" /><AppIcon name="down" :size="12" class="tp-picker-chevron" /></button>
           </div>
           <button type="button" class="send-button" :disabled="!draft.trim()" aria-label="开始翻译" data-tip="翻译" data-tip-key="Enter" @click="submit"><AppIcon name="arrow-up" :size="17" /></button>
         </div>
         <div id="tp-preset-drawer" class="composer-drawer" :class="{ open: aiPicker }" :inert="!aiPicker || undefined">
-          <ModelPicker v-if="drawerMounted" presets-only show-confirm :presets="presetChips" :preset="tempPreset" model="" effort="" :models="[]" @preset="choosePreset" @manage="managePresets" @confirm="confirmPreset" @close="closePicker" />
+          <ModelPicker v-if="drawerMounted" show-confirm :presets="presetChips" :preset="tempPreset" :model="tempModel" :effort="tempEffort" :models="pickerModels" :editable-model="preview.provider === 'custom'" :confirm-disabled="!tempModel.trim()" @model="chooseModel" @effort="tempEffort = $event" @preset="choosePreset" @manage="managePresets" @confirm="confirmPreset" @close="closePicker" />
         </div>
       </div>
     </div>

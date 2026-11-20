@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useId } from 'vue'
 import AppIcon from '../ui/AppIcon.vue'
 
 // 输入栏下沿拉出的抽屉：最上面一行是模型预设（有两个以上预设时），然后是模型（可横向滑动的胶囊），最下面是思考强度滑杆。
@@ -7,19 +7,20 @@ import AppIcon from '../ui/AppIcon.vue'
 type Model = { id: string; name: string; efforts?: string[]; defaultEffort?: string }
 type PresetChip = { id: string; name: string; detail?: string }
 // fast：服务商支持优先通道（Codex / OpenAI）时才传，undefined 就不显示开关。
-const props = defineProps<{ model: string; effort: string; models: Model[]; loading?: boolean; error?: string; canRefresh?: boolean; fast?: boolean
+const props = withDefaults(defineProps<{ model: string; effort: string; models: Model[]; loading?: boolean; error?: string; canRefresh?: boolean; fast?: boolean
   /** 不提供「默认」档：翻译要明确的思考强度。 */
   noDefault?: boolean
   /** 可切换的模型预设与当前选中的那个。 */
   presets?: PresetChip[]; preset?: string
-  /** 只显示预设一行（翻译栏：模型与强度跟着预设走）。 */
-  presetsOnly?: boolean
+  /** 自定义网关无固定目录，可直接填写模型 ID。 */
+  editableModel?: boolean; confirmDisabled?: boolean
   /** 显示确定按钮（用于预设选择需要确认的场景）。 */
-  showConfirm?: boolean }>()
+  showConfirm?: boolean }>(), { fast: undefined })
 const emit = defineEmits<{ model: [id: string]; effort: [value: string]; fast: [value: boolean]; refresh: []; close: []; preset: [id: string]; manage: []; confirm: [] }>()
 const EFFORT_LABELS: Record<string, string> = { '': '默认', none: '关', minimal: '极简', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高', ultra: '极致' }
-const showPresets = computed(() => Boolean(props.presets?.length) && (props.presetsOnly || props.presets!.length > 1))
+const showPresets = computed(() => Boolean(props.presets?.length) && (props.showConfirm || props.presets!.length > 1))
 const root = ref<HTMLElement>()
+const modelListId = useId()
 const current = computed(() => props.models.find(item => item.id === props.model))
 const steps = computed(() => [...(props.noDefault ? [] : ['']), ...(current.value?.efforts || ['none', 'low', 'medium', 'high', 'xhigh']).filter(Boolean)])
 const index = computed(() => Math.max(0, steps.value.indexOf(props.effort)))
@@ -56,7 +57,7 @@ onMounted(() => root.value?.querySelectorAll<HTMLElement>('.model-chips [aria-se
 </script>
 
 <template>
-  <div ref="root" class="model-drawer" role="group" :aria-label="presetsOnly ? '模型预设' : '模型与思考强度'" @keydown="escape">
+  <div ref="root" class="model-drawer" role="group" aria-label="模型与思考强度" @keydown="escape">
     <div v-if="showPresets" class="drawer-row">
       <span class="drawer-label">预设</span>
       <!-- 预设只能选一个：用单选组，和下面的模型胶囊（listbox）分开。 -->
@@ -64,17 +65,21 @@ onMounted(() => root.value?.querySelectorAll<HTMLElement>('.model-chips [aria-se
         <button v-for="item in presets" :key="item.id" type="button" role="radio" :aria-checked="item.id === preset" :tabindex="item.id === preset ? 0 : -1" :data-tip="item.detail" @click="emit('preset', item.id)">{{ item.name }}</button>
       </div>
       <button type="button" class="drawer-icon" data-tip="管理模型预设（设置 → AI）" aria-label="管理模型预设" @click="emit('manage')"><AppIcon name="settings" :size="13" /></button>
-      <button v-if="showConfirm" type="button" class="drawer-confirm" data-tip="确定" aria-label="确定" @click="emit('confirm')">确定</button>
+      <button v-if="showConfirm" type="button" class="drawer-confirm" :disabled="confirmDisabled" data-tip="确定" aria-label="确定" @click="emit('confirm')">确定</button>
     </div>
-    <div v-if="!presetsOnly" class="drawer-row">
+    <div class="drawer-row">
       <span class="drawer-label">模型</span>
-      <div class="model-chips" role="listbox" aria-label="模型" aria-orientation="horizontal" @keydown="chipKey" @wheel="chipWheel">
+      <template v-if="editableModel">
+        <input class="custom-model" aria-label="自定义模型 ID" placeholder="输入模型 ID" :list="modelListId" :value="model" @input="emit('model', ($event.target as HTMLInputElement).value)" />
+        <datalist :id="modelListId"><option v-for="item in models" :key="item.id" :value="item.id" /></datalist>
+      </template>
+      <div v-else class="model-chips" role="listbox" aria-label="模型" aria-orientation="horizontal" @keydown="chipKey" @wheel="chipWheel">
         <button v-for="item in models" :key="item.id || 'default'" type="button" role="option" :aria-selected="item.id === model" :tabindex="item.id === model ? 0 : -1" @click="emit('model', item.id)">{{ item.name || item.id }}</button>
         <span v-if="loading" class="chips-note">正在读取本机模型…</span>
       </div>
       <button v-if="canRefresh" type="button" class="drawer-icon" :disabled="loading" data-tip="重新读取本机模型" aria-label="重新读取本机模型" @click="emit('refresh')"><AppIcon name="reset" :size="13" /></button>
     </div>
-    <div v-if="!presetsOnly" class="drawer-row">
+    <div class="drawer-row">
       <span class="drawer-label">思考</span>
       <!-- 分段选择：每一档直接写出名字，选中的那一档下面滑过一块玻璃；档位越高，旁边的强度格亮得越多。 -->
       <div class="effort-segments" role="radiogroup" aria-label="思考强度" :style="{ '--count': steps.length, '--index': index }" @keydown="key">
@@ -93,6 +98,8 @@ onMounted(() => root.value?.querySelectorAll<HTMLElement>('.model-chips [aria-se
 .model-drawer{display:grid;gap:4px;padding:8px 2px 2px;border-top:1px solid var(--hairline);color:var(--ink);font-family:var(--font-ui)}
 button{font:inherit;color:inherit;cursor:pointer}
 .drawer-row{display:flex;align-items:center;gap:8px;min-width:0;height:32px}
+.custom-model{flex:1;min-width:0;height:26px;border:1px solid var(--hairline);border-radius:var(--r-sm);padding:0 8px;background:var(--frost);color:var(--ink);font:inherit}
+.drawer-confirm:disabled{opacity:.5;cursor:not-allowed}
 .drawer-label{flex:0 0 auto;width:28px;font-size:11.5px;font-weight:600;color:var(--muted)}
 .model-chips,.preset-chips{display:flex;align-items:center;gap:4px;flex:1;min-width:0;height:32px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;scroll-behavior:smooth;-webkit-mask:linear-gradient(90deg,transparent,#000 10px,#000 calc(100% - 14px),transparent);mask:linear-gradient(90deg,transparent,#000 10px,#000 calc(100% - 14px),transparent);padding:0 10px 0 6px}
 .model-chips::-webkit-scrollbar,.preset-chips::-webkit-scrollbar{display:none}

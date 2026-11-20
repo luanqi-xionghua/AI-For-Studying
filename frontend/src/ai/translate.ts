@@ -61,14 +61,15 @@ export function translationPrompt(text: string, target: Exclude<TranslateTarget,
 }
 
 const controllers = new Map<string, AbortController>()
-function aiVia() { const settings: any = translationSettings(loadAiSettings()); return [settings.provider, settings.baseUrl || '', settings.model || '', settings.effort || ''].join('|') }
 /** fresh：不用上次的译文，重新请求（「重新翻译」按钮）。 */
 /** quiet：不打开翻译栏（翻译模式的浮窗用）；onItem：拿到这次翻译的卡片，译文会流式写进去。 */
 export async function translate(text: string, target = translator.target, fresh = false, options: { quiet?: boolean; onItem?: (item: Translation) => void; /** 选区的截图：公式以图为准（只有 AI 翻译用得上）。 */ image?: string } = {}): Promise<void> {
   const source = tidySource(text).slice(0, 8000)
   if (!source) return
   if (!options.quiet) translator.open = true
-  const via = aiVia()
+  // 同一份配置用于缓存、实际请求和图片降级重试，不受随后切换模型影响。
+  const settings = translationSettings(loadAiSettings())
+  const via = JSON.stringify([settings.provider, settings.baseUrl, settings.protocol, settings.model, settings.effort])
   const resolved = resolveTarget(source, target)
   // 同一段文字、同一种语言、同一个模型预设刚翻过：直接用上次的译文，不再等一次模型。
   const earlier = fresh ? undefined : [...translator.items].reverse().find(old => old.status === 'done' && Boolean(old.result) && old.source === source && old.target === resolved && (old.engine ?? 'ai') === 'ai' && old.via === via)
@@ -81,7 +82,7 @@ export async function translate(text: string, target = translator.target, fresh 
   controllers.set(item.id, controller)
   try {
     const { complete, unsupportedImage } = await import('./complete')
-    const ask = (image?: string) => complete({ kind: 'translate', signal: controller.signal, messages: [{ role: 'user', content: translationPrompt(source, item.target) + (image ? IMAGE_NOTE : ''), ...(image ? { images: [image] } : {}) }], onDelta: (_delta, all) => { item.result = all } })
+    const ask = (image?: string) => complete({ kind: 'translate', translation: settings, signal: controller.signal, messages: [{ role: 'user', content: translationPrompt(source, item.target) + (image ? IMAGE_NOTE : ''), ...(image ? { images: [image] } : {}) }], onDelta: (_delta, all) => { item.result = all } })
     // 模型看不了图就退回只用文字。
     try { await ask(options.image) } catch (cause) { if (!options.image || controller.signal.aborted || item.result || !unsupportedImage(cause)) throw cause; item.result = ''; await ask() }
     item.status = 'done'
