@@ -293,6 +293,6 @@ async function unlockField(target: 'global' | { docId: string }, field: 'summary
   .memory-doc-layout > :first-child { max-height: 40vh; }
 }
 .memory-page .view-switch { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-control); background: color-mix(in srgb, var(--ink) 5%, transparent); }
-.memory-page .view-switch button { padding: 6px 14px; border: 0; border-radius: calc(var(--r-control) - 2px); background: none; box-shadow: none; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.memory-page .view-switch button { width: auto; min-width: 0; padding: 6px 14px; border: 0; border-radius: calc(var(--r-control) - 2px); background: none; box-shadow: none; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; cursor: pointer; }
 .memory-page .view-switch button.selected { background: var(--surface, var(--fill-1)); color: var(--ink); box-shadow: var(--shadow-1, 0 1px 2px rgb(0 0 0 / .08)); }
 </style>
