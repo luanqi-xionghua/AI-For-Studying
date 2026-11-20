@@ -108,10 +108,12 @@ it('翻译与快速解释照用预设的模型和思考强度，不降级', asyn
   expect([bodies[1].model, bodies[1].effort]).toEqual(['deepseek-flash', 'max'])
 })
 
-it('单个自定义预设：确认才保存模型 ID 与强度，并用于实际翻译请求和缓存判断', async () => {
+it('自定义预设：用模型胶囊切换旧版保存的翻译模型与预设模型，确认后用于请求和缓存判断', async () => {
   localStorage.setItem('paperdesk.ai.settings.v1', JSON.stringify({ presetsVersion: 2, presets: [
     { id: 'only', provider: 'custom', baseUrl: 'https://gateway.example/v1', protocol: 'responses', model: 'reader-model', effort: 'low' },
-  ], assistantPreset: 'only', translationPreset: 'only', explainPreset: 'only' }))
+  ], assistantPreset: 'only', translationPreset: 'only', explainPreset: 'only', translationChoices: {
+    only: { scope: JSON.stringify(['custom', 'https://gateway.example/v1', 'responses']), model: 'translator-model', effort: 'low' },
+  } }))
   const { default: Pane } = await import('../../src/components/translate/TranslatePane.vue')
   const { translate, translator } = await import('../../src/ai/translate')
   const { loadAiSettings, explainSettings } = await import('../../src/ai/settings.mjs')
@@ -123,23 +125,26 @@ it('单个自定义预设：确认才保存模型 ID 与强度，并用于实际
   try {
     await trigger.trigger('click')
     expect(w.find('[aria-label="Fast"]').exists()).toBe(false)
-    await w.get('[aria-label="自定义模型 ID"]').setValue(' ')
-    expect(w.get('[aria-label="确定"]').attributes('disabled')).toBeDefined()
-    await w.get('[aria-label="自定义模型 ID"]').setValue('translator-model')
+    expect(w.find('input[aria-label="自定义模型 ID"]').exists()).toBe(false)
+    const models = w.get('[role="listbox"][aria-label="模型"]')
+    expect(models.findAll('[role="option"]').map(b => b.text())).toEqual(['translator-model', 'reader-model'])
+    expect(models.get('[aria-selected="true"]').text()).toBe('translator-model')
+    await models.findAll('button')[1].trigger('click')
+    expect(trigger.text()).toContain('translator-model') // 未确认，不影响工具栏
     await w.get('[aria-label="思考强度"]').findAll('button').find(b => b.text() === '超高')!.trigger('click')
     await w.get('[aria-label="确定"]').trigger('click')
-    expect(trigger.text()).toContain('translator-model')
+    expect(trigger.text()).toContain('reader-model')
     expect([loadAiSettings().model, explainSettings().effort]).toEqual(['reader-model', 'low'])
     await translate('component model check', 'zh')
     await translate('component model check', 'zh')
     expect(translator.items.at(-1)?.cached).toBe(true)
     await trigger.trigger('click')
-    expect((w.get('[aria-label="自定义模型 ID"]').element as HTMLInputElement).value).toBe('translator-model')
+    expect(models.get('[aria-selected="true"]').text()).toBe('reader-model')
     await w.get('[aria-label="思考强度"]').findAll('button').find(b => b.text() === '默认')!.trigger('click')
     await w.get('[aria-label="确定"]').trigger('click')
     await translate('component model check', 'zh')
     expect(requests.map(({ model, effort, protocol }) => [model, effort, protocol])).toEqual([
-      ['translator-model', 'xhigh', 'responses'], ['translator-model', '', 'responses'],
+      ['reader-model', 'xhigh', 'responses'], ['reader-model', '', 'responses'],
     ])
   } finally { harnessBridge.load = load; w.unmount() }
 })

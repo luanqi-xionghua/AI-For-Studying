@@ -141,7 +141,7 @@ defineExpose({ focus })
           <button type="button" class="send-button" :disabled="!draft.trim()" aria-label="开始翻译" data-tip="翻译" data-tip-key="Enter" @click="submit"><AppIcon name="arrow-up" :size="17" /></button>
         </div>
         <div id="tp-preset-drawer" class="composer-drawer" :class="{ open: aiPicker }" :inert="!aiPicker || undefined">
-          <ModelPicker v-if="drawerMounted" show-confirm :presets="presetChips" :preset="tempPreset" :model="tempModel" :effort="tempEffort" :models="pickerModels" :editable-model="preview.provider === 'custom'" :confirm-disabled="!tempModel.trim()" @model="chooseModel" @effort="tempEffort = $event" @preset="choosePreset" @manage="managePresets" @confirm="confirmPreset" @close="closePicker" />
+          <ModelPicker v-if="drawerMounted" show-confirm :presets="presetChips" :preset="tempPreset" :model="tempModel" :effort="tempEffort" :models="pickerModels" :confirm-disabled="!tempModel.trim()" @model="chooseModel" @effort="tempEffort = $event" @preset="choosePreset" @manage="managePresets" @confirm="confirmPreset" @close="closePicker" />
         </div>
       </div>
     </div>

@@ -289,4 +289,18 @@ describe('输入栏 / 翻译栏的预设抽屉', () => {
     await radios[1].trigger('click')
     expect(w.emitted('preset')).toEqual([['b']])
   })
+  it('预设超出可视宽度时把竖向滚轮转为横滚，不拦截原生横滚或边界滚动', () => {
+    const w = mount(ModelPicker, { props: { model: 'm1', effort: '', models, presets, preset: 'a' } })
+    const strip = w.get('[aria-label="模型预设"]').element as HTMLElement
+    Object.defineProperties(strip, { clientWidth: { value: 100 }, scrollWidth: { value: 300 } })
+    const scroll = vi.spyOn(strip, 'scrollBy').mockImplementation(() => {})
+    const wheel = (deltaX: number, deltaY: number) => strip.dispatchEvent(new WheelEvent('wheel', { deltaX, deltaY, cancelable: true }))
+    expect(wheel(0, 40)).toBe(false)
+    expect(scroll).toHaveBeenCalledWith({ left: 40, behavior: 'instant' })
+    expect(wheel(40, 0)).toBe(true)
+    strip.scrollLeft = 200
+    expect(wheel(0, 40)).toBe(true)
+    expect(scroll).toHaveBeenCalledTimes(1)
+    w.unmount()
+  })
 })
