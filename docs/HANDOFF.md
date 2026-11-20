@@ -1,4 +1,4 @@
-# 阅迁星穹 Python 桌面版 · 开发交接
+﻿# 阅迁星穹 Python 桌面版 · 开发交接
 
 **2026-11-19（上海时间）｜仓库：`luanqi-xionghua/AI-For-Studying`（`main`）｜源码版本：`1.0.1`（首个公开发行版为 `v1.0.0`）**
 
@@ -131,7 +131,7 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 
 - 前端：`npm.cmd --prefix frontend test` → **144/144 通过**；`npm.cmd --prefix frontend run build` 通过
 - 后端：`unittest discover -s backend/tests -t .` → **Ran 32 tests，OK (skipped=1)**（Word 集成需本机 Office）
-- 最终回归：前端 **338/338 通过**（30 个既有 + 12 个新增测试文件）；构建通过；后端仍 **32 OK (skipped=1)**；`backend\main.py --smoke` 退出码 0
+- 最终回归：前端 **340/340 通过**（30 个既有 + 12 个新增测试文件）；构建通过；后端仍 **32 OK (skipped=1)**；`backend\main.py --smoke` 退出码 0
 
 ### 已知限制
 
@@ -141,4 +141,5 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 4. `MarkdownAnswer.vue` 复制了 `AiPane.vue` 的 `.answer-body` 样式（约 40 行）；两处改动需同步。
 5. 对话模式的 `dark/appearance` 在页面挂载时取当前主题，切换主题后要等下一次消息重绘才更新图示外观。
 6. 移除文档后 `ai.conversations.v1.<docId>`（阅读助手的分块对话）仍会残留，这是既有行为，本次未动。
-7. 第 12.12 节的 16 个手工场景需要真实窗口、文件与 API Key：本次交付已通过构建、338 个前端单测、后端基线回归与 GUI smoke；界面交互与视觉建议在发布前按计划的场景清单补跑。
+7. 第 12.12 节的手工场景仍需人工验收：2026-11-20 已用临时书库（`D:\work\test-data`）和 QtWebEngine 远程调试完成 **55 项界面自动走查**（导航/空态/无预设、阅读→对话→记忆→返回阅读、记忆建立/编辑锁定/清空、导入学习模式校验、四种外观与深浅色切换），截图保存在开发机 `C:\Users\15076\Desktop\dsh workspace\screenshots`。走查发现并修复 2 个界面缺陷（新建空会话被误判为损坏记录、记忆页标签按钮被全局分段控件样式压成竖排）。真实模型端到端（自动/手动记忆总结、用量面板）、原生文件选择框导入、备份导出/恢复仍建议发布前人工验收。
+
