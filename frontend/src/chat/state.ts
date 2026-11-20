@@ -62,8 +62,8 @@ export function createChatState(deps: ChatStateDeps): ChatState {
   const state = reactive<ChatState['state']>({ ready: false, activeId: '', list: [], conversations: new Map<string, LiveConversation>() })
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  function register(conversation: ChatModeConversation): LiveConversation {
-    const live: LiveConversation = { ...conversation, draft: '', error: '', loaded: false, damaged: false, scrollTop: 0, request: null }
+  function register(conversation: ChatModeConversation, loaded = false): LiveConversation {
+    const live: LiveConversation = { ...conversation, draft: '', error: '', loaded, damaged: false, scrollTop: 0, request: null }
     state.conversations.set(live.id, live)
     return state.conversations.get(live.id)!
   }
@@ -101,7 +101,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     if (live?.loaded) return live
     if (!live) {
       const entry = state.list.find(item => item.id === id)
-      live = register({ ...emptyConversation(id, entry?.scope ?? { kind: 'global' }), title: entry?.title || '', createdAt: entry?.createdAt || deps.now(), updatedAt: entry?.updatedAt || deps.now() })
+      live = register({ ...emptyConversation(id, entry?.scope ?? { kind: 'global' }), title: entry?.title || '', createdAt: entry?.createdAt || deps.now(), updatedAt: entry?.updatedAt || deps.now() }, false)
     }
     let conversation: ChatModeConversation | null = null
     try { conversation = await deps.store.loadConversation(id) } catch (error) { deps.reportFailure('chatmode:' + id, '对话模式记录', error, () => saveNow(live!)) }
@@ -120,14 +120,13 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     const existing = state.conversations.get(state.activeId)
     if (existing) return existing
     if (state.activeId) {
-      const live = register(emptyConversation(state.activeId))
-      void open(state.activeId)
-      return live
+      // 清单里记着、还没载入的会话：先放一个占位，由调用方（页面）await open() 载入。
+      return register(emptyConversation(state.activeId), false)
     }
     return newConversation()
   }
   function newConversation(scope: MemoryScope = { kind: 'global' }): LiveConversation {
-    const live = register(emptyConversation(deps.uuid(), scope))
+    const live = register(emptyConversation(deps.uuid(), scope), true)
     state.activeId = live.id
     return live
   }

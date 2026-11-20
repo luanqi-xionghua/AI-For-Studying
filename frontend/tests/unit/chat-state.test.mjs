@@ -316,6 +316,39 @@ test('chat state: a damaged conversation shows a message instead of crashing', a
   assert.match(live.error, /损坏/)
 })
 
+test('chat state: a brand new conversation is loaded, not damaged', async () => {
+  const { chat } = make()
+  await chat.load()
+  const live = chat.current()
+  assert.equal(live.loaded, true)
+  assert.equal(live.damaged, false)
+  assert.equal(live.error, '')
+})
+
+test('chat state: a stored conversation loads when opened', async () => {
+  const store = fakeStore({ version: 1, activeId: 'saved', list: [{ id: 'saved', title: '旧对话', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, count: 2 }] })
+  store.conversations.set('saved', JSON.stringify({ version: 1, id: 'saved', title: '旧对话', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, messages: [{ id: 'm1', role: 'user', content: '问' }, { id: 'm2', role: 'assistant', content: '答' }] }))
+  let seq = 0
+  const chat = createChatState({
+    store,
+    streamChat: async () => {},
+    recordUsage: () => {},
+    estimateTokens: () => 0,
+    emit: () => {},
+    now: () => ++seq,
+    uuid: () => `id-${++seq}`,
+    reportFailure: () => {},
+  })
+  active.push(chat)
+  await chat.load()
+  const placeholder = chat.current()
+  assert.equal(placeholder.loaded, false)
+  const live = await chat.open(placeholder.id)
+  assert.equal(live.loaded, true)
+  assert.equal(live.damaged, false)
+  assert.equal(live.messages.length, 2)
+})
+
 test('chat state: the total content limit refuses to grow', async () => {
   const { chat, model } = make()
   await chat.load()
