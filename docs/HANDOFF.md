@@ -93,3 +93,52 @@
 AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -Test` 可检查打包好的 EXE 是否能独立完成本机模拟模型请求。打包前先关闭正在运行的阅迁星穹，否则无法覆盖 `dist` 里的文件。首次使用需在设置中填入对应端点的 API Key。
 
 下一轮如改 PDF 或 AI，请同时跑前后端单测和 Qt 冒烟，再手工检查并排阅读、框选和长文档滚动；改导入或 Word 转换时再开 `KAIZHI_TEST_OFFICE=1` 跑一次真实转换。建议的后续：给 Word 转换加取消（结束 `--office` / LibreOffice 子进程并清理临时文件），重跑 Vue 组件模拟测试。尚未验收：付费 AI 端到端会话、从 1.0.0 升到下一版的真实在线更新（需要先发布更高版本）、在没有装过开发环境的干净 Windows 上安装。`THIRD_PARTY_NOTICES.md` 标出的独立字体授权说明仍待补齐。
+
+## 对话模式 · 记忆管理 · 学习模式
+
+**后端 Python 零改动**：`backend/` 下所有文件未修改，SQLite `user_version` 仍为 1，旧备份可继续恢复；没有新增 npm / Python 依赖；`backend/__init__.py` 的 `VERSION` 与 `frontend/package.json` 的 `version` 仍为 1.0.5；`import_documents` 的签名与参数未变。
+
+### 模块清单
+
+- `frontend/src/chat/`：`types.ts`、`history.ts`、`choice.ts`、`storage.ts`、`state.ts`、`index.ts`；页面组件 `components/chat/*`（页面、记忆范围、历史、消息列表、输入栏）与 `components/ui/MarkdownAnswer.vue`
+- `frontend/src/memory/`：`types.ts`、`normalize.ts`、`events.ts`、`prompts.ts`、`merge.ts`、`scheduler.ts`、`store.ts`、`summarize.ts`、`engine.ts`、`index.ts`；页面组件 `components/memory/*` 与 `components/ui/ConfirmDialog.vue`
+- `frontend/src/shared/storage-gate.ts`：备份前 flush、恢复前 freeze
+- 接线：`ai/workspace.ts`（assistant-turn）、`App.vue`（opened / reading / document-removed、引擎启动停止、文档列表同步、侧栏与整页导航）、`library/importer.ts`（学习模式）、`components/settings/SettingsDialog.vue`（备份冻结）、`ai/settings.mjs`（memoryPreset / memoryEffort）、`ai/providers.mjs`（READER_SYSTEM / systemPrefix）、`ai/usage.ts`（chatmode / memory）
+
+### 存储键
+
+SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.<docId>`、`memory.v1.settings`、`chatmode.v1.index`、`chatmode.v1.c.<conversationId>`。
+`localStorage`：`paperdesk.ai.settings.v1`（新增 `memoryPreset` / `memoryEffort`）、`kaizhi.chatmode.choice.v1`、`kaizhi.import.learning.v1`。
+所有键满足后端 `[a-zA-Z0-9._-]{1,100}`，单值写入前按 900 KiB 守卫（后端硬上限 1 MiB）。
+
+### 额度护栏（定义在 `memory/scheduler.ts`，单测直接断言）
+
+| 常量 | 值 | 含义 |
+| --- | --- | --- |
+| `TURNS_PER_SUMMARY` | 3 | 每 3 条待总结问答触发一次 |
+| `SUMMARY_DEBOUNCE_MS` | 45s | 最后一条事件后的静默时间 |
+| `DOC_COOLDOWN_MS` | 10min | 同一本书两次自动总结的最小间隔 |
+| `GLOBAL_COOLDOWN_MS` | 15min | 全局记忆两次自动总结的最小间隔 |
+| `REQUEST_GAP_MS` | 60s | 任意两次自动记忆请求的最小间隔 |
+| `LEFTOVER_AGE_MS` | 30min | 不足 3 条的遗留问答最迟多久后总结 |
+| `AUTO_DAILY_CAP` | 40 | 每天自动记忆请求硬上限（文档 + 全局合计） |
+| `REQUEST_TIMEOUT_MS` | 90s | 单次记忆请求超时 |
+| `RETRY_BACKOFF_MS` | [5min, 30min] | 同一对象第 1、2 次失败后的重试等待；第 3 次起不再自动重试 |
+| `BREAKER_FAILURES` / `BREAKER_PAUSE_MS` | 3 / 30min | 连续失败 3 次暂停自动更新 |
+| `OUTPUT_CHAR_CAP` | 12000 | 模型输出超过则中止并判失败 |
+
+### 基线（M0，本次实施前实跑）
+
+- 前端：`npm.cmd --prefix frontend test` → **144/144 通过**；`npm.cmd --prefix frontend run build` 通过
+- 后端：`unittest discover -s backend/tests -t .` → **Ran 32 tests，OK (skipped=1)**（Word 集成需本机 Office）
+- 最终回归：前端 **338/338 通过**（30 个既有 + 12 个新增测试文件）；构建通过；后端仍 **32 OK (skipped=1)**；`backend\main.py --smoke` 退出码 0
+
+### 已知限制
+
+1. 后端没有列键接口（`server.py` 白名单只有 get/set/delete），索引或对话清单损坏时只能按文档 id / 已知会话 id 探测；库里已不存在的文档记忆键会成为无害孤儿，对话清单损坏时旧会话键无法找回（最多 40 段）。
+2. 全局记忆没有「更新版本」标志（对话与文档记忆有）：更新版本写入的全局记忆在旧版本里按空处理，存在被旧版本覆盖的理论风险。
+3. 重启后若 `globalStale=false` 且 `global.pending` 里还有待总结的全局问答，调度器不会主动读全局记忆（为保持「启动只读两个键」的取舍）；下一次全局事件或文档记忆更新会补上。
+4. `MarkdownAnswer.vue` 复制了 `AiPane.vue` 的 `.answer-body` 样式（约 40 行）；两处改动需同步。
+5. 对话模式的 `dark/appearance` 在页面挂载时取当前主题，切换主题后要等下一次消息重绘才更新图示外观。
+6. 移除文档后 `ai.conversations.v1.<docId>`（阅读助手的分块对话）仍会残留，这是既有行为，本次未动。
+7. 第 12.12 节的 16 个手工场景需要真实窗口、文件与 API Key：本次交付已通过构建、338 个前端单测、后端基线回归与 GUI smoke；界面交互与视觉建议在发布前按计划的场景清单补跑。
