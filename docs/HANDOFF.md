@@ -105,7 +105,7 @@ AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -T
 - `frontend/src/shared/storage-gate.ts`：备份前 flush、恢复前 freeze
 - 接线：`ai/workspace.ts`（assistant-turn）、`App.vue`（opened / reading / document-removed、引擎启动停止、文档列表同步、侧栏与整页导航）、`library/importer.ts`（学习模式）、`components/settings/SettingsDialog.vue`（备份冻结）、`ai/settings.mjs`（memoryPreset / memoryEffort）、`ai/providers.mjs`（READER_SYSTEM / systemPrefix）、`ai/usage.ts`（chatmode / memory）
 
-### 记忆注入范围（2026-11-20 追加，本地改动，未随 1.1.0 发布）
+### 记忆注入范围（2026-11-20 追加，随 1.1.1 发布）
 
 - 新增 `frontend/src/ai/memory-context.ts`：统一给阅读助手（含文档工具调用）、翻译、快速解释、问题预判取记忆；优先当前文档记忆，没有可注入内容时退回全局记忆；记忆模块未加载/存储异常时静默返回空串，不影响这些功能本身。
 - `memory/prompts.ts` 的 `buildInjection` 与 `engine.injectionFor` 增加 `MemoryPurpose`（`chat / assistant / translate / explain / predict`），记忆正文相同，只替换最后一行「使用要求」；注入长度上限仍是 1500 字。
@@ -113,9 +113,9 @@ AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -T
 - 对话模式的「记忆范围」按钮从页头移到输入栏（`ChatComposer` 的 `scope` 插槽），弹层向上展开；页头保留历史/新对话，状态行不变。
 - 翻译缓存 `via` 包含记忆文本，记忆变化会使旧译文缓存失效。
 - 新增 `frontend/tests/unit/memory-surfaces.test.mjs`；`memory-prompts` / `memory-engine` 覆盖用途文案。最终前端 **344/344** 通过，构建通过。
-- 未发布：版本号仍为 1.1.0，改动尚未推送 GitHub；真实模型下「记忆是否真的改变回答风格」仍需人工验收。
+- 已随 **1.1.1** 发布（tag `v1.1.1`）；真实模型下「记忆是否真的改变回答风格」仍建议人工验收。
 
-### 学习模式新增两问（2026-11-20 追加，本地改动，未发布）
+### 学习模式新增两问（2026-11-20 追加，随 1.1.1 发布）
 
 - `memory/types.ts` 的 `OnboardingAnswers` 增加 `goal`（学习目标，必填，≤100 字）与 `preference`（学习偏好说明，选填，≤200 字）；`note`（补充）上限仍 200 字。旧数据归一化为空串，旧记忆仍可读取。
 - 共用表单 `components/memory/OnboardingFields.vue` 增加两个问题与字数计数；`library/importer.ts` 的 `learningReady` / `currentLearningAnswers` 要求目标非空，导入弹窗的「点选择区/拖放」都会在缺目标时拦截并提示。
