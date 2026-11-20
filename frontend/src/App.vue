@@ -398,7 +398,7 @@ function updateLocal(doc: Doc) {
 }
 async function refresh() {
   const epoch = ++listEpoch
-  try { const list = await library.list(query.value); if (epoch === listEpoch) documents.value = list }
+  try { const list = await library.list(query.value); if (epoch === listEpoch) { documents.value = list; if (!query.value) withMemory(api => api.syncMemoryDocuments(list)) } }
   catch (error) { notify(`文档库加载失败：${reason(error)}`) }
   finally { loading.value = false }
 }
@@ -515,6 +515,13 @@ function showPage(next: Page) {
 function returnToReading() { const doc = lastActive.value || tabs.value.at(-1)?.doc; if (doc) void openDocument(doc) }
 function openChatWithScope(scope: MemoryScope) { chatScope.value = scope; showPage('chat') }
 function openDocumentById(id: string) { const doc = tabDoc(id) || documents.value.find(item => item.id === id); if (doc) void openDocument(doc) }
+
+// ---- 记忆引擎不进首屏包，第一次用到时才加载。 ---------------------------------
+let memoryApi: typeof import('./memory') | undefined
+function withMemory(run: (api: typeof import('./memory')) => void) {
+  if (memoryApi) { run(memoryApi); return }
+  void import('./memory').then(api => { memoryApi = api; run(api) }).catch(() => { /* 记忆是旁路功能，加载失败不影响阅读 */ })
+}
 // ---- 加入文档：窗口、拖放与导入队列（排队与进度在 library/importer.ts）----------------
 const importOpen = ref(false)
 const wordConverting = computed(() => importer.items.some(item => item.word && item.status === 'working'))
@@ -1559,7 +1566,7 @@ function paneResizeEnd(element: Element, cancelled = false) {
   }
 }
 function openSettings(tab: typeof settingsTab.value = 'appearance') { settingsTab.value = tab; settingsOpen.value = true }
-function aiSettingsSaved(value: any) { configureRequests(value); for (const instance of aiInstances.values()) instance.applySettings?.(value) }
+function aiSettingsSaved(value: any) { configureRequests(value); for (const instance of aiInstances.values()) instance.applySettings?.(value); settingsVersion.value++; withMemory(api => api.refreshMemoryConfig()) }
 function shortcut(action: keyof typeof preferences.value.shortcuts) { return shortcutLabel(preferences.value.shortcuts[action]) }
 // Bound shortcuts only, for the hover tooltips (data-tip-key); disabled ones show no key.
 const tipKeys = computed<Record<string, string>>(() => Object.fromEntries(Object.entries(preferences.value.shortcuts).filter(([, value]) => value).map(([action, value]) => [action, shortcutLabel(value)])))
@@ -1752,12 +1759,15 @@ onMounted(async () => {
   await loadGroups()
   void loadCovers()
   await refresh()
+  // 记忆引擎：空闲时再启动，不挡文档库首屏。
+  const startMemory = () => withMemory(api => { void api.startMemoryEngine({ notify, foregroundBusy: () => taskSummary.running > 0 || chatBusy() }) })
+  if ('requestIdleCallback' in window) (window as any).requestIdleCallback(startMemory, { timeout: 3000 }); else setTimeout(startMemory, 1500)
   // 打开应用时：库里有书就直接摆出来；只有空库且开着流形背景（暖色极简、铅笔草稿），才收起文档库、只留底板。
   // 以前不看库里有没有书，一律先收起，主页面只剩底板，第一次打开的人会以为书没了。
   // 等书单读完再决定：有书时文档库从「正在读取」直接换成卡片，不会先收起再展开地闪一下。
   if (!active.value && manifoldVisible.value && !documents.value.length && !libraryToggledByUser) libraryShown.value = false
 })
-onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); document.removeEventListener('mousedown', middleDown); document.removeEventListener('auxclick', middleClick); window.removeEventListener('kaizhi:open-ai-settings', openAiSettings); closeLooseCards(); stopAutoCheck(); clearTimeout(enteringTimer); disposed = true; ++openEpoch; dismissCaptureQuick(); stopDropListening?.(); clearWheelZoom(); readerInstances.clear(); glassContrast?.dispose(); document.removeEventListener('keydown', keydown); document.removeEventListener('contextmenu', appContextMenu); document.removeEventListener('wheel', wheel, true); document.removeEventListener('selectionchange', selectionChanged); document.removeEventListener('scroll', dismissSelectionAction, true); document.removeEventListener('scroll', captureViewportChanged, true); window.removeEventListener('resize', dismissSelectionAction); window.removeEventListener('resize', captureViewportChanged); closeAllChats(); forgetAllPasswords(); systemTheme.removeEventListener('change', applyTheme); flushProgress(); for (const timer of indexTimers.values()) clearTimeout(timer); clearTimeout(queryTimer); clearTimeout(toastTimer) })
+onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); document.removeEventListener('mousedown', middleDown); document.removeEventListener('auxclick', middleClick); window.removeEventListener('kaizhi:open-ai-settings', openAiSettings); closeLooseCards(); stopAutoCheck(); clearTimeout(enteringTimer); disposed = true; ++openEpoch; dismissCaptureQuick(); stopDropListening?.(); clearWheelZoom(); readerInstances.clear(); glassContrast?.dispose(); document.removeEventListener('keydown', keydown); document.removeEventListener('contextmenu', appContextMenu); document.removeEventListener('wheel', wheel, true); document.removeEventListener('selectionchange', selectionChanged); document.removeEventListener('scroll', dismissSelectionAction, true); document.removeEventListener('scroll', captureViewportChanged, true); window.removeEventListener('resize', dismissSelectionAction); window.removeEventListener('resize', captureViewportChanged); closeAllChats(); forgetAllPasswords(); systemTheme.removeEventListener('change', applyTheme); flushProgress(); for (const timer of indexTimers.values()) clearTimeout(timer); clearTimeout(queryTimer); clearTimeout(toastTimer); void memoryApi?.stopMemoryEngine() })
 </script>
 
 <template>
