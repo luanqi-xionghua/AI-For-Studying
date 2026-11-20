@@ -5,6 +5,7 @@ import { library } from '../sdk'
 import { recordUsage } from './usage'
 import { clearSaveFailure, reportSaveFailure } from '../ui/save-errors'
 import { splitUtf8 } from './storage-codec.mjs'
+import { emitLearningEvent } from '../memory/events'
 
 export type Usage = { input?: number; output?: number; reasoning?: number; estimated: boolean }
 export type Message = {
@@ -481,7 +482,11 @@ export async function sendChat(descriptor: { id: string; title: string; kind: st
       activity('思考中')
       await streamDocumentChat(options, documentSession.document, documentSession.seed)
     } else await streamChat(options)
-    if (valid()) { state.status = ''; noticeFinished(state, descriptor.title) }
+    if (valid()) {
+      state.status = ''; noticeFinished(state, descriptor.title)
+      // 学习事件：只带读者输入的问题原文与回答开头，不带文档上下文与选区。
+      if (answer?.content.trim()) emitLearningEvent({ type: 'assistant-turn', docId: descriptor.id, title: descriptor.title, conversationId: state.id, question, answer: answer.content.slice(0, 300), at: Date.now() })
+    }
   } catch (error: any) {
     if (answer) { answer.failed = true; answer.stopped = signal.aborted }
     if (state.request === request && entry.list.includes(state)) {

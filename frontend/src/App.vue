@@ -713,6 +713,7 @@ async function showDocument(doc: Doc, reload = false) {
     void loadGroupReaders(epoch)
     // Reading must not wait for a database write or an older position save.
     void writeReadingUpdate(doc.id, { lastOpenedAt: Date.now() }, '阅读记录更新失败')
+    if (!isCopy(doc.id)) emitLearningEvent({ type: 'opened', docId: doc.id, title: doc.name, page: tab.doc.page || 1, pageCount: tab.doc.pageCount || 1, progress: tab.doc.progress || 0, at: Date.now() })
   } catch (error) { if (epoch === openEpoch) { notify(`无法打开文档：${reason(error)}`); closeTab(doc.id) } }
 }
 /** Bring the other visible documents of the group back on screen (after the library, a restart of the view…). */
@@ -1394,6 +1395,7 @@ async function toggleStar(doc: Doc) {
   try { updateLocal(await library.update(sourceId(doc.id), { starred: !doc.starred })) }
   catch (error) { notify(reason(error)) }
 }
+const readingEmitted = new Map<string, number>()
 function readingProgress(id: string, value: { page: number; pageCount: number; progress: number }) {
   const tab = tabs.value.find(tab => tab.doc.id === id)
   if (!tab || !value.pageCount) return
@@ -1407,6 +1409,12 @@ function readingProgress(id: string, value: { page: number; pageCount: number; p
   const local = documents.value.find(doc => doc.id === id)
   if (local) Object.assign(local, patch)
   if (isCopy(id)) return
+  // 阅读行为：同一本书 30 秒内最多发一次；只更新已有记忆，不新建。
+  const emittedAt = readingEmitted.get(id) || 0, nowAt = Date.now()
+  if (nowAt - emittedAt >= 30_000) {
+    readingEmitted.set(id, nowAt)
+    emitLearningEvent({ type: 'reading', docId: id, title: tab.doc.name, page: value.page, pageCount: value.pageCount, progress: value.progress, at: nowAt })
+  }
   pendingProgress.set(id, patch)
   clearTimeout(progressTimer); progressTimer = setTimeout(flushProgress, 800)
 }
