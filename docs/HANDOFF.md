@@ -96,7 +96,7 @@ AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -T
 
 ## 对话模式 · 记忆管理 · 学习模式
 
-**后端 Python 零改动**：`backend/` 下所有文件未修改，SQLite `user_version` 仍为 1，旧备份可继续恢复；没有新增 npm / Python 依赖；`backend/__init__.py` 的 `VERSION` 与 `frontend/package.json` 的 `version` 仍为 1.0.5；`import_documents` 的签名与参数未变。
+**后端 Python 零改动**：`backend/` 下所有文件未修改，SQLite `user_version` 仍为 1，旧备份可继续恢复；没有新增 npm / Python 依赖；本功能实现期间 `VERSION` 与 `frontend/package.json` 的 `version` 保持 1.0.5 不变，发布时统一提升到 1.1.0；`import_documents` 的签名与参数未变。
 
 ### 模块清单
 
