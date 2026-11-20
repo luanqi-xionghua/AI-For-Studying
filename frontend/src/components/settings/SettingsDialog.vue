@@ -9,6 +9,7 @@ import { importFontFiles, forgetFontFile, registerCustomFonts } from '../../ui/c
 import { vLiquidSelection } from '../../ui/liquid-selection'
 import { useSettings, defaultPreferences, normalizePreferences, preferenceErrors, importBackgroundImage, defaultCaptureQuestions, newCaptureQuestion, quickPromptLabelLength, limitQuickPromptLabel, QUICK_PROMPT_LABEL_LIMIT, QUICK_PROMPT_QUESTION_LIMIT, CAPTURE_QUESTION_MIN, CAPTURE_QUESTION_MAX, BACKDROPS, UI_STYLES, isGlassStyle, SKETCH_ANSWER_FONTS, AVATARS, GREETING_STYLES, GLASS_LEGIBILITY, GLASS_TINTS, MAX_GREETING_CHARS, MAX_CUSTOM_FONTS, fontChoices, MAX_AVATAR_CHARS, validAvatarImage, UI_FONTS, READING_FONTS, MAX_GALLERY, SHORTCUTS, DEFAULT_SHORTCUTS, shortcutLabel, shortcutFromEvent, shortcutFromWheelEvent, type AppPreferences, type BackdropPreset, type BackgroundImage, type ShortcutAction } from '../../settings'
 import { library } from '../../sdk'
+import { flushStorage, freezeStorage, unfreezeStorage } from '../../shared/storage-gate'
 
 type Tab = 'appearance' | 'reading' | 'shortcuts' | 'ai' | 'updates' | 'library'
 const props = withDefaults(defineProps<{ initialTab?: Tab }>(), { initialTab: 'appearance' })
@@ -217,19 +218,21 @@ async function exportLibraryBackup() {
   if (libraryBusy.value) return
   libraryBusy.value = true; libraryStatus.value = ''
   try {
+    await flushStorage()
     const path = await library.backupDatabase()
     if (path) libraryStatus.value = `备份已验证并保存：${path.split(/[\\/]/).at(-1)}`
   } catch (cause: any) { libraryStatus.value = `备份失败：${cause.message || String(cause)}` }
   finally { libraryBusy.value = false }
 }
 async function importLibraryBackup() {
-  if (libraryBusy.value || !window.confirm('恢复会用备份完整替换当前文档库，包括阅读进度、书签和 AI 对话。当前库中备份之后的记录将被覆盖。原文档文件不会复制；API 凭据不在备份中。继续恢复？')) return
+  if (libraryBusy.value || !window.confirm('恢复会用备份完整替换当前文档库，包括阅读进度、书签、AI 对话、学习记忆和对话模式记录。当前库中备份之后的记录将被覆盖。原文档文件不会复制；API 凭据不在备份中。继续恢复？')) return
   libraryBusy.value = true; libraryStatus.value = ''
+  freezeStorage()
   try {
-    if (!await library.restoreDatabase()) { libraryBusy.value = false; return }
+    if (!await library.restoreDatabase()) { libraryBusy.value = false; unfreezeStorage(); return }
     libraryStatus.value = '恢复完成，正在重新载入文档库…'
     window.setTimeout(() => window.location.reload(), 300)
-  } catch (cause: any) { libraryStatus.value = `恢复失败：${cause.message || String(cause)}`; libraryBusy.value = false }
+  } catch (cause: any) { libraryStatus.value = `恢复失败：${cause.message || String(cause)}`; libraryBusy.value = false; unfreezeStorage() }
 }
 type PromptList = 'quickPrompts' | 'captureQuestions'
 function editQuickPromptLabel(event: Event, index: number, list: PromptList = 'quickPrompts') {
@@ -456,7 +459,7 @@ function dialogKeydown(event: KeyboardEvent) {
           </template>
           <template v-else-if="tab === 'library'">
             <h3>文档库备份</h3>
-            <p class="settings-help">备份包含文档条目、阅读进度、书签、分组、AI 对话及文档库内的其他设置项。原 PDF / Word / Markdown 文件仍保留在原位置，不会复制进备份；API 凭据单独加密保存，也不包含在内。</p>
+            <p class="settings-help">备份包含文档条目、阅读进度、书签、分组、AI 对话、学习记忆、对话模式记录及文档库内的其他设置项。原 PDF / Word / Markdown 文件仍保留在原位置，不会复制进备份；API 凭据单独加密保存，也不包含在内。模型预设（包括「记忆管理」用哪个预设和思考强度）保存在本机，不随备份迁移。</p>
             <div class="settings-group library-backup-actions">
               <button type="button" :disabled="libraryBusy" @click="exportLibraryBackup"><AppIcon name="import" :size="16" />{{ libraryBusy ? '处理中…' : '导出文档库备份' }}</button>
               <button type="button" :disabled="libraryBusy" @click="importLibraryBackup"><AppIcon name="history" :size="16" />恢复文档库备份</button>
