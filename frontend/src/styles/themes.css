@@ -177,7 +177,7 @@
 }
 
 :root[data-style='warm'] .brand,
-:root[data-style='warm'] :is(.library-heading h1, .library-header h1, .details-heading h2, .settings-content > h3, .section-heading, .dialog-header h2) {
+:root[data-style='warm'] :is(.library-heading h1, .page-heading h1, .library-header h1, .details-heading h2, .settings-content > h3, .section-heading, .dialog-header h2) {
   font-family: var(--font-display);
   font-weight: 500;
   letter-spacing: -.01em;
@@ -342,6 +342,13 @@
   border-left: .5px solid var(--warm-rule);
   border-radius: 0;
   box-shadow: none;
+  --hairline: var(--warm-rule);
+  --frost: transparent;
+  --frost-hover: var(--warm-selected);
+  --bar-glass: var(--surface);
+}
+
+:root[data-style='warm'] .page-view {
   --hairline: var(--warm-rule);
   --frost: transparent;
   --frost-hover: var(--warm-selected);
@@ -631,7 +638,7 @@
 
 /* ---- 纸：面板与卡片 ---------------------------------------------------- */
 
-:root[data-style='sketch'] :is(.app-sidebar, .ai-pane, .settings-dialog, .confirm-dialog, .document-details, .document-outline, .context-menu, .split-picker, .update-card, .history-menu, .toast-message) {
+:root[data-style='sketch'] :is(.app-sidebar, .ai-pane, .settings-dialog, .confirm-dialog, .document-details, .document-outline, .context-menu, .split-picker, .update-card, .history-menu, .toast-message, .page-card) {
   border-width: 1.5px;
   border-color: var(--glass-outline);
   background-color: var(--paper);
@@ -908,7 +915,8 @@
 }
 
 :root[data-style='sketch'] :is(h1, h2).rise-in,
-:root[data-style='sketch'] .library-heading h1 {
+:root[data-style='sketch'] .library-heading h1,
+:root[data-style='sketch'] .page-heading h1 {
   animation: sketch-write 700ms var(--ease-soft) both;
 }
 
@@ -1092,6 +1100,13 @@
   --frost-hover: var(--fill-3);
   --bar-glass: transparent;
   overflow: visible;
+}
+
+:root[data-style='sketch'] .page-view {
+  --hairline: var(--pencil-soft);
+  --frost: transparent;
+  --frost-hover: var(--fill-3);
+  --bar-glass: transparent;
 }
 
 :root[data-style='sketch'] .reader-panes > .ai-panel { padding-top: 14px; }

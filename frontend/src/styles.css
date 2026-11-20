@@ -477,6 +477,8 @@ kbd {
   margin-top: 16px;
 }
 
+.workspace-nav.mode-nav { margin-top: 14px; }
+
 .workspace-nav button,
 .tag-nav button {
   border: 0;
@@ -865,6 +867,11 @@ kbd {
 .breadcrumb-toggle:not(.open) { color: var(--muted); }
 .breadcrumb-toggle:hover { background: color-mix(in srgb, var(--surface-ink) 7%, transparent); color: var(--secondary); }
 
+/* 非文档库页的顶栏：页面名与「返回阅读」。 */
+.page-crumb { cursor: default; }
+.page-return { margin-left: auto; height: 34px; padding: 0 12px; gap: 6px; font-size: 12.5px; font-weight: 600; }
+.page-return span { font-size: 11px; font-weight: 500; opacity: .62; font-variant-numeric: tabular-nums; }
+
 .breadcrumb > span {
   color: var(--muted);
   padding: 0 12px;
@@ -997,6 +1004,28 @@ kbd {
   display: flex;
   flex-direction: column;
 }
+
+/* ---- 整页视图：对话模式、记忆管理 ------------------------------------ */
+.page-view {
+  flex: 1; min-height: 0; overflow: auto; padding: 26px 34px 34px;
+  display: flex; flex-direction: column; gap: 16px;
+  /* ModelPicker 等面板内组件依赖这几个变量；液态玻璃下它们原本只在 .ai-pane 里有定义。 */
+  --frost: color-mix(in srgb, var(--glass-light) 70%, transparent);
+  --frost-hover: color-mix(in srgb, var(--glass-light) 100%, transparent);
+  --hairline: color-mix(in srgb, var(--ink) 11%, transparent);
+  --bar-glass: color-mix(in srgb, var(--glass-light) 78%, transparent);
+}
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px 24px; flex-wrap: wrap; }
+.page-heading h1 { font-family: var(--font-display); font-size: 32px; font-weight: 700; letter-spacing: -.6px; margin: 0; white-space: nowrap; }
+.page-note { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+.page-card {
+  background-color: var(--glass-2); background-image: var(--glass-sheen);
+  --lens-blur: var(--glass-2-blur); --lens-saturate: var(--glass-sat);
+  -webkit-backdrop-filter: var(--refraction, var(--glass-filter-2)); backdrop-filter: var(--refraction, var(--glass-filter-2));
+  border: 1px solid var(--glass-outline); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-2), var(--glass-edge); padding: 16px 18px;
+}
+.page-warning { margin: 0; font-size: 12px; line-height: 1.6; color: var(--warning); }
 
 .library-header {
   display: flex;
@@ -3728,7 +3757,7 @@ kbd {
 /* ---- 响应式 ---------------------------------------------------------- */
 
 @media (min-width: 1500px) {
-  .library-view {
+  .library-view, .page-view {
     padding-left: 52px;
     padding-right: 52px;
   }
@@ -3766,7 +3795,7 @@ kbd {
     padding: 0 8px;
   }
 
-  .library-view {
+  .library-view, .page-view {
     padding: 26px 26px 28px;
   }
 
@@ -3836,7 +3865,7 @@ kbd {
     padding: 0 7px;
   }
 
-  .library-heading h1 {
+  .library-heading h1, .page-heading h1 {
     font-size: 27px;
   }
 
@@ -3906,7 +3935,7 @@ kbd {
     display: flex;
   }
 
-  .library-view {
+  .library-view, .page-view {
     padding: 22px 16px 24px;
   }
 
@@ -4253,3 +4282,6 @@ kbd {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .document-collection.list .card-pick { display: none; }
+
+/* 矮窗口：标签列表让出高度，保证侧栏底部的「对话模式 / 记忆管理」可见。 */
+@media (max-height: 780px) { .app-sidebar .tag-nav { max-height: 18vh; } }
