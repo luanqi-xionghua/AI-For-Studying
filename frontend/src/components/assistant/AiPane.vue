@@ -514,6 +514,7 @@ const pickerHost = ref<HTMLElement>()
 const composerField = ref<HTMLElement>()
 const pickerLoading = ref(false)
 const pickerError = ref('')
+const tempPreset = ref<string>('') // 临时选择的预设，点击确定后才应用
 let pickerRequest: AbortController | undefined
 const pickerModels = computed<{ id: string; name: string; efforts?: string[]; defaultEffort?: string }[]>(() => {
   const list: any[] = getProvider(settings.value.provider)?.models || []
@@ -538,14 +539,20 @@ function chooseEffort(value: string) { commitChoice(settings.value.model || '', 
 // 模型预设：抽屉最上面一行切换阅读助手用的预设；上面的模型与强度改的是当前这个预设。
 const presetChips = computed(() => (settings.value.presets || []).map((item: any) => ({ id: item.id, name: presetTitle(item), detail: presetDetail(item) })))
 function choosePreset(id: string) {
-  if (id === settings.value.assistantPreset) return
-  settings.value = saveTaskPreset('assistant', id)
-  pickerError.value = ''
+  tempPreset.value = id
+}
+function confirmPreset() {
+  if (tempPreset.value && tempPreset.value !== settings.value.assistantPreset) {
+    settings.value = saveTaskPreset('assistant', tempPreset.value)
+    pickerError.value = ''
+  }
+  closePicker()
 }
 function managePresets() { pickerOpen.value = false; emit('settings') }
 function pickerOutside(event: PointerEvent) { if (event.target instanceof Node && !composerField.value?.contains(event.target)) pickerOpen.value = false }
 watch(pickerOpen, open => {
   if (open) {
+    tempPreset.value = settings.value.assistantPreset || ''
     drawerMounted.value = true
     window.addEventListener('keydown', strayEscape, true)
     document.addEventListener('pointerdown', pickerOutside, true)
@@ -995,7 +1002,7 @@ defineExpose({ send, stop, applySettings, focusPrompt, newConversation: startCon
         </div>
         <!-- 点模型按钮时，输入栏下沿顺势拉长，露出模型与思考强度；再点一次或按 Esc 收回。 -->
         <div :id="`model-drawer-${state.id}`" class="composer-drawer" :class="{ open: pickerOpen }" :inert="!pickerOpen || undefined">
-          <ModelPicker v-if="drawerMounted" :model="settings.model || ''" :effort="settings.effort || ''" :models="pickerModels" :loading="pickerLoading" :error="pickerError" :fast="fastChoice" :presets="presetChips" :preset="settings.assistantPreset" @preset="choosePreset" @manage="managePresets" @model="chooseModel" @effort="chooseEffort" @fast="chooseFast" @close="closePicker" />
+          <ModelPicker v-if="drawerMounted" show-confirm :model="settings.model || ''" :effort="settings.effort || ''" :models="pickerModels" :loading="pickerLoading" :error="pickerError" :fast="fastChoice" :presets="presetChips" :preset="tempPreset" @preset="choosePreset" @manage="managePresets" @confirm="confirmPreset" @model="chooseModel" @effort="chooseEffort" @fast="chooseFast" @close="closePicker" />
         </div>
       </div>
     </div>

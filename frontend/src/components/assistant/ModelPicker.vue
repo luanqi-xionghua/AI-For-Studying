@@ -13,8 +13,10 @@ const props = defineProps<{ model: string; effort: string; models: Model[]; load
   /** 可切换的模型预设与当前选中的那个。 */
   presets?: PresetChip[]; preset?: string
   /** 只显示预设一行（翻译栏：模型与强度跟着预设走）。 */
-  presetsOnly?: boolean }>()
-const emit = defineEmits<{ model: [id: string]; effort: [value: string]; fast: [value: boolean]; refresh: []; close: []; preset: [id: string]; manage: [] }>()
+  presetsOnly?: boolean
+  /** 显示确定按钮（用于预设选择需要确认的场景）。 */
+  showConfirm?: boolean }>()
+const emit = defineEmits<{ model: [id: string]; effort: [value: string]; fast: [value: boolean]; refresh: []; close: []; preset: [id: string]; manage: []; confirm: [] }>()
 const EFFORT_LABELS: Record<string, string> = { '': '默认', none: '关', minimal: '极简', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高', ultra: '极致' }
 const showPresets = computed(() => Boolean(props.presets?.length) && (props.presetsOnly || props.presets!.length > 1))
 const root = ref<HTMLElement>()
@@ -62,6 +64,7 @@ onMounted(() => root.value?.querySelectorAll<HTMLElement>('.model-chips [aria-se
         <button v-for="item in presets" :key="item.id" type="button" role="radio" :aria-checked="item.id === preset" :tabindex="item.id === preset ? 0 : -1" :data-tip="item.detail" @click="emit('preset', item.id)">{{ item.name }}</button>
       </div>
       <button type="button" class="drawer-icon" data-tip="管理模型预设（设置 → AI）" aria-label="管理模型预设" @click="emit('manage')"><AppIcon name="settings" :size="13" /></button>
+      <button v-if="showConfirm" type="button" class="drawer-confirm" data-tip="确定" aria-label="确定" @click="emit('confirm')">确定</button>
     </div>
     <div v-if="!presetsOnly" class="drawer-row">
       <span class="drawer-label">模型</span>
@@ -101,6 +104,10 @@ button{font:inherit;color:inherit;cursor:pointer}
 .drawer-icon{display:grid;place-items:center;flex-shrink:0;width:26px;height:26px;padding:0;border:0;border-radius:var(--r-xs);background:none;box-shadow:none;color:var(--muted)}
 .drawer-icon:hover:not(:disabled){background:var(--frost);color:var(--ink)}
 .drawer-icon:disabled{opacity:.35;cursor:default}
+/* 确定按钮：预设选择时的确认按钮 */
+.drawer-confirm{flex-shrink:0;height:26px;padding:0 12px;border:1px solid transparent;border-radius:var(--r-sm);background:color-mix(in srgb,var(--accent) 84%,transparent);box-shadow:inset 0 1px 0 rgb(255 255 255 / .25);color:var(--accent-on,#fff);font-size:12px;font-weight:650;transition:background var(--dur-1) var(--ease-soft),transform var(--dur-press) var(--spring-press)}
+.drawer-confirm:hover{background:var(--accent);transform:scale(1.02)}
+.drawer-confirm:active{transform:scale(.96)}
 /* 思考强度：一排分段，选中的一档下面是一块随弹簧滑动的玻璃；右侧四格信号条表示当前强度。 */
 .effort-segments{--count:5;--index:0;position:relative;display:grid;grid-template-columns:repeat(var(--count),1fr);flex:1;min-width:0;height:28px;padding:2px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--ink) 6%,transparent);box-shadow:inset 0 1px 2px rgb(0 0 0 / .08)}
 .effort-thumb{position:absolute;top:2px;bottom:2px;left:calc(2px + (100% - 4px) / var(--count) * var(--index));width:calc((100% - 4px) / var(--count));border-radius:calc(var(--r-sm) - 2px);background:var(--frost-hover);background-image:linear-gradient(180deg,rgb(255 255 255 / .55),rgb(255 255 255 / .15));box-shadow:0 1px 4px -1px rgb(0 0 0 / .22),inset 0 0 0 .5px var(--hairline),inset 0 1px 0 var(--glass-rim-soft);transition:left var(--dur-smooth) var(--spring-snappy)}
