@@ -294,3 +294,34 @@ test('chat state: busy reflects running requests', async () => {
   await pending
   assert.equal(chat.busy(), false)
 })
+
+test('chat state: a damaged conversation shows a message instead of crashing', async () => {
+  const store = fakeStore({ version: 1, activeId: 'stored', list: [{ id: 'stored', title: '旧对话', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, count: 2 }] })
+  let seq = 0
+  const chat = createChatState({
+    store,
+    streamChat: async () => {},
+    recordUsage: () => {},
+    estimateTokens: () => 0,
+    emit: () => {},
+    now: () => ++seq,
+    uuid: () => `id-${++seq}`,
+    reportFailure: () => {},
+  })
+  active.push(chat)
+  await chat.load()
+  const live = await chat.open('stored')
+  assert.equal(live.damaged, true)
+  assert.equal(live.messages.length, 0)
+  assert.match(live.error, /损坏/)
+})
+
+test('chat state: the total content limit refuses to grow', async () => {
+  const { chat, model } = make()
+  await chat.load()
+  const conversation = chat.newConversation()
+  conversation.messages = Array.from({ length: 6 }, (_, index) => ({ id: `m${index}`, role: 'user', content: 'x'.repeat(30000) }))
+  await chat.send(conversation.id, '问题', optionsFor())
+  assert.equal(conversation.error, '这段对话已经很长，请新建对话继续，以控制上下文与内存。')
+  assert.equal(model.calls.length, 0)
+})

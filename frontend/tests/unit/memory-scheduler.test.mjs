@@ -105,6 +105,11 @@ test('scheduler: a book with only onboarding (no turns) is idle', () => {
   assert.deepEqual([decision.reason, decision.ms], ['idle', TICK_MS])
 })
 
+test('scheduler: stale global memory without any document updates stays idle', () => {
+  const decision = decide(input({ global: globalMeta({ stale: true, docUpdates: 0 }) }))
+  assert.deepEqual([decision.reason, decision.ms], ['idle', TICK_MS])
+})
+
 test('scheduler: spendBudget resets on a new day', () => {
   const day = todayKey(T)
   const old = { version: 1, autoUpdate: true, noticeShown: false, budget: { day: '2000-01-01', runs: 9 }, pausedUntil: 0, consecutiveFailures: 0, updatedAt: 0 }

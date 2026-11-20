@@ -147,6 +147,7 @@ test('chat storage: conversationKey stays within the backend key rules', () => {
 test('chat storage: normalizeChatConversation rejects broken data and bad ids', () => {
   assert.equal(normalizeChatConversation(undefined, 'c'), null)
   assert.equal(normalizeChatConversation({ id: 'other', messages: [] }, 'c'), null)
+  assert.equal(normalizeChatConversation({ version: 2, id: 'c', messages: [] }, 'c'), null)
   const result = normalizeChatConversation({ messages: [{ role: 'system', content: 'nope' }, { role: 'user', content: 5 }, { role: 'user', content: 'ok' }] }, 'c')
   assert.equal(result.messages.length, 1)
   assert.equal(result.messages[0].content, 'ok')
