@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 快速解释：选中一个词或一句话，按鼠标中键（或右键「解释」），用专门配的 AI 就地解释。
  * AI 只拿到解释的要求、选中的文字和它周围的一小段上下文。PDF 里弹一张卡片；Markdown 里直接插在那一段下面，可以留在笔记里。
  */
@@ -6,6 +6,7 @@ import { createApp, reactive, shallowReactive, watch, type App } from 'vue'
 import { looksMathy, selectionImage } from '../reader/selection-image'
 import { IMAGE_NOTE } from './translate'
 import { complete, unsupportedImage } from './complete'
+import { memoryInjection } from './memory-context.ts'
 import { library } from '../sdk'
 import ExplainNote from '../components/assistant/ExplainNote.vue'
 
@@ -26,12 +27,15 @@ export function explainPrompt(term: string, context: string, mode: ExplainMode, 
 }
 
 const controllers = new Map<string, AbortController>()
-function run(item: Explain, previous = '') {
+async function run(item: Explain, previous = '') {
   controllers.get(item.id)?.abort()
   const controller = new AbortController()
   controllers.set(item.id, controller)
   Object.assign(item, { text: '', reasoning: '', status: 'running', error: '', startedAt: Date.now(), ms: 0 })
-  const ask = (image?: string) => complete({ kind: 'explain', messages: [{ role: 'user', content: explainPrompt(item.term, item.context, item.mode, previous) + (image ? IMAGE_NOTE : ''), ...(image ? { images: [image] } : {}) }], signal: controller.signal,
+  // 学习记忆：优先当前阅读的文档，没有可注入内容时退回全局记忆；只调整解释深度，不改变解释对象。
+  const memory = await memoryInjection(undefined, 'explain')
+  if (controllers.get(item.id) !== controller || controller.signal.aborted) return
+  const ask = (image?: string) => complete({ kind: 'explain', extraInstructions: memory, messages: [{ role: 'user', content: explainPrompt(item.term, item.context, item.mode, previous) + (image ? IMAGE_NOTE : ''), ...(image ? { images: [image] } : {}) }], signal: controller.signal,
     onDelta: (_delta, all) => { if (controllers.get(item.id) === controller) item.text = all },
     onReasoning: delta => { if (controllers.get(item.id) === controller) item.reasoning += delta } })
   // 模型看不了图就退回只用文字。
@@ -42,10 +46,10 @@ function run(item: Explain, previous = '') {
 }
 export function startExplain(term: string, context: string, mode: ExplainMode = 'plain', image?: string): Explain {
   const item = reactive<Explain>({ id: crypto.randomUUID(), term, context, mode, image, text: '', reasoning: '', status: 'running', error: '', startedAt: Date.now(), ms: 0 })
-  run(item)
+  void run(item)
   return item
 }
-export function rerunExplain(item: Explain, mode: ExplainMode) { const previous = item.text; item.mode = mode; run(item, previous) }
+export function rerunExplain(item: Explain, mode: ExplainMode) { const previous = item.text; item.mode = mode; void run(item, previous) }
 export function stopExplain(item: Explain) { controllers.get(item.id)?.abort(); controllers.delete(item.id); if (item.status === 'running') { item.status = 'error'; item.error = '已停止' } }
 
 const squeeze = (text: string) => text.replace(/\s+/g, ' ').trim()

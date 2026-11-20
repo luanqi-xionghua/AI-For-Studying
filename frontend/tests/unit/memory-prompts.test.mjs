@@ -155,6 +155,23 @@ test('prompts: buildInjection truncates a long summary but keeps the usage line'
   assert.ok(text.endsWith('使用要求：结合记忆调整回答的深度、例子与提醒；不要逐字复述记忆或暴露隐私；记忆与用户当前说法冲突时，以当前说法为准。'))
 })
 
+test('prompts: buildInjection changes the usage line per purpose', () => {
+  const scope = { kind: 'doc', docId: DOC_ID, title: DOC_TITLE }
+  const doc = sampleDoc()
+  const expected = {
+    assistant: '使用要求：结合记忆调整回答的深度、例子与提醒；不要逐字复述记忆或暴露隐私；记忆与用户当前说法冲突时，以当前说法为准。',
+    translate: '使用要求：上面的学习记忆只作术语与难度参考，翻译任务本身不变；不要解释、复述或提及记忆内容。',
+    explain: '使用要求：结合记忆调整解释的深度与例子，但只解释用户选中的内容；不要复述记忆或暴露隐私。',
+    predict: '使用要求：结合记忆猜读者接下来最可能问什么，只输出一句问题；不要复述记忆或暴露隐私。',
+  }
+  for (const [purpose, line] of Object.entries(expected)) {
+    const { text } = buildInjection(scope, doc, NOW, purpose)
+    assert.ok(text.endsWith(line), `purpose=${purpose}`)
+    assert.ok(text.length <= 1500, `purpose=${purpose} 长度`)
+  }
+  assert.ok(buildInjection(scope, doc, NOW).text.endsWith(expected.assistant), '默认用途仍是对话模式的写法')
+})
+
 test('prompts: buildInjection skips empty lines and empty memories', () => {
   const empty = emptyDocumentMemory(DOC_ID, DOC_TITLE, NOW)
   const emptyResult = buildInjection({ kind: 'doc', docId: DOC_ID, title: DOC_TITLE }, empty, NOW)

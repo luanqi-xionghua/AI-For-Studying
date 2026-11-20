@@ -94,6 +94,7 @@ defineExpose({ focus })
     </div>
     <div class="composer-actions">
       <button type="button" class="text-button" data-tip="本次打开应用以来的模型用量" @click="usageOpen = true">用量</button>
+      <slot name="scope" />
       <span class="composer-space"></span>
       <div ref="pickerHost" class="model-picker-host">
         <button type="button" class="model-picker" :class="{ empty: !props.resolved }" :disabled="props.busy || props.disabled" :aria-expanded="pickerOpen" aria-label="选择模型与思考强度" data-tip="模型与思考强度（只影响对话模式）" @click="openPicker">
@@ -129,6 +130,7 @@ defineExpose({ focus })
 .composer-space { flex: 1; }
 .composer-actions .text-button { padding: 4px 8px; border: 0; border-radius: var(--r-control); background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
 .composer-actions .text-button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); }
+.composer-actions :deep(.scope-button) { padding: 6px 10px; }
 .model-picker-host { position: relative; }
 .model-picker { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 6px 10px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost-hover, var(--fill-2)); color: var(--control-ink, var(--ink)); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .model-picker em { font-style: normal; font-weight: 500; color: var(--muted); }

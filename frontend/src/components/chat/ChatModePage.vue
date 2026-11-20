@@ -152,7 +152,6 @@ defineExpose({ focusPrompt })
     <header class="page-heading">
       <h1>对话模式</h1>
       <div class="chat-head-actions">
-        <MemoryScopePicker :scope="effectiveScope" :documents="props.documents" :memory-ids="memoryIds" :global-has-content="globalHasContent" :disabled="Boolean(currentBusy)" @update:scope="applyScope" @manage="emit('memory')" />
         <ChatHistoryPanel :list="chat.state.list" :active-id="chat.state.activeId" :busy-ids="busyIds" @select="selectConversation" @remove="requestRemove" @create="newConversation" />
       </div>
     </header>
@@ -174,7 +173,11 @@ defineExpose({ focusPrompt })
         @stop="stop"
         @choice="applyChoice"
         @settings="emit('settings')"
-      />
+      >
+        <template #scope>
+          <MemoryScopePicker up :scope="effectiveScope" :documents="props.documents" :memory-ids="memoryIds" :global-has-content="globalHasContent" :disabled="Boolean(currentBusy)" @update:scope="applyScope" @manage="emit('memory')" />
+        </template>
+      </ChatComposer>
     </div>
     <ConfirmDialog v-if="confirmRemove" title="删除这段对话？" :message="`「${confirmRemove.title}」会被永久删除。已经写入学习记忆的内容不受影响。`" confirm-label="删除对话" danger @confirm="removeConversation" @cancel="confirmRemove = null" />
   </section>

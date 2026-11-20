@@ -32,6 +32,7 @@ import { registerCustomFonts } from './ui/custom-fonts'
 import { covers, loadCovers, setCover, imageCover, pageCover, type Cover } from './library/covers'
 import { importer, enqueue, runQueue, clearFinished, learningReady, currentLearningAnswers, markLearningRecorded } from './library/importer'
 import { saveFailures, retrySave } from './ui/save-errors'
+import { setActiveMemoryDocument } from './ai/memory-context'
 import { emitLearningEvent } from './memory/events'
 import type { MemoryScope } from './memory/types'
 import { chatBusy } from './chat'
@@ -148,6 +149,11 @@ function tabDoc(id: string) { return tabs.value.find(tab => tab.doc.id === id)?.
 function sourceId(id: string): string; function sourceId(id: string | undefined): string | undefined
 function sourceId(id: string | undefined) { return id?.split('~')[0] }
 function isCopy(id: string) { return id.includes('~') }
+// 学习记忆：翻译、快速解释、猜你想问等旁路请求按当前阅读的文档取记忆（并排副本按原文档算）。
+watch(() => {
+  const doc = active.value
+  return doc ? { id: sourceId(doc.id) || doc.id, title: doc.name } : null
+}, doc => setActiveMemoryDocument(doc), { immediate: true })
 function openCopy(id: string) {
   contextMenu.value = undefined
   const doc = tabDoc(id)

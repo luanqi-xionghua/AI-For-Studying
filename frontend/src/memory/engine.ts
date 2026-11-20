@@ -4,7 +4,7 @@
  */
 import { reactive } from 'vue'
 import {
-  LIMITS, type DocumentMemory, type GlobalMemory, type MemoryIndex, type MemoryScope, type MemorySettings, type OnboardingAnswers,
+  LIMITS, type DocumentMemory, type GlobalMemory, type MemoryIndex, type MemoryPurpose, type MemoryScope, type MemorySettings, type OnboardingAnswers,
 } from './types.ts'
 import { emptyDocumentMemory, emptyGlobalMemory } from './normalize.ts'
 import { onLearningEvent, type LearningEvent } from './events.ts'
@@ -71,7 +71,7 @@ export type MemoryEngine = {
   cancelRun(): void
   setAutoUpdate(value: boolean): Promise<void>
   resumeAutoUpdate(): Promise<void>
-  injectionFor(scope: MemoryScope): Promise<{ text: string; tag: ReturnType<typeof buildInjection>['tag'] }>
+  injectionFor(scope: MemoryScope, purpose?: MemoryPurpose): Promise<{ text: string; tag: ReturnType<typeof buildInjection>['tag'] }>
   flush(): Promise<void>
   freeze(): void
   unfreeze(): void
@@ -576,11 +576,11 @@ export function createMemoryEngine(deps: MemoryEngineDeps): MemoryEngine {
     await readyPromise
   }
 
-  async function injectionFor(scope: MemoryScope): Promise<{ text: string; tag: ReturnType<typeof buildInjection>['tag'] }> {
+  async function injectionFor(scope: MemoryScope, purpose: MemoryPurpose = 'chat'): Promise<{ text: string; tag: ReturnType<typeof buildInjection>['tag'] }> {
     try {
       await ensureStartedReady()
       const memory = scope.kind === 'global' ? await getGlobal() : scope.kind === 'doc' ? await ensure(scope.docId, false) : null
-      return buildInjection(scope, memory, deps.now())
+      return buildInjection(scope, memory, deps.now(), purpose)
     } catch {
       if (scope.kind === 'doc') return { text: '', tag: { kind: 'doc', docId: scope.docId, title: scope.title, injected: false, chars: 0 } }
       return { text: '', tag: scope.kind === 'global' ? { kind: 'global', injected: false, chars: 0 } : { kind: 'none', injected: false, chars: 0 } }

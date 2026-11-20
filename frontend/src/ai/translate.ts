@@ -1,9 +1,10 @@
-/**
+﻿/**
  * 机翻：选中文字后右键「机翻」或按 Ctrl+T，左侧的翻译栏里给出译文，按卡片排列，最近 40 条存在本机。
  * 只用 AI 翻译：模型取 设置 → AI 里给「翻译」选的模型预设（翻译栏底部的标签也能切换）。
  */
 import { reactive, watch } from 'vue'
 import { loadAiSettings, translationSettings } from './settings.mjs'
+import { memoryInjection } from './memory-context.ts'
 
 export type TranslateTarget = 'auto' | 'zh' | 'en' | 'ja'
 export const TARGETS: { value: TranslateTarget; label: string }[] = [{ value: 'auto', label: '自动' }, { value: 'zh', label: '中文' }, { value: 'en', label: 'English' }, { value: 'ja', label: '日本語' }]
@@ -69,7 +70,9 @@ export async function translate(text: string, target = translator.target, fresh 
   if (!options.quiet) translator.open = true
   // 同一份配置用于缓存、实际请求和图片降级重试，不受随后切换模型影响。
   const settings = translationSettings(loadAiSettings())
-  const via = JSON.stringify([settings.provider, settings.baseUrl, settings.protocol, settings.model, settings.effort])
+  // 学习记忆：优先当前阅读的文档，没有可注入内容时退回全局记忆；记忆变化会让缓存失效。
+  const memory = await memoryInjection(undefined, 'translate')
+  const via = JSON.stringify([settings.provider, settings.baseUrl, settings.protocol, settings.model, settings.effort, memory])
   const resolved = resolveTarget(source, target)
   // 同一段文字、同一种语言、同一个模型预设刚翻过：直接用上次的译文，不再等一次模型。
   const earlier = fresh ? undefined : [...translator.items].reverse().find(old => old.status === 'done' && Boolean(old.result) && old.source === source && old.target === resolved && (old.engine ?? 'ai') === 'ai' && old.via === via)
@@ -82,7 +85,7 @@ export async function translate(text: string, target = translator.target, fresh 
   controllers.set(item.id, controller)
   try {
     const { complete, unsupportedImage } = await import('./complete')
-    const ask = (image?: string) => complete({ kind: 'translate', translation: settings, signal: controller.signal, messages: [{ role: 'user', content: translationPrompt(source, item.target) + (image ? IMAGE_NOTE : ''), ...(image ? { images: [image] } : {}) }], onDelta: (_delta, all) => { item.result = all } })
+    const ask = (image?: string) => complete({ kind: 'translate', translation: settings, extraInstructions: memory, signal: controller.signal, messages: [{ role: 'user', content: translationPrompt(source, item.target) + (image ? IMAGE_NOTE : ''), ...(image ? { images: [image] } : {}) }], onDelta: (_delta, all) => { item.result = all } })
     // 模型看不了图就退回只用文字。
     try { await ask(options.image) } catch (cause) { if (!options.image || controller.signal.aborted || item.result || !unsupportedImage(cause)) throw cause; item.result = ''; await ask() }
     item.status = 'done'

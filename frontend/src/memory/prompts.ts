@@ -2,7 +2,7 @@
  * 记忆总结的提示词、输入构造、JSON 解析、校验与对话模式注入模板。
  * 全部是纯函数：不发请求、不读写存储、不依赖 Vue。
  */
-import { LIMITS, type DocumentMemory, type GlobalMemory, type MemoryProfile, type MemoryScope, type OnboardingAnswers, type SelfLevel } from './types.ts'
+import { LIMITS, type DocumentMemory, type GlobalMemory, type MemoryProfile, type MemoryPurpose, type MemoryScope, type OnboardingAnswers, type SelfLevel } from './types.ts'
 import type { ChatMemoryTag } from '../chat/types.ts'
 import { cleanLine, cleanList, cleanText, normalizeKey } from './normalize.ts'
 
@@ -324,6 +324,14 @@ export function validateGlobalSummary(raw: Record<string, unknown>): GlobalSumma
 }
 
 const USAGE_LINE = '使用要求：结合记忆调整回答的深度、例子与提醒；不要逐字复述记忆或暴露隐私；记忆与用户当前说法冲突时，以当前说法为准。'
+/** 每个入口的「使用要求」一句；记忆正文与截断规则共用。 */
+const PURPOSE_USAGE: Record<MemoryPurpose, string> = {
+  chat: USAGE_LINE,
+  assistant: USAGE_LINE,
+  translate: '使用要求：上面的学习记忆只作术语与难度参考，翻译任务本身不变；不要解释、复述或提及记忆内容。',
+  explain: '使用要求：结合记忆调整解释的深度与例子，但只解释用户选中的内容；不要复述记忆或暴露隐私。',
+  predict: '使用要求：结合记忆猜读者接下来最可能问什么，只输出一句问题；不要复述记忆或暴露隐私。',
+}
 const PROFILE_LABELS: { field: 'goals' | 'interests' | 'strengths' | 'weaknesses' | 'misconceptions' | 'preferences'; label: string }[] = [
   { field: 'goals', label: '目标' },
   { field: 'interests', label: '兴趣' },
@@ -344,7 +352,7 @@ function profileLine(profile: MemoryProfile, withMisconceptions: boolean): strin
   return parts.length ? `用户画像：${parts.join('；')}` : ''
 }
 
-export function buildInjection(scope: MemoryScope, memory: DocumentMemory | GlobalMemory | null, _now: number): { text: string; tag: ChatMemoryTag } {
+export function buildInjection(scope: MemoryScope, memory: DocumentMemory | GlobalMemory | null, _now: number, purpose: MemoryPurpose = 'chat'): { text: string; tag: ChatMemoryTag } {
   const docTag = (injected: boolean, chars: number, kind: 'none' | 'global' | 'doc'): ChatMemoryTag => {
     if (scope.kind === 'doc') return { kind: 'doc', docId: scope.docId, title: scope.title, injected, chars }
     return { kind, injected, chars }
@@ -378,12 +386,12 @@ export function buildInjection(scope: MemoryScope, memory: DocumentMemory | Glob
     if (global.themes.length) after.push(`跨书主题：${global.themes.slice(0, 5).join('；')}`)
     if (global.sources.length) after.push(`涉及文档：${global.sources.slice(0, 5).map(source => `《${source.title}》`).join('')}`)
   }
-  after.push(USAGE_LINE)
+  after.push(PURPOSE_USAGE[purpose])
 
   const summary = cleanText(memory.summary, LIMITS.summary)
   // 使用要求固定在最后一行：先保证它不被挤掉，再给综述留下可截断的空间。
   const optional = after.slice(0, -1)
-  const build = () => [...before, '综述：', ...optional, USAGE_LINE].join('\n')
+  const build = () => [...before, '综述：', ...optional, PURPOSE_USAGE[purpose]].join('\n')
   const needRoom = summary ? 2 : 0
   let guard = 0
   while (LIMITS_SETTING_INJECTION - build().length < needRoom && optional.length && guard++ < 200) {

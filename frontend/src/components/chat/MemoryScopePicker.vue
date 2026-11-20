@@ -9,6 +9,8 @@ const props = defineProps<{
   memoryIds: Set<string>
   globalHasContent: boolean
   disabled: boolean
+  /** 放在输入栏时向上展开，避免弹层被窗口底部截断。 */
+  up?: boolean
 }>()
 const emit = defineEmits<{ 'update:scope': [scope: MemoryScope]; manage: [] }>()
 const open = ref(false)
@@ -51,7 +53,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside, true)
 <template>
   <div class="scope-host">
     <button ref="button" type="button" class="scope-button" :disabled="props.disabled" aria-label="选择记忆范围" :aria-expanded="open" @click="toggle">{{ label }}<AppIcon name="down" :size="12" /></button>
-    <div v-if="open" class="scope-pop page-card" role="dialog" aria-label="选择记忆范围" @keydown="keydown">
+    <div v-if="open" class="scope-pop page-card" :class="{ up: props.up }" role="dialog" aria-label="选择记忆范围" @keydown="keydown">
       <h2>这段对话使用哪份记忆？</h2>
       <input ref="search" v-model="query" class="scope-search" type="search" aria-label="搜索书名" placeholder="搜索书名" autocomplete="off" />
       <div ref="optionList" class="scope-options" role="listbox" aria-label="记忆范围">
@@ -80,6 +82,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside, true)
 .scope-button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost, var(--fill-2)); color: var(--control-ink, var(--ink)); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .scope-button:disabled { opacity: .5; cursor: default; }
 .scope-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 40; width: min(360px, 86vw); display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow: auto; }
+.scope-pop.up { top: auto; right: auto; left: 0; bottom: calc(100% + 8px); }
 .scope-pop h2 { margin: 0; font-size: 13px; font-weight: 650; }
 .scope-search { font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--control-bg, var(--fill-2)); color: var(--control-ink, var(--ink)); }
 .scope-options { display: flex; flex-direction: column; gap: 2px; }

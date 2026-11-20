@@ -532,6 +532,8 @@ test('engine: injectionFor returns the built injection or an empty one', async (
   assert.ok(doc.text.length > 0)
   assert.ok(doc.text.length <= 1500)
   assert.equal(doc.tag.injected, true)
+  const translated = await engine.injectionFor({ kind: 'doc', docId: 'd1', title: '书d1' }, 'translate')
+  assert.ok(translated.text.endsWith('使用要求：上面的学习记忆只作术语与难度参考，翻译任务本身不变；不要解释、复述或提及记忆内容。'))
   assert.deepEqual(await engine.injectionFor({ kind: 'none' }), { text: '', tag: { kind: 'none', injected: false, chars: 0 } })
   const missing = await engine.injectionFor({ kind: 'doc', docId: 'missing', title: '没有' })
   assert.deepEqual(missing, { text: '', tag: { kind: 'doc', docId: 'missing', title: '没有', injected: false, chars: 0 } })

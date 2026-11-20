@@ -1,9 +1,10 @@
-/**
+﻿/**
  * 预判读者的下一个问题（像 Codex / Claude Code 的输入建议）：输入框空着、且有上下文时，
  * 让一个小而快的模型读一下当前页、选区和最近的对话，给出一句最可能的问题。
  * 结果按上下文缓存；任何新输入、发送或上下文变化都会取消在途请求。
  */
 import { loadAiSettings, hasPresets } from './settings.mjs'
+import { memoryInjection } from './memory-context.ts'
 import { readsAsPdf } from '../library/kinds.ts'
 
 export type PredictContext = {
@@ -65,6 +66,9 @@ export async function predictQuestion(context: PredictContext, signal: AbortSign
   const settings: any = loadAiSettings()
   if (!hasPresets(settings)) return ''
   signal.throwIfAborted()
+  // 学习记忆：优先这本书的记忆，没有可注入内容时退回全局记忆。
+  const memory = await memoryInjection(context.document, 'predict')
+  signal.throwIfAborted()
   const text = context.includePage === false ? '' : await pageText(context.document, context.page).catch(() => '')
   signal.throwIfAborted()
   const recent = context.history.slice(-4).map(item => `${item.role === 'user' ? '读者' : '助手'}：${item.content.replace(/\s+/g, ' ').slice(0, 500)}`).join('\n')
@@ -83,7 +87,7 @@ export async function predictQuestion(context: PredictContext, signal: AbortSign
   signal.addEventListener('abort', stop, { once: true })
   const timer = setTimeout(stop, 25_000)
   try {
-    await streamChat({ ...settings, ...fastModel(settings), signal: local.signal, messages: [{ role: 'user', content: prompt }],
+    await streamChat({ ...settings, ...fastModel(settings), signal: local.signal, extraInstructions: memory, messages: [{ role: 'user', content: prompt }],
       onDelta: (delta: string) => { reply += delta; if (reply.length > 200 || reply.includes('\n')) local.abort() } })
   } catch (error) {
     // 读到第一行后主动停下也算成功；其他失败（没网、额度）就不显示建议。

@@ -1,10 +1,11 @@
-import { reactive, shallowReactive, markRaw } from 'vue'
+﻿import { reactive, shallowReactive, markRaw } from 'vue'
 import { loadAiSettings, hasPresets, NO_PRESET_MESSAGE } from './settings.mjs'
 import { RequestScheduler } from './request-scheduler.mjs'
 import { library } from '../sdk'
 import { recordUsage } from './usage'
 import { clearSaveFailure, reportSaveFailure } from '../ui/save-errors'
 import { splitUtf8 } from './storage-codec.mjs'
+import { memoryInjection } from './memory-context.ts'
 import { emitLearningEvent } from '../memory/events'
 
 export type Usage = { input?: number; output?: number; reasoning?: number; estimated: boolean }
@@ -448,7 +449,10 @@ export async function sendChat(descriptor: { id: string; title: string; kind: st
     activity('思考中')
     const output = () => { if (answer?.usage?.estimated) answer.usage.output = estimateTokens(answer.content) + estimateTokens(answer.reasoning || '') }
     const { UI_INSTRUCTIONS } = await import('./intelligent-ui')
-    const options = { ...snapshot, signal, messages: history, extraInstructions: UI_INSTRUCTIONS,
+    // 学习记忆：阅读助手（含文档工具调用）也读这本书的记忆；没有内容时退回全局记忆。
+    const memory = await memoryInjection({ id: descriptor.id, title: descriptor.title }, 'assistant')
+    signal.throwIfAborted()
+    const options = { ...snapshot, signal, messages: history, extraInstructions: memory ? `${memory}\n\n${UI_INSTRUCTIONS}` : UI_INSTRUCTIONS,
       onDelta: (text: string) => { if (valid() && answer) { answer.firstTokenAt ||= Date.now(); answer.content += text; answer.activity = '正在回答'; output() } },
       onReasoning: (text: string) => { if (valid() && answer) { answer.reasoning = (answer.reasoning || '') + text; answer.activity = '思考中'; output() } },
       onProgress: (text: string) => activity(text.replace(/[…。]+$/, '')),
