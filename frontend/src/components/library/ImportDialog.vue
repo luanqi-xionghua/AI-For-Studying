@@ -18,9 +18,9 @@ const learnError = ref(false)
 const learnFields = ref<{ focusFirstUnanswered?: () => void }>()
 
 // 重新作答就收起「已记下」与校验提示。
-watch(() => [learning.docLevel, learning.fieldLevel, learning.note], () => {
+watch(() => [learning.docLevel, learning.fieldLevel, learning.goal, learning.preference, learning.note], () => {
   learnError.value = false
-  if (learning.docLevel || learning.fieldLevel || learning.note) learning.recorded = 0
+  if (learning.docLevel || learning.fieldLevel || learning.goal || learning.preference || learning.note) learning.recorded = 0
 })
 
 // 有 Word 正在转换时每 250 毫秒刷新一次：进度条和「已用 N 秒」跟着走。
@@ -81,12 +81,12 @@ const finished = computed(() => importer.items.length > 0 && !importer.running)
 
       <section class="learn-mode" aria-label="学习模式">
         <label class="learn-switch"><span>开启学习模式</span><input type="checkbox" role="switch" aria-label="开启学习模式" aria-describedby="learn-help" :checked="learning.enabled" @change="setLearningEnabled(($event.target as HTMLInputElement).checked)" /></label>
-        <p id="learn-help" class="import-note">先回答两个小问题，答案会作为这批文档的初始学习记忆，只保存在本机。</p>
+        <p id="learn-help" class="import-note">先回答两个小问题、写下学习目标，答案会作为这批文档的初始学习记忆，只保存在本机。</p>
         <template v-if="learning.enabled">
-          <OnboardingFields ref="learnFields" v-model:doc-level="learning.docLevel" v-model:field-level="learning.fieldLevel" v-model:note="learning.note" doc-question="你对要加入的文档内容了解多少？" />
+          <OnboardingFields ref="learnFields" v-model:doc-level="learning.docLevel" v-model:field-level="learning.fieldLevel" v-model:goal="learning.goal" v-model:preference="learning.preference" v-model:note="learning.note" doc-question="你对要加入的文档内容了解多少？" />
           <p class="import-note">一次加入多份文档时，这组回答会用在这一批的每一份上。</p>
-          <p v-if="learnError" class="import-choose-error" role="alert">学习模式已开启：请先回答上面两个问题，再选择文件。</p>
-          <p v-else-if="learning.recorded" class="import-note" role="status">已记下这批 {{ learning.recorded }} 份文档的自评。要再加入别的文档，请重新回答。</p>
+          <p v-if="learnError" class="import-choose-error" role="alert">学习模式已开启：请先回答两道自评、填写学习目标，再选择文件。</p>
+          <p v-else-if="learning.recorded" class="import-note" role="status">已记下这批 {{ learning.recorded }} 份文档的学习模式回答。要再加入别的文档，请重新回答。</p>
         </template>
       </section>
 

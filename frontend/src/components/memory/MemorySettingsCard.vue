@@ -59,7 +59,7 @@ function toggle(event: Event) { emit('toggle', (event.target as HTMLInputElement
       </div>
       <p v-if="budgetToday >= 40" class="memory-warning">今天的自动更新已达 40 次上限，明天恢复；手动「重新总结」不受影响。</p>
       <p v-if="rebuilding" class="memory-warning" role="status">正在重建记忆索引…</p>
-      <p class="memory-privacy">学习记忆只保存在这台电脑的文档库里。只有「记忆总结」和「对话模式」会把记忆与问答摘要发给你自己配置的模型服务商；不会发送整本书的内容。</p>
+      <p class="memory-privacy">学习记忆只保存在这台电脑的文档库里。只有你在实际用到记忆的功能里，相应的记忆片段才会随请求发给你自己配置的模型服务商：记忆总结、对话模式、阅读助手、翻译、快速解释和猜你想问；不会发送整本书的内容。</p>
     </div>
   </section>
 </template>

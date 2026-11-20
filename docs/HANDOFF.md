@@ -115,6 +115,14 @@ AI 打包会一同封装 Node 与 Harness；使用 `scripts/build-windows.ps1 -T
 - 新增 `frontend/tests/unit/memory-surfaces.test.mjs`；`memory-prompts` / `memory-engine` 覆盖用途文案。最终前端 **344/344** 通过，构建通过。
 - 未发布：版本号仍为 1.1.0，改动尚未推送 GitHub；真实模型下「记忆是否真的改变回答风格」仍需人工验收。
 
+### 学习模式新增两问（2026-11-20 追加，本地改动，未发布）
+
+- `memory/types.ts` 的 `OnboardingAnswers` 增加 `goal`（学习目标，必填，≤100 字）与 `preference`（学习偏好说明，选填，≤200 字）；`note`（补充）上限仍 200 字。旧数据归一化为空串，旧记忆仍可读取。
+- 共用表单 `components/memory/OnboardingFields.vue` 增加两个问题与字数计数；`library/importer.ts` 的 `learningReady` / `currentLearningAnswers` 要求目标非空，导入弹窗的「点选择区/拖放」都会在缺目标时拦截并提示。
+- 记忆页「补填自评」与编辑表单同步显示/可编辑学习目标与偏好；`DocumentMemoryDetail` 展示这两项，`MemoryEditForm` 的 patch 会写回。
+- 归一化、合并证据、两份总结输入、对话/阅读助手等注入文本都包含学习目标与偏好：`normalizeOnboarding`、`applyOnboarding`、`onboardingSummary`、`buildDocumentInput`、`buildGlobalInput`、`buildInjection`。
+- 测试：`import-learning`（目标必填/截断）、`memory-normalize`、`memory-prompts` 同步更新；前端 **344/344** 通过，构建通过。
+
 ### 存储键
 
 SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.<docId>`、`memory.v1.settings`、`chatmode.v1.index`、`chatmode.v1.c.<conversationId>`。

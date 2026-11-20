@@ -6,7 +6,7 @@
 import { reactive } from 'vue'
 import { DOCUMENT_PATTERN, WORD_PATTERN } from './kinds.ts'
 import type { Doc } from '../sdk/types.ts'
-import type { OnboardingAnswers, SelfLevel } from '../memory/types.ts'
+import { LIMITS, type OnboardingAnswers, type SelfLevel } from '../memory/types.ts'
 
 /** Word 转换走到哪一步：先用 Word / WPS，不行再用 LibreOffice，最后写进文档库。 */
 export type ImportStage = 'office' | 'libreoffice' | 'adding'
@@ -26,7 +26,7 @@ export type ImportOne = (path: string, onStage?: (stage: ImportStage) => void) =
 export const UNSUPPORTED = '不支持这种文件：只能加入 PDF、Markdown 或 Word 文档。'
 export const importer = reactive({ items: [] as ImportItem[], running: false })
 
-// ---- 学习模式：开关、两道四档自评与一句话补充（导入弹窗与拖放共用同一份状态）----
+// ---- 学习模式：开关、两道四档自评、学习目标、偏好说明与一句话补充（导入弹窗与拖放共用同一份状态）----
 const LEARNING_KEY = 'kaizhi.import.learning.v1'
 function readLearningEnabled(): boolean {
   try { return globalThis.localStorage?.getItem(LEARNING_KEY) === '1' } catch { return false }
@@ -35,22 +35,31 @@ export const learning = reactive({
   enabled: readLearningEnabled(),
   docLevel: 0 as 0 | SelfLevel,
   fieldLevel: 0 as 0 | SelfLevel,
+  goal: '',
+  preference: '',
   note: '',
   /** 最近一批记下了几份；0 = 不显示「已记下」那行。 */
   recorded: 0,
 })
-/** 学习模式关着，或开着且两题都答了。 */
+/** 学习模式关着，或开着且两题都答了、学习目标也写了。 */
 export function learningReady(): boolean {
-  return !learning.enabled || (learning.docLevel >= 1 && learning.fieldLevel >= 1)
+  return !learning.enabled || (learning.docLevel >= 1 && learning.fieldLevel >= 1 && Boolean(learning.goal.trim()))
 }
 /** 开着且答完 → 返回一份答案（source: 'import'，answeredAt: now）；否则 null。不改状态。 */
 export function currentLearningAnswers(now = Date.now()): OnboardingAnswers | null {
-  if (!learning.enabled || !learning.docLevel || !learning.fieldLevel) return null
-  return { docLevel: learning.docLevel, fieldLevel: learning.fieldLevel, note: learning.note.trim().slice(0, 200), answeredAt: now, source: 'import' }
+  const goal = learning.goal.trim().slice(0, LIMITS.goal)
+  if (!learning.enabled || !learning.docLevel || !learning.fieldLevel || !goal) return null
+  return {
+    docLevel: learning.docLevel, fieldLevel: learning.fieldLevel,
+    goal, preference: learning.preference.trim().slice(0, LIMITS.preference), note: learning.note.trim().slice(0, LIMITS.note),
+    answeredAt: now, source: 'import',
+  }
 }
 export function resetLearningAnswers() {
   learning.docLevel = 0
   learning.fieldLevel = 0
+  learning.goal = ''
+  learning.preference = ''
   learning.note = ''
   learning.recorded = 0
 }

@@ -28,7 +28,7 @@ export const DOCUMENT_SUMMARY_SYSTEM = `你是「阅迁星穹」的学习记忆�
 6. locked 列出的字段是用户手动写的，系统不会采用你对这些字段的改写；其余字段必须与它们保持一致，不要与之矛盾。
 7. pinned 里的条目是用户确认过的，原样放在对应数组的最前面。
 8. suppressed 里的条目是用户删除过的，不要再写进任何字段。
-9. onboarding 是用户导入文档时的自评；它与后来的提问表现矛盾时，以提问表现为准，并在 summary 里说明变化。
+9. onboarding 是用户导入文档时的自评，含学习目标（goal）与学习偏好（preference）；目标与偏好应体现在 summary 的建议里；它与后来的提问表现矛盾时，以提问表现为准，并在 summary 里说明变化。
 10. reading 是阅读进度与提问次数，只用来判断学习阶段，不要逐项复述数字。
 
 输出字段（全部必填，键名不可增减）：
@@ -111,11 +111,15 @@ function memoryHasContent(memory: DocumentMemory | GlobalMemory | null): boolean
 export function onboardingSummary(answers: OnboardingAnswers): { summary: string; level: string; evidence: string } {
   const doc = DOC_LEVEL_LABELS[answers.docLevel]
   const field = FIELD_LEVEL_LABELS[answers.fieldLevel]
+  const goal = cleanText(answers.goal, LIMITS.goal)
+  const preference = cleanText(answers.preference, LIMITS.preference)
   const note = cleanText(answers.note, LIMITS.note)
-  const extra = note ? `补充：${note}` : ''
-  const evidence = cleanText(`导入自评：文档内容「${doc}」，相关专业「${field}」。${extra}`, LIMITS.evidenceText)
+  const goalText = goal ? `；学习目标：${goal}` : ''
+  const preferenceText = preference ? `；偏好：${preference}` : ''
+  const extra = note ? `；补充：${note}` : ''
+  const evidence = cleanText(`导入自评：文档内容「${doc}」，相关专业「${field}」。${goal ? `学习目标：${goal}。` : ''}${preference ? `偏好：${preference}。` : ''}${extra.replace(/^；/, '')}`, LIMITS.evidenceText)
   return {
-    summary: `导入时自评：对这份文档的内容「${doc}」，对相关专业或行业「${field}」。${extra}`,
+    summary: `导入时自评：对这份文档的内容「${doc}」，对相关专业或行业「${field}」${goalText}${preferenceText}${extra}。`,
     level: `自评：文档内容${doc}，专业基础${field}`,
     evidence,
   }
@@ -135,6 +139,8 @@ export function buildDocumentInput(memory: DocumentMemory, _now: number): { text
     ? {
         doc_level: DOC_LEVEL_LABELS[memory.onboarding.docLevel],
         field_level: FIELD_LEVEL_LABELS[memory.onboarding.fieldLevel],
+        goal: cleanText(memory.onboarding.goal, LIMITS.goal),
+        preference: cleanText(memory.onboarding.preference, LIMITS.preference),
         note: cleanText(memory.onboarding.note, LIMITS.note),
         answered_at: formatDay(memory.onboarding.answeredAt),
       }
@@ -185,7 +191,10 @@ export function buildGlobalInput(global: GlobalMemory, docs: DocumentMemory[], _
     weaknesses: doc.profile.weaknesses.slice(0, 4),
     preferences: doc.profile.preferences.slice(0, 4),
     onboarding: doc.onboarding
-      ? { doc_level: DOC_LEVEL_LABELS[doc.onboarding.docLevel], field_level: FIELD_LEVEL_LABELS[doc.onboarding.fieldLevel] }
+      ? {
+          doc_level: DOC_LEVEL_LABELS[doc.onboarding.docLevel], field_level: FIELD_LEVEL_LABELS[doc.onboarding.fieldLevel],
+          goal: cleanText(doc.onboarding.goal, LIMITS.goal), preference: cleanText(doc.onboarding.preference, LIMITS.preference),
+        }
       : null,
   }))
   const input: Record<string, unknown> = {
@@ -368,7 +377,11 @@ export function buildInjection(scope: MemoryScope, memory: DocumentMemory | Glob
     if (document.onboarding) {
       const answers = document.onboarding
       const note = cleanText(answers.note, LIMITS.note)
+      const goal = cleanText(answers.goal, LIMITS.goal)
+      const preference = cleanText(answers.preference, LIMITS.preference)
       before.push(`导入自评：对文档内容${DOC_LEVEL_LABELS[answers.docLevel]}；对相关专业${FIELD_LEVEL_LABELS[answers.fieldLevel]}${note ? `；补充：${note}` : ''}`)
+      if (goal) before.push(`学习目标：${goal}`)
+      if (preference) before.push(`学习偏好：${preference}`)
     }
     const profile = profileLine(document.profile, true)
     if (profile) after.push(profile)

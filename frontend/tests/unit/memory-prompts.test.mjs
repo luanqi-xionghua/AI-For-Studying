@@ -17,7 +17,7 @@ function sampleDoc(overrides = {}) {
   const base = emptyDocumentMemory(DOC_ID, DOC_TITLE, NOW)
   return {
     ...base,
-    onboarding: { docLevel: 2, fieldLevel: 1, note: '为下个月的课程汇报做准备', answeredAt: NOW, source: 'import' },
+    onboarding: { docLevel: 2, fieldLevel: 1, goal: '一个月内完成课程汇报', preference: '先看例子', note: '为下个月的课程汇报做准备', answeredAt: NOW, source: 'import' },
     summary: '用户正在通读这本深度学习入门书，目标是在一个月内完成课程汇报。',
     profile: {
       goals: ['一个月内完成课程汇报'], level: '入门：概念能复述',
@@ -108,6 +108,8 @@ test('prompts: buildDocumentInput uses the display labels for onboarding levels'
   const parsed = JSON.parse(buildDocumentInput(sampleDoc(), NOW).text)
   assert.equal(parsed.onboarding.doc_level, DOC_LEVEL_LABELS[2])
   assert.equal(parsed.onboarding.field_level, FIELD_LEVEL_LABELS[1])
+  assert.equal(parsed.onboarding.goal, '一个月内完成课程汇报')
+  assert.equal(parsed.onboarding.preference, '先看例子')
 })
 
 test('prompts: buildGlobalInput takes at most 20 documents and builds sources', () => {
@@ -130,6 +132,8 @@ test('prompts: buildInjection for a document carries the memory and tag', () => 
   const { text, tag } = buildInjection(scope, sampleDoc(), NOW)
   assert.ok(text.startsWith('[学习记忆 · 仅供参考]'))
   assert.ok(text.includes(`记忆范围：文档《${DOC_TITLE}》`))
+  assert.ok(text.includes('学习目标：一个月内完成课程汇报'))
+  assert.ok(text.includes('学习偏好：先看例子'))
   assert.ok(text.includes('使用要求：'))
   assert.ok(text.length <= 1500)
   assert.deepEqual(tag, { kind: 'doc', docId: DOC_ID, title: DOC_TITLE, injected: true, chars: text.length })
@@ -225,10 +229,13 @@ test('prompts: system prompts contain the JSON contract and safety wording', () 
 })
 
 test('prompts: onboardingSummary produces the rule-based initial memory', () => {
-  const generated = onboardingSummary({ docLevel: 2, fieldLevel: 1, note: '重点看第三章', answeredAt: NOW, source: 'import' })
+  const generated = onboardingSummary({ docLevel: 2, fieldLevel: 1, goal: '通过考试', preference: '多举例子', note: '重点看第三章', answeredAt: NOW, source: 'import' })
   assert.ok(generated.summary.startsWith('导入时自评：'))
+  assert.ok(generated.summary.includes('学习目标：通过考试'))
+  assert.ok(generated.summary.includes('偏好：多举例子'))
   assert.ok(generated.summary.includes('补充：重点看第三章'))
   assert.ok(generated.level.startsWith('自评：'))
   assert.ok(generated.evidence.length <= LIMITS.evidenceText)
   assert.ok(generated.evidence.includes('导入自评：'))
+  assert.ok(generated.evidence.includes('学习目标：通过考试'))
 })

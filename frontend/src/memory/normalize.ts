@@ -86,6 +86,8 @@ export function normalizeOnboarding(raw: unknown): OnboardingAnswers | null {
   return {
     docLevel: raw.docLevel,
     fieldLevel: raw.fieldLevel,
+    goal: cleanText(raw.goal, LIMITS.goal),
+    preference: cleanText(raw.preference, LIMITS.preference),
     note: cleanText(raw.note, LIMITS.note),
     answeredAt: cleanTime(raw.answeredAt),
     source: raw.source === 'manual' ? 'manual' : 'import',

@@ -29,6 +29,8 @@ const draft = reactive({
 const onboarding = props.baseline.onboarding
 const docLevel = reactive<{ value: 0 | SelfLevel }>({ value: onboarding?.docLevel ?? 0 })
 const fieldLevel = reactive<{ value: 0 | SelfLevel }>({ value: onboarding?.fieldLevel ?? 0 })
+const goal = reactive({ value: onboarding?.goal ?? '' })
+const preference = reactive({ value: onboarding?.preference ?? '' })
 const note = reactive({ value: onboarding?.note ?? '' })
 const split = (text: string) => text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
 
@@ -52,6 +54,8 @@ function currentPatch(): MemoryPatch {
     patch.onboarding = {
       docLevel: docLevel.value || 1,
       fieldLevel: fieldLevel.value || 1,
+      goal: goal.value.trim(),
+      preference: preference.value.trim(),
       note: note.value.trim(),
       answeredAt: onboarding.answeredAt || Date.now(),
       source: onboarding.source,
@@ -86,7 +90,7 @@ function save() { emit('save', Object.keys(changes.value).length ? changes.value
     <label v-else class="memory-field"><span>跨书主题</span><textarea v-model="draft.themes" rows="2" placeholder="每行一条，最多 12 条。" /></label>
     <section v-if="!isGlobal && onboarding" class="memory-field" aria-label="导入自评">
       <span>导入自评</span>
-      <OnboardingFields v-model:doc-level="docLevel.value" v-model:field-level="fieldLevel.value" v-model:note="note.value" />
+      <OnboardingFields v-model:doc-level="docLevel.value" v-model:field-level="fieldLevel.value" v-model:goal="goal.value" v-model:preference="preference.value" v-model:note="note.value" />
     </section>
     <div class="memory-edit-actions">
       <button type="button" class="text-button" @click="emit('cancel')">取消</button>

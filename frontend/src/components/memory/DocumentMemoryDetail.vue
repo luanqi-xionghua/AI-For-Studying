@@ -52,21 +52,28 @@ const readingText = computed(() => {
   return parts.join(' · ')
 })
 
-const onboarding = reactive<{ docLevel: 0 | SelfLevel; fieldLevel: 0 | SelfLevel; note: string }>({ docLevel: 0, fieldLevel: 0, note: '' })
+const onboarding = reactive<{ docLevel: 0 | SelfLevel; fieldLevel: 0 | SelfLevel; goal: string; preference: string; note: string }>({ docLevel: 0, fieldLevel: 0, goal: '', preference: '', note: '' })
 const onboardingError = ref('')
 const fillOpen = ref(false)
 const initializing = ref(false)
 function submitInit() {
-  if (!onboarding.docLevel || !onboarding.fieldLevel) { onboardingError.value = '请先回答上面两个问题。'; return }
+  if (!onboarding.docLevel || !onboarding.fieldLevel) { onboardingError.value = '请先回答上面两道自评。'; return }
+  if (!onboarding.goal.trim()) { onboardingError.value = '请填写学习目标。'; return }
   onboardingError.value = ''
   initializing.value = true
-  emit('init', { docLevel: onboarding.docLevel, fieldLevel: onboarding.fieldLevel, note: onboarding.note.trim(), answeredAt: Date.now(), source: 'manual' })
+  emit('init', {
+    docLevel: onboarding.docLevel, fieldLevel: onboarding.fieldLevel,
+    goal: onboarding.goal.trim(), preference: onboarding.preference.trim(), note: onboarding.note.trim(),
+    answeredAt: Date.now(), source: 'manual',
+  })
 }
 function submitFill() { submitInit(); fillOpen.value = false }
 function openFill() {
   if (props.memory?.onboarding) {
     onboarding.docLevel = props.memory.onboarding.docLevel
     onboarding.fieldLevel = props.memory.onboarding.fieldLevel
+    onboarding.goal = props.memory.onboarding.goal || ''
+    onboarding.preference = props.memory.onboarding.preference || ''
     onboarding.note = props.memory.onboarding.note
   }
   fillOpen.value = true
@@ -80,7 +87,7 @@ function openFill() {
     <template v-else-if="!props.memory">
       <header class="memory-detail-head"><h2>{{ title }}</h2></header>
       <p class="page-note">这本书还没有学习记忆。在阅读助手或对话模式里围绕它提问后会自动建立；也可以现在先填一份自评。</p>
-      <OnboardingFields v-model:doc-level="onboarding.docLevel" v-model:field-level="onboarding.fieldLevel" v-model:note="onboarding.note" doc-question="你对这份文档的内容了解多少？" />
+      <OnboardingFields v-model:doc-level="onboarding.docLevel" v-model:field-level="onboarding.fieldLevel" v-model:goal="onboarding.goal" v-model:preference="onboarding.preference" v-model:note="onboarding.note" doc-question="你对这份文档的内容了解多少？" />
       <p v-if="onboardingError" class="memory-warning" role="alert">{{ onboardingError }}</p>
       <button type="button" class="primary-button" :disabled="initializing" @click="submitInit">建立记忆</button>
     </template>
@@ -104,6 +111,8 @@ function openFill() {
         <h3>导入自评</h3>
         <template v-if="props.memory.onboarding">
           <p class="memory-text">文档内容：{{ DOC_LEVEL_LABELS[props.memory.onboarding.docLevel] }} · 相关专业：{{ FIELD_LEVEL_LABELS[props.memory.onboarding.fieldLevel] }}</p>
+          <p v-if="props.memory.onboarding.goal" class="memory-text">学习目标：{{ props.memory.onboarding.goal }}</p>
+          <p v-if="props.memory.onboarding.preference" class="memory-text">学习偏好：{{ props.memory.onboarding.preference }}</p>
           <p v-if="props.memory.onboarding.note" class="memory-text">补充：{{ props.memory.onboarding.note }}</p>
           <p class="memory-meta">{{ props.memory.onboarding.source === 'manual' ? '手动补建' : '导入时填写' }} · {{ formatDay(props.memory.onboarding.answeredAt) }}</p>
         </template>
@@ -111,7 +120,7 @@ function openFill() {
           <p class="page-note">没有导入自评。<button type="button" class="text-button" @click="openFill">补填自评</button></p>
         </template>
         <template v-if="fillOpen">
-          <OnboardingFields v-model:doc-level="onboarding.docLevel" v-model:field-level="onboarding.fieldLevel" v-model:note="onboarding.note" />
+          <OnboardingFields v-model:doc-level="onboarding.docLevel" v-model:field-level="onboarding.fieldLevel" v-model:goal="onboarding.goal" v-model:preference="onboarding.preference" v-model:note="onboarding.note" />
           <p v-if="onboardingError" class="memory-warning" role="alert">{{ onboardingError }}</p>
           <button type="button" class="primary-button" :disabled="initializing" @click="submitFill">保存自评</button>
         </template>

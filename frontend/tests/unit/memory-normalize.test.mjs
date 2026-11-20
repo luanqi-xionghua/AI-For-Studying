@@ -32,7 +32,8 @@ test('normalize: cleanList dedupes by normalized key and splits strings', () => 
 })
 
 test('normalize: onboarding needs two valid 1–4 levels', () => {
-  assert.deepEqual(normalizeOnboarding({ docLevel: 2, fieldLevel: 1 }), { docLevel: 2, fieldLevel: 1, note: '', answeredAt: 0, source: 'import' })
+  assert.deepEqual(normalizeOnboarding({ docLevel: 2, fieldLevel: 1 }), { docLevel: 2, fieldLevel: 1, goal: '', preference: '', note: '', answeredAt: 0, source: 'import' })
+  assert.deepEqual(normalizeOnboarding({ docLevel: 2, fieldLevel: 1, goal: ' 通过考试 ', preference: ' 多举例 ', note: '补充', answeredAt: 3, source: 'manual' }), { docLevel: 2, fieldLevel: 1, goal: '通过考试', preference: '多举例', note: '补充', answeredAt: 3, source: 'manual' })
   assert.equal(normalizeOnboarding({ docLevel: 5, fieldLevel: 1 }), null)
   assert.equal(normalizeOnboarding({ docLevel: '2', fieldLevel: 1 }), null)
   assert.equal(normalizeOnboarding(null), null)

@@ -25,6 +25,8 @@ export const LIMITS = {
   questionItem: 40,
   themes: 12, themeItem: 30,
   note: 200,
+  goal: 100,
+  preference: 200,
   evidence: 30, evidenceText: 160, evidenceRef: 60,
   pending: 24, pendingQuestion: 500, pendingAnswer: 300,
   suppressed: 60,
@@ -46,6 +48,10 @@ export type OnboardingAnswers = {
   docLevel: SelfLevel
   /** 对文档相关专业 / 行业的了解程度。 */
   fieldLevel: SelfLevel
+  /** 学习目标（必填），≤ LIMITS.goal 字；1.1.0 及更早的数据可能为空串。 */
+  goal: string
+  /** 学习偏好说明（选填），≤ LIMITS.preference 字。 */
+  preference: string
   /** 可选的一句话补充，≤ LIMITS.note 字；没填是空串。 */
   note: string
   answeredAt: number

@@ -555,7 +555,7 @@ function applyImported(docs: Doc[], changed: Set<string>) {
  * 全部成功就关上窗口、打开第一份，和以前一样；有失败的就留着窗口，写明原因。
  */
 async function addPaths(paths: string[], fromDialog = importOpen.value) {
-  if (fromDialog && !learningReady()) { notify('学习模式已开启：请先回答两个问题，再拖入文件。'); return }
+  if (fromDialog && !learningReady()) { notify('学习模式已开启：请先回答两道自评、填写学习目标，再拖入文件。'); return }
   const answers = fromDialog ? currentLearningAnswers() : null
   const added = enqueue(paths, answers)
   if (!added.length) return

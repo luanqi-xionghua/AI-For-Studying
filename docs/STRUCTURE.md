@@ -180,7 +180,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 
 | 文件 | 作用 |
 | --- | --- |
-| `frontend/src/memory/types.ts` | 记忆核心类型与全部上限/存储键：文档记忆、全局记忆、索引、设置、事件、证据、手动约束、范围、注入用途。 |
+| `frontend/src/memory/types.ts` | 记忆核心类型与全部上限/存储键：文档记忆、全局记忆、索引、设置、事件、证据、手动约束、范围、注入用途；导入自评含学习目标（goal ≤100 字，必填）与偏好说明（preference ≤200 字，选填）。 |
 | `frontend/src/memory/normalize.ts` | 所有记忆数据的归一化与损坏兜底（字段截断、版本/键校验、字节守卫、空记忆工厂）。 |
 | `frontend/src/memory/events.ts` | 学习事件总线：`LearningEvent` 六类、同步分发、200 条暂存、异常隔离。 |
 | `frontend/src/memory/prompts.ts` | 两份总结系统提示词全文、文档/全局输入构造（白名单 + 长度上限）、JSON 解析与校验、各入口注入模板与用途化「使用要求」、自评文案、相对时间。 |
@@ -226,10 +226,10 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | `MemorySettingsCard.vue` | 记忆设置区：开关、预设只读、状态行、暂停/重试/停止/恢复、每日计数、隐私说明。 |
 | `GlobalMemoryPanel.vue` | 全局记忆：状态、综述/画像/主题/来源/待总结/证据、重新总结/编辑/清空。 |
 | `DocumentMemoryList.vue` | 文档记忆列表：搜索、全部/有记忆/未初始化筛选、排序、方向键。 |
-| `DocumentMemoryDetail.vue` | 文档记忆详情：未初始化补建、导入自评、综述/画像/问题/阅读行为/证据、编辑/清空/使用。 |
+| `DocumentMemoryDetail.vue` | 文档记忆详情：未初始化补建、导入自评（含学习目标/偏好）、综述/画像/问题/阅读行为/证据、编辑/清空/使用。 |
 | `MemoryEditForm.vue` | 文档/全局共用的编辑表单（综述、水平、数组、自评），内部用 `diffEdit` 只提交改动。 |
 | `MemoryChips.vue` | 可置顶/可删除的条目组。 |
-| `OnboardingFields.vue` | 两道四档自评 + 一句话补充（导入弹窗与记忆页共用）。 |
+| `OnboardingFields.vue` | 学习模式共用表单：两道四档自评 + 学习目标（必填）+ 学习偏好（选填）+ 一句补充（选填），带字数与聚焦校验。 |
 
 #### layout/ 外壳布局组件
 
@@ -311,7 +311,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | 文件 | 作用 |
 | --- | --- |
 | `kinds.ts` | 文档类型判断（PDF/Markdown/Word 转成 PDF 后）、标题与图标。 |
-| `importer.ts` | 加入文档队列：状态、Word 阶段、失败原因、`enqueue`、`runQueue`；1.1.0 新增学习模式状态与答案 API。 |
+| `importer.ts` | 加入文档队列：状态、Word 阶段、失败原因、`enqueue`、`runQueue`；1.1.0 新增学习模式状态与答案 API（两道自评 + 学习目标必填 + 偏好/补充选填）。 |
 | `covers.ts` | 封面：首页预览/自定义图片/默认图标。 |
 | `groups.ts` | 分组：创建/改名/删除/分配。 |
 | `bookmarks.ts` | 书签数据：增删改查与持久化。 |
@@ -410,7 +410,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | `memory-surfaces.test.mjs` | 源码契约扫描：阅读助手/翻译/解释/预判/文档工具都接记忆读取、记忆范围按钮在输入栏。 |
 | `chat-mode.test.mjs` | 历史裁剪、模型选择、会话归一化/截断/上限、冻结。 |
 | `chat-state.test.mjs` | 对话状态机：发送/停止/重新生成/并发/损坏/删除/用量/事件。 |
-| `import-learning.test.mjs` | 学习模式状态、答案随队列、回调、开关持久化。 |
+| `import-learning.test.mjs` | 学习模式状态、两题 + 学习目标必填校验、答案随队列、回调、开关持久化。 |
 | `system-prefix.test.mjs` | `READER_SYSTEM` 默认前缀与 `systemPrefix` 覆盖。 |
 | `presets.test.mjs` | AI 预设全链路（含记忆字段兼容）。 |
 | `settings.test.mjs` | 偏好设置模型、快捷键、外观。 |

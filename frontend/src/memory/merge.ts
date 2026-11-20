@@ -172,7 +172,9 @@ export function applyOnboarding(
   }
   // 已有自评：不覆盖，只补一条证据，让下一次总结能看到新的自评。
   const note = cleanText(answers.note, LIMITS.note)
-  const text = cleanText(`再次导入时的自评（未替换原自评）：文档内容「${DOC_LEVEL_LABELS[answers.docLevel]}」，相关专业「${FIELD_LEVEL_LABELS[answers.fieldLevel]}」。${note ? `补充：${note}` : ''}`, LIMITS.evidenceText)
+  const goal = cleanText(answers.goal, LIMITS.goal)
+  const preference = cleanText(answers.preference, LIMITS.preference)
+  const text = cleanText(`再次导入时的自评（未替换原自评）：文档内容「${DOC_LEVEL_LABELS[answers.docLevel]}」，相关专业「${FIELD_LEVEL_LABELS[answers.fieldLevel]}」。${goal ? `学习目标：${goal}。` : ''}${preference ? `偏好：${preference}。` : ''}${note ? `补充：${note}` : ''}`, LIMITS.evidenceText)
   const evidence: MemoryEvidence = { id: evidenceId, kind: 'onboarding', at: now, text, ref: '再次导入' }
   return {
     memory: {

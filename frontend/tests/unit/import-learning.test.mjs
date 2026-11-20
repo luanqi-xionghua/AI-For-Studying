@@ -24,7 +24,7 @@ afterEach(() => {
   importer.running = false
   resetLearningAnswers()
 })
-const answers = (docLevel = 2, fieldLevel = 3, note = '') => ({ docLevel, fieldLevel, note, answeredAt: 42, source: 'import' })
+const answers = (docLevel = 2, fieldLevel = 3, note = '', goal = '准备课程汇报', preference = '') => ({ docLevel, fieldLevel, goal, preference, note, answeredAt: 42, source: 'import' })
 
 test('import learning: ready when the switch is off', () => {
   assert.equal(learning.enabled, false)
@@ -32,28 +32,44 @@ test('import learning: ready when the switch is off', () => {
   assert.equal(currentLearningAnswers(), null)
 })
 
-test('import learning: not ready while a question is unanswered', () => {
+test('import learning: not ready while a question or the goal is unanswered', () => {
   setLearningEnabled(true)
   learning.docLevel = 2
   assert.equal(learningReady(), false)
   assert.equal(currentLearningAnswers(), null)
+  learning.fieldLevel = 3
+  assert.equal(learningReady(), false, '少了学习目标也不能开始')
+  learning.goal = '  '
+  assert.equal(learningReady(), false, '只有空白的目标不算填写')
+  learning.goal = '通过考试'
+  assert.equal(learningReady(), true)
 })
 
-test('import learning: both answers make a ready payload', () => {
+test('import learning: both answers and the goal make a ready payload', () => {
   setLearningEnabled(true)
   learning.docLevel = 2
   learning.fieldLevel = 3
+  learning.goal = '  通过考试  '
+  learning.preference = '  多举例子  '
   learning.note = '  备注  '
   const payload = currentLearningAnswers(1234)
-  assert.deepEqual(payload, { docLevel: 2, fieldLevel: 3, note: '备注', answeredAt: 1234, source: 'import' })
+  assert.deepEqual(payload, {
+    docLevel: 2, fieldLevel: 3, goal: '通过考试', preference: '多举例子', note: '备注',
+    answeredAt: 1234, source: 'import',
+  })
 })
 
-test('import learning: the note is clamped to 200 characters', () => {
+test('import learning: goal / preference / note are clamped to their limits', () => {
   setLearningEnabled(true)
   learning.docLevel = 1
   learning.fieldLevel = 1
+  learning.goal = '目'.repeat(300)
+  learning.preference = '偏'.repeat(300)
   learning.note = '字'.repeat(300)
-  assert.equal(currentLearningAnswers(1).note.length, 200)
+  const payload = currentLearningAnswers(1)
+  assert.equal(payload.goal.length, 100)
+  assert.equal(payload.preference.length, 200)
+  assert.equal(payload.note.length, 200)
 })
 
 test('import learning: every queued item gets its own copy of the answers', () => {
@@ -115,9 +131,11 @@ test('import learning: recording a batch clears the answers but remembers the co
   setLearningEnabled(true)
   learning.docLevel = 3
   learning.fieldLevel = 2
+  learning.goal = '通过考试'
+  learning.preference = '多举例子'
   learning.note = '备注'
   markLearningRecorded(3)
-  assert.deepEqual([learning.docLevel, learning.fieldLevel, learning.note, learning.recorded], [0, 0, '', 3])
+  assert.deepEqual([learning.docLevel, learning.fieldLevel, learning.goal, learning.preference, learning.note, learning.recorded], [0, 0, '', '', '', 3])
   assert.equal(learning.enabled, true)
 })
 
@@ -125,10 +143,11 @@ test('import learning: the switch remembers itself and clears answers when turne
   setLearningEnabled(true)
   learning.docLevel = 2
   learning.fieldLevel = 2
+  learning.goal = '通过考试'
   assert.equal(store.get('kaizhi.import.learning.v1'), '1')
   setLearningEnabled(false)
   assert.equal(store.get('kaizhi.import.learning.v1'), '0')
-  assert.deepEqual([learning.docLevel, learning.fieldLevel, learning.note], [0, 0, ''])
+  assert.deepEqual([learning.docLevel, learning.fieldLevel, learning.goal, learning.preference, learning.note], [0, 0, '', '', ''])
 })
 
 test('import learning: no localStorage does not throw', () => {
