@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { PROVIDERS, PROTOCOLS, getProvider } from '../../ai/providers.mjs'
-import { loadAiSettings, credentialSlot, saveAiSettings, supportsFast, newPresetId, presetConnection, MAX_PRESETS, PRESET_NAME_LIMIT } from '../../ai/settings.mjs'
+import { loadAiSettings, credentialSlot, saveAiSettings, supportsFast, newPresetId, presetConnection, MAX_PRESETS, PRESET_NAME_LIMIT, memoryEffortOptions, memoryModelOf, recommendedMemoryEffort, isHighMemoryEffort } from '../../ai/settings.mjs'
 import { listModels, testConnection } from '../../ai/connection.mjs'
-import { presetTitle, presetDetail, type Preset } from '../../ai/presets'
+import { presetTitle, presetDetail, EFFORT_NAMES, type Preset } from '../../ai/presets'
 import { DOCUMENT_LIMIT_FIELDS } from '../../shared/document-limits.mjs'
 import { apiOrigin } from '../../shared/provider-config.mjs'
 import { normalizeRequestLimits } from '../../shared/request-queue.mjs'
@@ -21,11 +21,12 @@ const requestFields = [
   { key: 'concurrent', label: '同时运行的提问', min: 1, max: 4 },
   { key: 'queued', label: '最多等待的提问', min: 0, max: 16 },
 ]
-// 三处用途各选一个预设。
+// 四处用途各选一个预设；记忆管理另外还选思考强度。
 const TASKS = [
   { field: 'assistantPreset', key: 'assistant', label: '阅读助手', aria: '阅读助手用的预设' },
   { field: 'translationPreset', key: 'translate', label: '翻译', aria: '翻译用的预设' },
   { field: 'explainPreset', key: 'explain', label: '快速解释', aria: '快速解释用的预设' },
+  { field: 'memoryPreset', key: 'memory', label: '记忆管理', aria: '记忆管理用的预设' },
 ] as const
 /** 列表行上记着哪些用途在用它（不显示，供脚本定位，例如 [data-uses~="assistant"]）。 */
 const usesOf = (id: string) => TASKS.filter(task => settings.value[task.field] === id).map(task => task.key).join(' ')
@@ -37,6 +38,32 @@ for (const preset of presets.value) {
   if (preset.model) continue
   const known: any = getProvider(preset.provider)
   if (known?.defaultModel) preset.model = known.defaultModel
+}
+
+// ---- 「记忆管理」这一行：除了预设，还要选思考强度 ----
+const HIGH_EFFORT_NOTE = '当前为高强度，自动记忆更新可能消耗较多额度。'
+const memoryItem = computed<Preset | undefined>(() => presets.value.find(item => item.id === settings.value.memoryPreset))
+const memoryOptions = computed<string[]>(() => memoryEffortOptions(memoryItem.value))
+const memoryHigh = computed(() => isHighMemoryEffort(settings.value.memoryEffort || ''))
+const memoryEffortLabel = (value: string) => value === 'low' ? `${EFFORT_NAMES.low}（推荐）` : EFFORT_NAMES[value] ?? value
+// 换了预设，或同一个预设换了模型：强度不再合法就回到推荐值；从「没有预设」变成有预设时也取推荐值。
+watch(() => [settings.value.memoryPreset, memoryItem.value?.provider, memoryItem.value?.model] as const, ([id], [previousId]) => {
+  const current = settings.value.memoryEffort || ''
+  if (!id) { settings.value.memoryEffort = ''; return }
+  const valid = current === '' || memoryOptions.value.includes(current)
+  if (!previousId || !valid) settings.value.memoryEffort = recommendedMemoryEffort(memoryModelOf(memoryItem.value))
+})
+/** 选强度：切到高强度先二次确认；取消就恢复原值，也不算改动。 */
+function chooseMemoryEffort(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const next = select.value, previous = settings.value.memoryEffort || ''
+  if (next === previous) return
+  if (isHighMemoryEffort(next) && !window.confirm(`记忆总结会在后台自动运行，高强度可能明显增加 API 消耗。确定使用「${EFFORT_NAMES[next] ?? next}」吗？`)) {
+    select.value = previous
+    event.stopPropagation()      // 外层 section 的 @change 会 markEdited；取消不算改动
+    return
+  }
+  settings.value.memoryEffort = next
 }
 
 // ---- 弹出的预设窗口：新建与修改共用；改的是一份副本，点「添加 / 确定」才写回列表，「取消」就丢弃 ----
@@ -236,7 +263,7 @@ function confirmForm() {
   if (value.isNew || index < 0) list.push(preset); else list[index] = preset
   for (const task of unassigned) settings.value[task.field] = preset.id
   closeForm()
-  if (value.isNew) status.value = `已添加「${presetTitle(preset)}」，` + (unassigned.length === TASKS.length ? '阅读助手、翻译和快速解释先都用它；可以在下面「各处默认预设」里再换。' : unassigned.length ? `${unassigned.map(task => task.label).join('、')}先用它。` : '可以在下面「各处默认预设」里选用它。')
+  if (value.isNew) status.value = `已添加「${presetTitle(preset)}」，` + (unassigned.length === TASKS.length ? '阅读助手、翻译、快速解释和记忆管理先都用它；可以在下面「各处默认预设」里再换。' : unassigned.length ? `${unassigned.map(task => task.label).join('、')}先用它。` : '可以在下面「各处默认预设」里选用它。')
   markEdited()
   return true
 }
@@ -259,7 +286,7 @@ function removePreset(id: string) {
   for (const task of moved) settings.value[task.field] = fallback?.id || ''
   if (form.value?.preset.id === id) closeForm()
   error.value = false
-  status.value = `已删除「${presetTitle(gone!)}」` + (!list.length ? '。现在没有模型预设了，阅读助手、翻译和快速解释要先新建一个才能用。'
+  status.value = `已删除「${presetTitle(gone!)}」` + (!list.length ? '。现在没有模型预设了，阅读助手、翻译、快速解释、对话模式和记忆管理要先新建一个才能用。'
     : moved.length ? `；${moved.map(task => task.label).join('、')}改用「${presetTitle(fallback!)}」。` : '。')
   markEdited()
 }
@@ -305,9 +332,9 @@ defineExpose({ save, hasChanges: () => edited.value })
     <div v-if="!embedded" class="settings-heading"><strong>AI 设置</strong><button class="text-button" @click="emit('close')">返回</button></div>
 
     <div class="group-head"><strong>模型预设</strong><button type="button" class="text-button" :disabled="presets.length >= MAX_PRESETS" @click="addPreset">＋ 新建预设</button></div>
-    <p class="settings-note">点「新建预设」填写一个新的模型预设，点「编辑预设」（或直接点这个预设）可以修改它；再在下面给阅读助手、翻译和快速解释各选一个。所有调用均通过本机 DeepSeek Harness；仅相同服务商与 API 地址共用密钥。「测试连接」会用这个预设发一句极短的消息，看地址、密钥和模型能不能用。</p>
+    <p class="settings-note">点「新建预设」填写一个新的模型预设，点「编辑预设」（或直接点这个预设）可以修改它；再在下面给阅读助手、翻译、快速解释和记忆管理各选一个。所有调用均通过本机 DeepSeek Harness；仅相同服务商与 API 地址共用密钥。「测试连接」会用这个预设发一句极短的消息，看地址、密钥和模型能不能用。</p>
     <div class="preset-list">
-      <p v-if="!presets.length" class="preset-empty">还没有模型预设。点右上角「＋ 新建预设」，选好服务商、填上 API Key 和模型，阅读助手、翻译和快速解释就能用了。</p>
+      <p v-if="!presets.length" class="preset-empty">还没有模型预设。点右上角「＋ 新建预设」，选好服务商、填上 API Key 和模型，阅读助手、翻译、快速解释、对话模式和记忆管理就能用了。</p>
       <div v-for="item in presets" :key="item.id" class="preset-item">
         <button type="button" class="preset-row" :data-uses="usesOf(item.id)" :data-tip="`编辑「${presetTitle(item)}」`" @click="editPreset(item.id)">
           <span class="preset-title">{{ presetTitle(item) }}</span>
@@ -322,10 +349,17 @@ defineExpose({ save, hasChanges: () => edited.value })
 
     <div class="group-head"><strong>各处默认预设</strong></div>
     <template v-if="presets.length">
-      <label v-for="task in TASKS" :key="task.field">{{ task.label }}<select v-model="settings[task.field]" :aria-label="task.aria"><option v-for="item in presets" :key="item.id" :value="item.id">{{ presetTitle(item) }}（{{ presetDetail(item) }}）</option></select></label>
-      <p class="settings-note">阅读助手的预设也可以在输入栏的模型按钮里随时切换。思考强度不在预设里设，用的时候在输入栏的模型按钮里选，会记在当前这个预设上；翻译和快速解释照用所选预设的模型和这个强度（没选过就是模型默认），不做降级。</p>
+      <template v-for="task in TASKS" :key="task.field">
+        <label v-if="task.key !== 'memory'">{{ task.label }}<select v-model="settings[task.field]" :aria-label="task.aria"><option v-for="item in presets" :key="item.id" :value="item.id">{{ presetTitle(item) }}（{{ presetDetail(item) }}）</option></select></label>
+        <div v-else class="memory-task">
+          <label>{{ task.label }}<select v-model="settings[task.field]" :aria-label="task.aria"><option v-for="item in presets" :key="item.id" :value="item.id">{{ presetTitle(item) }}（{{ presetDetail(item) }}）</option></select></label>
+          <label>思考强度<select :value="settings.memoryEffort || ''" aria-label="记忆管理的思考强度" :disabled="!memoryOptions.length" @input.stop @change="chooseMemoryEffort"><option value="">{{ EFFORT_NAMES[''] }}</option><option v-for="value in memoryOptions" :key="value" :value="value">{{ memoryEffortLabel(value) }}</option></select></label>
+        </div>
+      </template>
+      <p v-if="memoryHigh" class="settings-note memory-warning" role="status">{{ HIGH_EFFORT_NOTE }}</p>
+      <p class="settings-note">阅读助手的预设也可以在输入栏的模型按钮里随时切换。阅读助手、翻译和快速解释的思考强度不在这里设：用的时候在输入栏的模型按钮里选，会记在当前这个预设上；翻译和快速解释照用所选预设的模型和这个强度（没选过就是模型默认），不做降级。「记忆管理」这一行同时选预设和思考强度，所有记忆总结（文档记忆、全局记忆）都用它：默认推荐低档；记忆总结会在后台自动运行，高强度会明显增加 API 消耗。</p>
     </template>
-    <p v-else class="settings-note">新建预设后，在这里给阅读助手、翻译和快速解释各选一个；第一个预设会先用在这三处。</p>
+    <p v-else class="settings-note">新建预设后，在这里给阅读助手、翻译、快速解释和记忆管理各选一个；第一个预设会先用在这四处，记忆管理的思考强度默认取推荐的低档。</p>
 
     <details class="limit-settings"><summary>每题阅读预算</summary><label v-for="field in DOCUMENT_LIMIT_FIELDS" :key="field.key">{{ field.label }}<input v-model.number="settings.documentLimits[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step || 1" /></label></details>
     <details class="limit-settings"><summary>多文件提问</summary><label v-for="field in requestFields" :key="field.key">{{ field.label }}<input v-model.number="settings.requestLimits[field.key]" type="number" :min="field.min" :max="field.max" :aria-label="field.label" /></label><p class="settings-note">切换标签或收起助手后继续回答；关闭文件标签会停止该文件的提问。</p></details>
@@ -394,6 +428,9 @@ button{font:inherit;cursor:pointer;color:var(--control-ink)}
 .primary-button{background-color:var(--accent-glass);background-image:var(--glass-tint-sheen);border-color:transparent;color:var(--accent-on)}
 .primary-button:hover:not(:disabled){background-color:var(--accent-glass-hover);color:var(--accent-on)}
 .settings-status{font-size:12px;line-height:1.6;margin:0;color:var(--muted);overflow-wrap:anywhere}
+.memory-task{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:10px;align-items:end}
+.memory-warning{color:var(--warning)}
+@media(max-width:560px){.memory-task{grid-template-columns:1fr}}
 .error{color:var(--danger)}
 /* 分组标题：模型预设 / 各处默认预设。 */
 .group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:32px;margin-bottom:-6px;font-size:13px;color:var(--control-ink)}
