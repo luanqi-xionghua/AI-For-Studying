@@ -8,7 +8,7 @@ import AppIcon from './components/ui/AppIcon.vue'
 import ClockChip from './components/layout/ClockChip.vue'
 import FileTabs from './components/layout/FileTabs.vue'
 import CaptureQuickPrompt from './components/assistant/CaptureQuickPrompt.vue'
-import { chatPhase, chatState, sendChat, closeChat, closeAllChats, configureRequests, stopChat, notices, dismissNotice, selectConversation, keepImage, pendingImages, setPendingImages, type Notice } from './ai/workspace'
+import { chatPhase, chatState, sendChat, closeChat, closeAllChats, configureRequests, stopChat, notices, dismissNotice, selectConversation, keepImage, pendingImages, setPendingImages, taskSummary, type Notice } from './ai/workspace'
 import { forgetPassword, forgetAllPasswords } from './document/passwords.mjs'
 import { useSettings, matchShortcut, matchWheelShortcut, shortcutFromEvent, shortcutLabel, UI_FONTS, READING_FONTS, SKETCH_ANSWER_FONTS, fontChoices, isGlassStyle } from './settings'
 import { retainReaderEntries } from './reader/cache-policy.mjs'
@@ -32,6 +32,9 @@ import { registerCustomFonts } from './ui/custom-fonts'
 import { covers, loadCovers, setCover, imageCover, pageCover, type Cover } from './library/covers'
 import { importer, enqueue, runQueue, clearFinished } from './library/importer'
 import { saveFailures, retrySave } from './ui/save-errors'
+import { emitLearningEvent } from './memory/events'
+import type { MemoryScope } from './memory/types'
+import { chatBusy } from './chat'
 const PdfReader = defineAsyncComponent(() => import('./components/reader/PdfReader.vue'))
 const MarkdownReader = defineAsyncComponent(() => import('./components/reader/MarkdownReader.vue'))
 const AiPane = defineAsyncComponent(() => import('./components/assistant/AiPane.vue'))
@@ -42,6 +45,10 @@ const ContextMenu = defineAsyncComponent(() => import('./components/layout/Conte
 const ManifoldDoodle = defineAsyncComponent(() => import('./components/layout/ManifoldDoodle.vue'))
 const TranslatePane = defineAsyncComponent(() => import('./components/translate/TranslatePane.vue'))
 const ImportDialog = defineAsyncComponent(() => import('./components/library/ImportDialog.vue'))
+const ChatModePage = defineAsyncComponent(() => import('./components/chat/ChatModePage.vue'))
+const MemoryPage = defineAsyncComponent(() => import('./components/memory/MemoryPage.vue'))
+const chatPage = ref<{ focusPrompt?: () => void }>()
+const memoryPage = ref<{ focusSearch?: () => void }>()
 const props = defineProps<{ startupError?: string }>()
 const { preferences, effectiveAppearance, save: savePreferences } = useSettings()
 
@@ -396,10 +403,10 @@ async function refresh() {
   finally { loading.value = false }
 }
 function searchDocuments() { clearTimeout(queryTimer); queryTimer = setTimeout(refresh, 180) }
-function chooseCategory(value: string) { category.value = value; tagFilter.value = ''; groupFilter.value = ''; closeReader() }
-function chooseTag(value: string) { tagFilter.value = value; groupFilter.value = ''; category.value = 'all'; closeReader() }
+function chooseCategory(value: string) { page.value = 'library'; category.value = value; tagFilter.value = ''; groupFilter.value = ''; closeReader() }
+function chooseTag(value: string) { page.value = 'library'; tagFilter.value = value; groupFilter.value = ''; category.value = 'all'; closeReader() }
 // ---- 分组：侧栏里新建、改名、删除；书通过右键菜单或多选后的「分组」放进去 ----
-function chooseGroup(id: string) { groupFilter.value = id; tagFilter.value = ''; category.value = 'all'; closeReader() }
+function chooseGroup(id: string) { page.value = 'library'; groupFilter.value = id; tagFilter.value = ''; category.value = 'all'; closeReader() }
 /** 正在输入名字的分组：'new' 是新建，其余是改名的那一个。 */
 const groupEditing = ref('')
 const groupName = ref('')
@@ -479,11 +486,35 @@ const libraryShown = ref(true)
 /** 启动时书单还没读完，用户就自己点过「文档库」开关：读完后不再替他收起。 */
 let libraryToggledByUser = false
 function toggleLibrary() {
+  // 在对话模式 / 记忆管理页点文档库：直接回到文档库（顶栏保险处理）。
+  if (page.value !== 'library') { page.value = 'library'; libraryShown.value = true; return }
   if (active.value) { closeReader(); return }
   libraryToggledByUser = true
   libraryShown.value = !libraryShown.value
   if (!libraryShown.value) { clearPicked(); batchTag.value = null }
 }
+
+// ---- 整页视图：对话模式与记忆管理 --------------------------------------------
+type Page = 'library' | 'chat' | 'memory'
+const page = ref<Page>('library')
+const PAGE_TITLES: Record<Exclude<Page, 'library'>, string> = { chat: '对话模式', memory: '记忆管理' }
+const PAGE_ICONS: Record<Exclude<Page, 'library'>, string> = { chat: 'chat-more', memory: 'branch' }
+const settingsVersion = ref(0)
+const chatScope = shallowRef<MemoryScope | null>(null)
+const memoryDocuments = computed(() => documents.value.map(doc => ({ id: doc.id, title: doc.name, kind: doc.kind })))
+function showPage(next: Page) {
+  contextMenu.value = undefined; splitPicker.value = undefined
+  if (next !== 'library') {
+    if (active.value) closeReader()                     // 挂起阅读器、记下阅读位置，标签页保留
+    clearPicked(); batchTag.value = null; detailsOpen.value = false
+    closeLooseCards(); closeHoverTranslation()          // 快速解释 / 划词翻译的浮层不留在新页面上
+    if (query.value) { query.value = ''; void refresh() } // 新页面要用完整的文档列表，不能是搜索结果
+  }
+  page.value = next
+}
+function returnToReading() { const doc = lastActive.value || tabs.value.at(-1)?.doc; if (doc) void openDocument(doc) }
+function openChatWithScope(scope: MemoryScope) { chatScope.value = scope; showPage('chat') }
+function openDocumentById(id: string) { const doc = tabDoc(id) || documents.value.find(item => item.id === id); if (doc) void openDocument(doc) }
 // ---- 加入文档：窗口、拖放与导入队列（排队与进度在 library/importer.ts）----------------
 const importOpen = ref(false)
 const wordConverting = computed(() => importer.items.some(item => item.word && item.status === 'working'))
@@ -632,6 +663,7 @@ function suspendLeaving(next: string[]) {
   }
 }
 async function showDocument(doc: Doc, reload = false) {
+  page.value = 'library'
   const previous = active.value?.id
   const nextVisible = inGroup(doc.id) ? group.value : [doc.id]
   suspendLeaving(nextVisible)
@@ -1123,6 +1155,8 @@ function appContextMenu(event: MouseEvent) {
     items.push({ label: '设置', icon: 'settings', hint: shortcut('settings'), separator: Boolean(target.closest('.reader-pane')), action: () => openSettings() })
   } else {
     items.push({ label: '加入文档', icon: 'plus', hint: shortcut('import'), action: openImport })
+    items.push({ label: '对话模式', icon: 'chat-more', disabled: page.value === 'chat', action: () => showPage('chat') })
+    items.push({ label: '记忆管理', icon: 'branch', disabled: page.value === 'memory', action: () => showPage('memory') })
     items.push({ label: theme.value === 'dark' ? '切换浅色主题' : '切换深色主题', icon: theme.value === 'dark' ? 'sun' : 'moon', action: () => { void toggleTheme() } })
     items.push({ label: '设置', icon: 'settings', hint: shortcut('settings'), separator: true, action: () => openSettings() })
   }
@@ -1575,7 +1609,7 @@ function keydown(event: KeyboardEvent) {
   }
   const binding = shortcutFromEvent(event)
   // 文档库：Ctrl+A 全选，Delete 移除选中的文档（焦点在输入框里时不管）。
-  if (!active.value && !settingsOpen.value && !removeTarget.value && !removeBatch.value && !(event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))) {
+  if (page.value === 'library' && !active.value && !settingsOpen.value && !removeTarget.value && !removeBatch.value && !(event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))) {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.code === 'KeyA' && visibleDocuments.value.length) { event.preventDefault(); pickAll(); return }
     if (event.key === 'Delete' && picked.value.size) { event.preventDefault(); removePicked(); return }
   }
@@ -1607,10 +1641,13 @@ function keydown(event: KeyboardEvent) {
       if (active.value) {
         if (reader.value) reader.value.focusSearch?.()
         else findPendingDocument = active.value.id
-      } else search.value?.focus()
+      } else if (page.value === 'memory') memoryPage.value?.focusSearch?.()
+      else if (page.value === 'chat') chatPage.value?.focusPrompt?.()
+      else search.value?.focus()
       break
     case 'search':
       focusSearchPending = true
+      page.value = 'library'
       libraryShown.value = true
       if (active.value) closeReader()
       else if (search.value) { search.value.focus(); focusSearchPending = false }
@@ -1734,21 +1771,25 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
       <button class="brand" @click="chooseCategory('all')" aria-label="返回文档库"><span class="brand-symbol"><svg width="26" height="26" viewBox="200 130 624 700" aria-hidden="true"><path d="M220 418c118-52 214-44 278 22v372c-66-56-162-66-278-24z" fill="#fff" /><path d="M804 418c-118-52-214-44-278 22v372c66-56 162-66 278-24z" fill="#fff" fill-opacity=".62" /><path d="M512 150c11 92 41 122 133 133-92 11-122 41-133 133-11-92-41-122-133-133 92-11 122-41 133-133z" fill="#fff" /></svg></span><span>阅迁星穹</span></button>
       <button class="import-button" data-tip="加入 PDF / Markdown / Word 文档" :data-tip-key="tipKey('import')" @click="openImport" aria-label="加入文档" aria-haspopup="dialog" :aria-expanded="importOpen"><AppIcon name="plus" :size="18" />{{ importer.running ? (wordConverting ? '正在转换…' : '正在导入…') : '加入文档' }}<kbd v-if="preferences.shortcuts.import">{{ shortcut('import') }}</kbd></button>
       <nav v-liquid-selection="{ radius: 'var(--r-control)' }" class="workspace-nav" aria-label="文档分类">
-        <button :class="{ selected: category === 'all' && !tagFilter && !groupFilter }" @click="chooseCategory('all')"><AppIcon name="library" :size="18" />全部文档<span>{{ documents.length }}</span></button>
-        <button :class="{ selected: category === 'recent' }" @click="chooseCategory('recent')"><AppIcon name="clock" :size="18" />最近阅读</button>
-        <button :class="{ selected: category === 'starred' }" @click="chooseCategory('starred')"><AppIcon name="star" :size="18" />我的收藏<span>{{ starredCount }}</span></button>
+        <button :class="{ selected: page === 'library' && category === 'all' && !tagFilter && !groupFilter }" @click="chooseCategory('all')"><AppIcon name="library" :size="18" />全部文档<span>{{ documents.length }}</span></button>
+        <button :class="{ selected: page === 'library' && category === 'recent' }" @click="chooseCategory('recent')"><AppIcon name="clock" :size="18" />最近阅读</button>
+        <button :class="{ selected: page === 'library' && category === 'starred' }" @click="chooseCategory('starred')"><AppIcon name="star" :size="18" />我的收藏<span>{{ starredCount }}</span></button>
       </nav>
       <div class="tag-heading group-heading"><p class="sidebar-label">分组</p><button type="button" class="group-add" aria-label="新建分组" data-tip="新建分组" @click="editGroup('new')"><AppIcon name="plus" :size="14" /></button></div>
       <nav v-liquid-selection="{ radius: 'var(--r-control)' }" class="tag-nav group-nav" aria-label="文档分组">
         <template v-for="group in groups" :key="group.id">
           <form v-if="groupEditing === group.id" class="group-edit" @submit.prevent="commitGroup"><input v-model="groupName" maxlength="40" aria-label="分组名称" @vue:mounted="({ el }: any) => { el.focus(); el.select() }" @blur="commitGroup" @keydown.esc.stop="groupEditing = ''" /></form>
-          <button v-else :class="{ selected: groupFilter === group.id }" :data-group-id="group.id" @click="chooseGroup(group.id)" @dblclick="editGroup(group.id, group.name)"><AppIcon name="folder" :size="16" />{{ group.name }}<span>{{ groupCount(group.id) }}</span></button>
+          <button v-else :class="{ selected: page === 'library' && groupFilter === group.id }" :data-group-id="group.id" @click="chooseGroup(group.id)" @dblclick="editGroup(group.id, group.name)"><AppIcon name="folder" :size="16" />{{ group.name }}<span>{{ groupCount(group.id) }}</span></button>
         </template>
         <form v-if="groupEditing === 'new'" class="group-edit" @submit.prevent="commitGroup"><input v-model="groupName" maxlength="40" placeholder="分组名称，回车确定" aria-label="新分组的名称" @vue:mounted="({ el }: any) => el.focus()" @blur="commitGroup" @keydown.esc.stop="groupEditing = ''" /></form>
         <p v-else-if="!groups.length" class="tag-empty">点 + 新建，右键文档放进分组。</p>
       </nav>
       <div class="tag-heading"><p class="sidebar-label">标签</p><AppIcon name="tag" :size="14" /></div>
-      <nav v-liquid-selection="{ radius: 'var(--r-control)' }" class="tag-nav" aria-label="文档标签"><button v-for="tag in tags" :key="tag" :class="{ selected: tagFilter === tag }" @click="chooseTag(tag)"><span class="tag-dot"></span>{{ tag }}<span>{{ documents.filter(doc => doc.tags.includes(tag)).length }}</span></button><p v-if="!tags.length" class="tag-empty">可在文档详情中添加标签。</p></nav>
+      <nav v-liquid-selection="{ radius: 'var(--r-control)' }" class="tag-nav" aria-label="文档标签"><button v-for="tag in tags" :key="tag" :class="{ selected: page === 'library' && tagFilter === tag }" @click="chooseTag(tag)"><span class="tag-dot"></span>{{ tag }}<span>{{ documents.filter(doc => doc.tags.includes(tag)).length }}</span></button><p v-if="!tags.length" class="tag-empty">可在文档详情中添加标签。</p></nav>
+      <nav v-liquid-selection="{ radius: 'var(--r-control)' }" class="workspace-nav mode-nav" aria-label="对话与记忆">
+        <button :class="{ selected: page === 'chat' }" :aria-current="page === 'chat' ? 'page' : undefined" data-tip="不打开文档，直接和模型对话，可以带上学习记忆" @click="showPage('chat')"><AppIcon name="chat-more" :size="18" />对话模式</button>
+        <button :class="{ selected: page === 'memory' }" :aria-current="page === 'memory' ? 'page' : undefined" data-tip="查看和管理文档记忆与全局记忆" @click="showPage('memory')"><AppIcon name="branch" :size="18" />记忆管理</button>
+      </nav>
       <div class="sidebar-spacer"></div>
       <div v-if="effectiveAppearance.style === 'sketch'" class="sidebar-doodle" aria-hidden="true"></div>
       <!-- 小钟（计时与闹钟）：在分隔线上面占一整行。 -->
@@ -1771,10 +1812,12 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
 
     <main class="app-main">
       <Transition name="topbar" @before-enter="paneResizeStart($event, true)" @before-leave="paneResizeStart($event, false)" @after-enter="paneResizeEnd" @after-leave="paneResizeEnd" @enter-cancelled="paneResizeEnd($event, true)" @leave-cancelled="paneResizeEnd($event, true)">
-      <header v-show="!chromeCollapsed" class="app-topbar" :class="{ 'with-tabs': tabs.length }" data-glass-interactive="panel">
+      <header v-show="!chromeCollapsed" class="app-topbar" :class="{ 'with-tabs': tabs.length && page === 'library' }" data-glass-interactive="panel">
         <button class="icon-button sidebar-toggle" @click="toggleSidebar" data-tip="显示 / 隐藏侧栏" :data-tip-key="tipKey('sidebar')" aria-label="切换侧栏" :aria-expanded="sidebarOpen"><AppIcon name="panel" :size="18" /></button>
-        <FileTabs v-if="tabs.length" :tabs="fileTabs" :active-id="active?.id" :group="group.length > 1 ? group : []" :visible="paneIds" @select="selectTab" @close="closeTab" @library="toggleLibrary" :library-open="libraryShown" @menu="tabMenu" @drag="tabDrag" @reorder="reorderTabs" />
+        <FileTabs v-if="tabs.length && page === 'library'" :tabs="fileTabs" :active-id="active?.id" :group="group.length > 1 ? group : []" :visible="paneIds" @select="selectTab" @close="closeTab" @library="toggleLibrary" :library-open="libraryShown" @menu="tabMenu" @drag="tabDrag" @reorder="reorderTabs" />
+        <div v-else-if="page !== 'library'" class="breadcrumb page-crumb"><AppIcon :name="PAGE_ICONS[page]" :size="15" /><b>{{ PAGE_TITLES[page] }}</b></div>
         <button v-else class="breadcrumb breadcrumb-toggle" :class="{ open: libraryShown }" :aria-pressed="libraryShown" :data-tip="libraryShown ? '收起文档库，只留桌面' : '打开文档库'" @click="toggleLibrary"><AppIcon name="library" :size="15" /><b>{{ libraryShown ? currentTitle : '文档库' }}</b></button>
+        <button v-if="page !== 'library' && tabs.length" class="page-return" data-tip="回到刚才阅读的文档" @click="returnToReading">返回阅读<span>{{ tabs.length }}</span></button>
         <!-- 右上角只在打开文档时出现：收藏、详情、并排、阅读助手、翻译助手。时钟、主题、收起、全屏、设置都在侧栏左下角。 -->
         <div v-if="active" class="topbar-actions">
           <button class="icon-button" :class="{ 'is-starred': active.starred }" @click="toggleStar(active)" data-tip="收藏文档" aria-label="收藏文档"><AppIcon name="star" :size="18" /></button><button class="icon-button" :class="{ active: detailsOpen }" @click="detailsOpen = !detailsOpen" data-tip="文档详情与标签" aria-label="文档详情与标签" :aria-expanded="detailsOpen"><AppIcon name="tag" :size="18" /></button><button class="icon-button split-toggle" data-split-anchor :class="{ active: splitPicker || splitView }" @click="toggleSplitPicker($event)" data-tip="并排阅读" :data-tip-key="tipKey('split')" aria-label="并排阅读" :aria-expanded="!!splitPicker"><AppIcon name="split" :size="18" /><span v-if="splitView" class="split-count">{{ paneIds.length }}</span></button><button class="ai-toggle" data-tip="阅读助手" :data-tip-key="tipKey('ai')" :class="{ active: aiOpen }" @click="toggleAssistant" :aria-expanded="aiOpen"><ClaudeBurst :size="17" />阅读助手</button>
@@ -1784,7 +1827,7 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
       </Transition>
 
       <Transition name="view">
-      <div v-if="!active && libraryShown" ref="libraryView" class="library-view" :class="{ 'rubber-banding': band.active.value }" key="library" data-reorder-scroll @pointerdown="band.pointerdown">
+      <div v-if="page === 'library' && !active && libraryShown" ref="libraryView" class="library-view" :class="{ 'rubber-banding': band.active.value }" key="library" data-reorder-scroll @pointerdown="band.pointerdown">
         <header class="library-header">
           <div class="library-heading"><h1>{{ currentTitle }}<span class="heading-count">{{ visibleDocuments.length }}</span></h1></div>
           <div class="library-tools">
@@ -1822,6 +1865,12 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
         <div v-if="band.box.value" class="rubber-band-box" :style="{ left: `${band.box.value.left}px`, top: `${band.box.value.top}px`, width: `${band.box.value.width}px`, height: `${band.box.value.height}px` }" aria-hidden="true"></div>
       </div>
 
+      </Transition>
+      <Transition name="view">
+        <ChatModePage v-if="page === 'chat' && !active" ref="chatPage" key="chat" :documents="libraryIndex" :settings-version="settingsVersion" :initial-scope="chatScope" @scope-applied="chatScope = null" @settings="openSettings('ai')" @memory="showPage('memory')" @notify="notify" />
+      </Transition>
+      <Transition name="view">
+        <MemoryPage v-if="page === 'memory' && !active" ref="memoryPage" key="memory" :documents="memoryDocuments" :settings-version="settingsVersion" @settings="openSettings('ai')" @chat="openChatWithScope" @open-document="openDocumentById" @notify="notify" />
       </Transition>
       <Transition name="view">
       <div v-if="stageDoc" v-show="active" class="reading-workspace">
@@ -1884,7 +1933,7 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
       <div v-else-if="removeTarget" class="dialog-backdrop" @click.self="removeTarget = null"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-title"><div class="dialog-icon"><AppIcon name="trash" :size="24" /></div><h2 id="remove-title">从文档库移除？</h2><p>「{{ removeTarget.name }}」的阅读记录与标签会被移除，原文件仍保留在电脑上。</p><div class="dialog-actions"><button @click="removeTarget = null">取消</button><button class="danger-button" @click="removeDocument()">移除文档</button></div></section></div>
     </Transition>
     <Transition name="settings-pop">
-      <SettingsDialog v-if="settingsOpen" :initial-tab="settingsTab" @close="settingsOpen = false" @ai-saved="aiSettingsSaved" />
+      <SettingsDialog v-if="settingsOpen" :initial-tab="settingsTab" @close="settingsOpen = false; settingsVersion++" @ai-saved="aiSettingsSaved" />
     </Transition>
   </div>
 </template>
