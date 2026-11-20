@@ -6,6 +6,7 @@
 import { reactive } from 'vue'
 import { DOCUMENT_PATTERN, WORD_PATTERN } from './kinds.ts'
 import type { Doc } from '../sdk/types.ts'
+import type { OnboardingAnswers, SelfLevel } from '../memory/types.ts'
 
 /** Word 转换走到哪一步：先用 Word / WPS，不行再用 LibreOffice，最后写进文档库。 */
 export type ImportStage = 'office' | 'libreoffice' | 'adding'
@@ -17,22 +18,64 @@ export type ImportItem = {
   startedAt?: number; stageAt?: number; finishedAt?: number
   /** 进入当前步骤时进度条已经走到的位置：换步骤时进度条只往前走。 */
   base?: number
+  /** 学习模式的自评：只有受支持的条目才带；导入成功后据此写入初始学习记忆。 */
+  onboarding?: OnboardingAnswers
 }
 export type ImportOne = (path: string, onStage?: (stage: ImportStage) => void) => Promise<Doc[]>
 
 export const UNSUPPORTED = '不支持这种文件：只能加入 PDF、Markdown 或 Word 文档。'
 export const importer = reactive({ items: [] as ImportItem[], running: false })
 
+// ---- 学习模式：开关、两道四档自评与一句话补充（导入弹窗与拖放共用同一份状态）----
+const LEARNING_KEY = 'kaizhi.import.learning.v1'
+function readLearningEnabled(): boolean {
+  try { return globalThis.localStorage?.getItem(LEARNING_KEY) === '1' } catch { return false }
+}
+export const learning = reactive({
+  enabled: readLearningEnabled(),
+  docLevel: 0 as 0 | SelfLevel,
+  fieldLevel: 0 as 0 | SelfLevel,
+  note: '',
+  /** 最近一批记下了几份；0 = 不显示「已记下」那行。 */
+  recorded: 0,
+})
+/** 学习模式关着，或开着且两题都答了。 */
+export function learningReady(): boolean {
+  return !learning.enabled || (learning.docLevel >= 1 && learning.fieldLevel >= 1)
+}
+/** 开着且答完 → 返回一份答案（source: 'import'，answeredAt: now）；否则 null。不改状态。 */
+export function currentLearningAnswers(now = Date.now()): OnboardingAnswers | null {
+  if (!learning.enabled || !learning.docLevel || !learning.fieldLevel) return null
+  return { docLevel: learning.docLevel, fieldLevel: learning.fieldLevel, note: learning.note.trim().slice(0, 200), answeredAt: now, source: 'import' }
+}
+export function resetLearningAnswers() {
+  learning.docLevel = 0
+  learning.fieldLevel = 0
+  learning.note = ''
+  learning.recorded = 0
+}
+export function markLearningRecorded(count: number) {
+  resetLearningAnswers()
+  learning.recorded = count
+}
+export function setLearningEnabled(value: boolean) {
+  learning.enabled = value
+  if (!value) resetLearningAnswers()
+  try { globalThis.localStorage?.setItem(LEARNING_KEY, value ? '1' : '0') } catch { /* 存不下就只在这次有效 */ }
+}
+
 export function fileName(path: string) { return path.split(/[\\/]/).pop() || path }
 
 /** 排进队列，返回这次新排进去的条目。不支持的文件直接记成失败并写明原因；正在排队的同一个文件不重复排。 */
-export function enqueue(paths: string[]): ImportItem[] {
+export function enqueue(paths: string[], onboarding?: OnboardingAnswers | null): ImportItem[] {
   const added: ImportItem[] = []
   for (const path of new Set(paths.filter(Boolean))) {
     if (importer.items.some(item => item.path === path && (item.status === 'waiting' || item.status === 'working'))) continue
     const supported = DOCUMENT_PATTERN.test(path)
-    importer.items.push({ id: crypto.randomUUID(), path, name: fileName(path), word: WORD_PATTERN.test(path), status: supported ? 'waiting' : 'error', ...(supported ? {} : { error: UNSUPPORTED }) })
-    added.push(importer.items.at(-1)!)
+    const entry: ImportItem = { id: crypto.randomUUID(), path, name: fileName(path), word: WORD_PATTERN.test(path), status: supported ? 'waiting' : 'error', ...(supported ? {} : { error: UNSUPPORTED }) }
+    if (supported && onboarding) entry.onboarding = { ...onboarding }
+    importer.items.push(entry)
+    added.push(entry)
   }
   return added
 }

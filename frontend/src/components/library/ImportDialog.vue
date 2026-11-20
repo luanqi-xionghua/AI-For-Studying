@@ -3,7 +3,8 @@
 // Word 会先转成 PDF，转换时显示进度条；失败时写明原因，并建议先手动另存为 PDF。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppIcon from '../ui/AppIcon.vue'
-import { importer, wordProgress, stageText, failureAdvice, type ImportItem } from '../../library/importer'
+import { importer, wordProgress, stageText, failureAdvice, learning, learningReady, setLearningEnabled, resetLearningAnswers, type ImportItem } from '../../library/importer'
+import OnboardingFields from '../memory/OnboardingFields.vue'
 import { selectDocuments } from '../../sdk'
 import { documentTitle } from '../../library/kinds'
 import type { Doc } from '../../sdk/types'
@@ -13,6 +14,14 @@ const emit = defineEmits<{ close: []; add: [paths: string[]]; open: [doc: Doc] }
 const dropzone = ref<HTMLButtonElement>()
 const choosing = ref(false)
 const chooseError = ref('')
+const learnError = ref(false)
+const learnFields = ref<{ focusFirstUnanswered?: () => void }>()
+
+// 重新作答就收起「已记下」与校验提示。
+watch(() => [learning.docLevel, learning.fieldLevel, learning.note], () => {
+  learnError.value = false
+  if (learning.docLevel || learning.fieldLevel || learning.note) learning.recorded = 0
+})
 
 // 有 Word 正在转换时每 250 毫秒刷新一次：进度条和「已用 N 秒」跟着走。
 const now = ref(Date.now())
@@ -23,10 +32,13 @@ watch(converting, value => {
   if (value) { now.value = Date.now(); ticker = setInterval(() => { now.value = Date.now() }, 250) }
 }, { immediate: true })
 onBeforeUnmount(() => clearInterval(ticker))
+// 关闭弹窗：清空两题与补充，开关状态保留。
+onBeforeUnmount(() => resetLearningAnswers())
 onMounted(() => { void nextTick(() => dropzone.value?.focus()) })
 
 async function choose() {
   if (choosing.value) return
+  if (!learningReady()) { learnError.value = true; void nextTick(() => learnFields.value?.focusFirstUnanswered?.()); return }
   choosing.value = true; chooseError.value = ''
   try { const paths = await selectDocuments(); if (paths.length) emit('add', paths) }
   catch (error: any) { chooseError.value = `无法打开选择文件的窗口：${error?.message || error}` }
@@ -67,11 +79,23 @@ const finished = computed(() => importer.items.length > 0 && !importer.running)
       <p id="import-note" class="import-note">原生支持 PDF 与 Markdown；Word 文档（.doc / .docx）会先转换为 PDF 再加入。导入不会移动或修改原文件。</p>
       <p v-if="chooseError" class="import-choose-error" role="alert">{{ chooseError }}</p>
 
+      <section class="learn-mode" aria-label="学习模式">
+        <label class="learn-switch"><span>开启学习模式</span><input type="checkbox" role="switch" aria-label="开启学习模式" aria-describedby="learn-help" :checked="learning.enabled" @change="setLearningEnabled(($event.target as HTMLInputElement).checked)" /></label>
+        <p id="learn-help" class="import-note">先回答两个小问题，答案会作为这批文档的初始学习记忆，只保存在本机。</p>
+        <template v-if="learning.enabled">
+          <OnboardingFields ref="learnFields" v-model:doc-level="learning.docLevel" v-model:field-level="learning.fieldLevel" v-model:note="learning.note" doc-question="你对要加入的文档内容了解多少？" />
+          <p class="import-note">一次加入多份文档时，这组回答会用在这一批的每一份上。</p>
+          <p v-if="learnError" class="import-choose-error" role="alert">学习模式已开启：请先回答上面两个问题，再选择文件。</p>
+          <p v-else-if="learning.recorded" class="import-note" role="status">已记下这批 {{ learning.recorded }} 份文档的自评。要再加入别的文档，请重新回答。</p>
+        </template>
+      </section>
+
       <ul v-if="importer.items.length" class="import-list" aria-live="polite">
         <li v-for="item in importer.items" :key="item.id" class="import-item" :class="item.status">
           <div class="import-row">
             <AppIcon :name="icon(item)" :size="16" class="import-kind" />
             <span class="import-name" :title="item.path">{{ item.name }}</span>
+            <span v-if="item.onboarding" class="import-learn" data-tip="加入成功后会写入初始学习记忆">学习模式</span>
             <span class="import-state"><AppIcon v-if="item.status === 'done'" name="check" :size="12" />{{ stateLabel(item) }}</span>
           </div>
           <template v-if="item.word && (item.status === 'working' || item.status === 'done')">
@@ -135,4 +159,9 @@ const finished = computed(() => importer.items.length > 0 && !importer.running)
 .import-dialog .dialog-actions .primary-button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) { .import-bar i, .import-drop { transition: none; } }
+
+.learn-mode { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 8px; }
+.learn-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.learn-switch input { margin: 0; }
+.import-learn { flex: none; padding: 1px 7px; border-radius: var(--r-full); font-size: 10.5px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 </style>

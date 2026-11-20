@@ -30,7 +30,7 @@ import SelectionTranslation from './components/translate/SelectionTranslation.vu
 import { startAutoCheck, stopAutoCheck } from './ui/updater'
 import { registerCustomFonts } from './ui/custom-fonts'
 import { covers, loadCovers, setCover, imageCover, pageCover, type Cover } from './library/covers'
-import { importer, enqueue, runQueue, clearFinished } from './library/importer'
+import { importer, enqueue, runQueue, clearFinished, learningReady, currentLearningAnswers, markLearningRecorded } from './library/importer'
 import { saveFailures, retrySave } from './ui/save-errors'
 import { emitLearningEvent } from './memory/events'
 import type { MemoryScope } from './memory/types'
@@ -548,17 +548,24 @@ function applyImported(docs: Doc[], changed: Set<string>) {
  * 排进队列并依次加入。这一批里有 Word（要转换，看进度）或有加不进来的文件（看原因）时打开「加入文档」窗口；
  * 全部成功就关上窗口、打开第一份，和以前一样；有失败的就留着窗口，写明原因。
  */
-async function addPaths(paths: string[]) {
-  const added = enqueue(paths)
+async function addPaths(paths: string[], fromDialog = importOpen.value) {
+  if (fromDialog && !learningReady()) { notify('学习模式已开启：请先回答两个问题，再拖入文件。'); return }
+  const answers = fromDialog ? currentLearningAnswers() : null
+  const added = enqueue(paths, answers)
   if (!added.length) return
+  const recorded = added.filter(item => item.onboarding).length
+  if (recorded) markLearningRecorded(recorded)
   libraryShown.value = true
   if (added.some(item => item.word || item.status === 'error')) importOpen.value = true
   if (importer.running) return // 正在跑的队列会接着处理新排进来的
   const imported: Doc[] = [], changed = new Set<string>()
-  await runQueue(importDocument, docs => {
+  await runQueue(importDocument, (docs, item) => {
     applyImported(docs, changed)
-    for (const doc of docs) if (!imported.some(item => item.id === doc.id)) imported.push(doc)
+    for (const doc of docs) if (!imported.some(entry => entry.id === doc.id)) imported.push(doc)
     query.value = ''; void refresh()
+    if (item.onboarding) {
+      for (const doc of docs) emitLearningEvent({ type: 'onboarding', docId: doc.id, title: doc.name, answers: item.onboarding, importId: item.id, at: Date.now() })
+    }
   })
   if (disposed) return
   await refresh()
