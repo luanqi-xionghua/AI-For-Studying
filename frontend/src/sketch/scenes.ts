@@ -462,7 +462,9 @@ function dijkstra(): Painter {
       c.strokeStyle = env.red; c.lineWidth = 2.8; c.globalAlpha = .6 * env.fade
       c.beginPath()
       reversed.forEach((i, k) => {
-        if (k > shown + 1) return
+        // 画到终点时 k 会到 reversed.length（越界），此时 i 是 undefined；直接跳过，
+        // 否则 raised(i) 会去读 nodes[undefined][0]，让整套背景动画停在这一帧。
+        if (i === undefined || k > shown + 1) return
         const from = raised(reversed[Math.max(0, k - 1)]!), point = k > shown ? mix(from, raised(i), shown - (k - 1)) : raised(i)
         const [x, y] = env.project(...point); if (k) c.lineTo(x, y); else c.moveTo(x, y)
       })
@@ -473,7 +475,7 @@ function dijkstra(): Painter {
     nodes.forEach((_, i) => { const settled = state.when[i]! >= 0 && state.when[i]! < count, [x, y] = env.project(...(settled ? raised(i) : ground(i))); const path = settled ? closed : open; path.moveTo(x + 3, y); path.arc(x, y, 3, 0, TAU) })
     c.strokeStyle = env.ink; c.lineWidth = 1; c.globalAlpha = .24 * env.fade; c.stroke(open)
     c.fillStyle = env.red; c.globalAlpha = .5 * env.fade; c.fill(closed)
-    if (!finished) { const [x, y] = env.project(...raised(state.order[count - 1]!)); c.strokeStyle = env.red; c.globalAlpha = .55 * env.fade; c.beginPath(); c.arc(x, y, 8, 0, TAU); c.stroke() }
+    if (!finished && count > 0) { const [x, y] = env.project(...raised(state.order[count - 1]!)); c.strokeStyle = env.red; c.globalAlpha = .55 * env.fade; c.beginPath(); c.arc(x, y, 8, 0, TAU); c.stroke() }
     label(env, 's', raised(state.source), .55, env.red, -16, -6); label(env, 't', finished ? ground(state.target) : raised(state.target), .55, env.red, 9, 14)
     corner(env, [finished ? `settled ${state.order.length} of ${nodes.length} vertices` : `Q = { ${state.queue[Math.min(count, state.queue.length - 1)]} }`, 'height = d(s, v)'])
   }

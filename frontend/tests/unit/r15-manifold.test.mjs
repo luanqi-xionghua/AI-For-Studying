@@ -1,7 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { MANIFOLDS, MANIFOLD_IDS, THEOREMS, buildMesh, nextManifold } from '../../src/sketch/manifolds.ts'
 import { defaultPreferences, normalizePreferences, preferenceErrors } from '../../src/settings/model.ts'
+
+test('the Dijkstra path animation skips the trailing out-of-range point', async () => {
+  // 画到终点时 k 会到 reversed.length，i 为 undefined；没有这层判断会读 nodes[undefined][0] 并中断背景动画。
+  const source = await readFile(new URL('../../src/sketch/scenes.ts', import.meta.url), 'utf8')
+  assert.ok(source.includes('if (i === undefined || k > shown + 1) return'))
+  assert.ok(source.includes('if (!finished && count > 0)'))
+})
 
 test('every manifold builds a finite wireframe that fits around the unit sphere', () => {
   for (const manifold of MANIFOLDS) {
