@@ -162,3 +162,15 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 6. 移除文档后 `ai.conversations.v1.<docId>`（阅读助手的分块对话）仍会残留，这是既有行为，本次未动。
 7. 第 12.12 节的手工场景仍需人工验收：2026-11-20 已用临时书库（`D:\work\test-data`）和 QtWebEngine 远程调试完成 **55 项界面自动走查**（导航/空态/无预设、阅读→对话→记忆→返回阅读、记忆建立/编辑锁定/清空、导入学习模式校验、四种外观与深浅色切换），截图保存在开发机 `C:\Users\15076\Desktop\dsh workspace\screenshots`。走查发现并修复 2 个界面缺陷（新建空会话被误判为损坏记录、记忆页标签按钮被全局分段控件样式压成竖排）。真实模型端到端（自动/手动记忆总结、用量面板）、原生文件选择框导入、备份导出/恢复仍建议发布前人工验收。
 
+## 对话模式附件 · 会话附属栏 · 记忆写入规则（2026-11-21 起，`feature/chat-attachments`）
+
+依据：`对话模式附件与会话附属栏-实施清单.md`（M0 + M1–M5）。版本保持 **1.1.1**，只在本地分支提交，不推送、不打 tag。
+
+### 基线（M0，2026-11-21 实跑）
+
+- 分支 `feature/chat-attachments`，基于 `52df48e chore(release): 1.1.1`；工作区干净；与桌面快照 `AI-For-Studying-main` 逐文件一致（264 个文件，仅 CRLF/LF 差异）。
+- 前端：`npm.cmd --prefix frontend test` → **344/344 通过**（43 个测试文件，约 12.1s）；`npm.cmd --prefix frontend run build` 通过（`vue-tsc --noEmit` + vite，约 9.5s；`ChatModePage` 24.57 kB / CSS 13.45 kB，`desktop-app` 1,005.57 kB，>500 kB chunk 警告为既有）。
+- 后端：`.venv\Scripts\python -m unittest discover -s backend/tests -t .` → **Ran 32 tests，OK (skipped=1)**（约 11.3s；Word 集成用例需本机 Office）。
+- 冒烟：`backend\main.py --harness-smoke` 退出码 0；`backend\main.py --smoke` 退出码 0（临时数据目录，未碰真实书库）。
+- 日志：`D:\work\logs\m0-*.log`。
+
