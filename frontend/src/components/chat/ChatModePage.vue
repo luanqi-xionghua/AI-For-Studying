@@ -324,6 +324,8 @@ function attachDocuments(ids: string[]) {
   chat.setAttachments(live.id, next)
   const added = next.length - previous
   notifyAttach(added > 0 ? `已附加 ${added} 份文档。` : '没有添加新的文档。')
+  // 关掉弹层后把焦点还给文档库按钮（与 Esc 关闭一致）。
+  void nextTick(() => libraryButton.value?.focus())
   void probeAttachments(live)
 }
 function removeDocument(aid: string) {

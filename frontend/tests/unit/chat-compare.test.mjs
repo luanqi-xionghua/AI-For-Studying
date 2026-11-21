@@ -271,6 +271,19 @@ test('compare T3: one failed document is reported, the others still synthesize',
   assert.match(payload[1].error, /原文件找不到/)
 })
 
+test('compare T3: a missing document among ready ones still synthesizes without crashing', async () => {
+  const w = world()
+  const result = await runAttachmentTurn(compareInput([doc('A'), doc('B', { status: 'missing' }), doc('C')]), w.deps)
+  assert.equal(w.calls.docChat.length, 2)
+  assert.equal(w.calls.stream.length, 1)
+  assert.equal(result.refs.docs.length, 3)
+  assert.equal(result.refs.docs[1].ok, false)
+  assert.match(result.refs.docs[1].error, /原文件找不到/)
+  const payload = payloadOf(w.calls.stream[0])
+  assert.equal(payload[1].status, 'failed')
+  assert.equal(payload[0].status, 'ok')
+})
+
 test('compare T3: when every document fails there is no synthesis call', async () => {
   const w = world({ fail: new Set(['A', 'B', 'C']) })
   const result = await runAttachmentTurn(compareInput([doc('A'), doc('B'), doc('C')]), w.deps)

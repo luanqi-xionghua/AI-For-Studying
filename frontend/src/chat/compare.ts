@@ -331,6 +331,14 @@ async function runCompareDocuments(
   const outcomes: DocOutcome[] = new Array(docs.length)
   const onRecorded = (usage: ChatUsage) => { calls++; addUsage(total, usage) }
   const runnable = docs.map((doc, d) => ({ doc, d })).filter(item => item.doc.status === 'ready')
+  // 不可用的文档（已移除 / 找不到 / 转换中）不发起读取，但要在结果里留一条失败记录。
+  docs.forEach((doc, d) => {
+    if (doc.status === 'ready') return
+    outcomes[d] = {
+      doc, d, label: `文档${d + 1}`, ok: false, note: '', evidence: [],
+      error: doc.error || attachmentStatusText(doc.status, doc.title) || '文档不可用。',
+    }
+  })
 
   await pool(runnable, CHAT_ATTACH_LIMITS.innerConcurrency, async ({ doc, d }) => {
     const label = `文档${d + 1}`
