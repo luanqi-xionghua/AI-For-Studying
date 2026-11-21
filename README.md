@@ -4,7 +4,7 @@
 
 ![阅读助手与翻译助手](docs/images/reading-assistants.jpg)
 
-**下载**：到 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载 `YueqianXingqiong-<版本>-setup.exe`（安装版，推荐）或 `-portable.zip`（免安装版，完整解压后打开；旧版 Release 为单文件 EXE）。支持 Windows 10 / 11 x64，不需要另装 Python、Node 或其他运行环境。使用方法见 [使用手册](USAGE.md)。
+**下载**：到 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases) 页面下载（**最新版排在最上面**，历史版本在同一页往下翻）。安装包是 `YueqianXingqiong-<版本>-setup.exe`（安装版，推荐）或 `-portable.zip`（免安装版，完整解压后打开；旧版 Release 为单文件 EXE）。支持 Windows 10 / 11 x64，不需要另装 Python、Node 或其他运行环境。使用方法见 [使用手册](USAGE.md)。
 
 ## 核心能力
 
@@ -88,7 +88,7 @@
 
 ### 方式一：安装版 / 免安装版（推荐使用）
 
-从 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases/latest) 下载：
+从 [Releases](https://github.com/luanqi-xionghua/AI-For-Studying/releases) 下载（最新版在最上面，历史版本往下翻）：
 
 - **安装版** `YueqianXingqiong-<版本>-setup.exe`：只为当前用户安装（不需要管理员权限），装到 `%LOCALAPPDATA%\Programs\YueqianXingqiong`，在开始菜单和「设置 → 应用」里显示为「阅迁星穹」，可选桌面快捷方式，支持应用内自动更新。
 - **免安装版** `YueqianXingqiong-<版本>-portable.zip`：完整解压后运行文件夹中的 `YueqianXingqiong.exe`，不要从压缩包内启动或只移动 EXE。更新会就地刷新这个文件夹，不写卸载项或快捷方式。旧版单文件用户请从发布页手动迁移一次；书库和设置不用搬。
