@@ -3,7 +3,7 @@ import type { MemoryScope, OnboardingAnswers } from './types.ts'
 
 export type LearningEvent =
   | { type: 'assistant-turn'; docId: string; title: string; conversationId: string; question: string; answer: string; at: number }
-  | { type: 'chat-turn'; scope: MemoryScope; conversationId: string; question: string; answer: string; at: number }
+  | { type: 'chat-turn'; scope: MemoryScope; conversationId: string; question: string; answer: string; at: number; turnId?: string }
   | { type: 'opened'; docId: string; title: string; page: number; pageCount: number; progress: number; at: number }
   | { type: 'reading'; docId: string; title: string; page: number; pageCount: number; progress: number; at: number }
   | { type: 'onboarding'; docId: string; title: string; answers: OnboardingAnswers; importId: string; at: number }

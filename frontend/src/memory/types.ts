@@ -91,6 +91,8 @@ export type MemoryEvent = {
   question: string
   answer: string
   conversationId?: string
+  /** 对话模式的幂等键：同一个 turnId 再次到达（重新回答）时替换原待总结项，不再追加。 */
+  turnId?: string
 }
 
 /** 阅读行为快照：全部是数字，由规则维护，不经过模型。 */

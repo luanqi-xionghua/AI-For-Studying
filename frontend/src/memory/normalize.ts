@@ -148,6 +148,8 @@ export function normalizePending(raw: unknown): MemoryEvent[] {
     }
     const conversationId = cleanLine(item.conversationId, 64)
     if (conversationId) event.conversationId = conversationId
+    const turnId = cleanLine(item.turnId, 64)
+    if (turnId) event.turnId = turnId
     list.push(event)
   }
   return list.slice(-LIMITS.pending)

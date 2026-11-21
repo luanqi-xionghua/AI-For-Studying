@@ -2,9 +2,10 @@
 import { reactive } from 'vue'
 import { NO_PRESET_MESSAGE } from '../ai/settings.mjs'
 import { boundChatHistory, chatTitle, wireMessages } from './history.ts'
+import { learningTargets } from './memory-rule.ts'
 import {
-  CHAT_LIMITS, CHATMODE_VERSION, type ChatMemoryTag, type ChatModeConversation, type ChatModeIndexEntry,
-  type ChatModeMessage, type ChatUsage,
+  CHAT_ATTACH_LIMITS, CHAT_LIMITS, CHATMODE_VERSION, type ChatAttachmentMark, type ChatDocAttachment,
+  type ChatMemoryTag, type ChatModeConversation, type ChatModeIndexEntry, type ChatModeMessage, type ChatUsage,
 } from './types.ts'
 import type { MemoryScope } from '../memory/types.ts'
 import type { ChatStore } from './storage.ts'
@@ -31,6 +32,8 @@ export type SendOptions = {
   /** 这一轮实际生效的范围（书已移除时调用方传 { kind: 'none' }）。 */
   scope: MemoryScope
   injectionFor: (scope: MemoryScope) => Promise<{ text: string; tag: ChatMemoryTag }>
+  /** 这一轮的附件：图片（data URL，只在内存）与草稿文档。缺省 = 没有附件。 */
+  attachments?: { images?: string[]; docs?: ChatDocAttachment[] }
 }
 export type LiveConversation = ChatModeConversation & {
   draft: string
@@ -68,7 +71,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     return state.conversations.get(live.id)!
   }
   function emptyConversation(id: string, scope: MemoryScope = { kind: 'global' }): ChatModeConversation {
-    return { version: CHATMODE_VERSION, id, title: '', createdAt: deps.now(), updatedAt: deps.now(), scope, messages: [] }
+    return { version: CHATMODE_VERSION, id, title: '', createdAt: deps.now(), updatedAt: deps.now(), scope, messages: [], attachments: [] }
   }
   function sortedList(list: ChatModeIndexEntry[]): ChatModeIndexEntry[] {
     return [...list].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, CHAT_LIMITS.conversations)
@@ -150,6 +153,19 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     for (const live of state.conversations.values()) if (live.request) total++
     return total
   }
+  function attachmentMark(images: string[], docs: ChatDocAttachment[]): ChatAttachmentMark | undefined {
+    const mark: ChatAttachmentMark = {}
+    if (images.length) mark.images = images.length
+    if (docs.length) {
+      mark.docs = docs.slice(0, CHAT_ATTACH_LIMITS.docs).map(doc => ({
+        aid: doc.id,
+        source: doc.source,
+        ...(doc.source === 'library' && doc.docId ? { docId: doc.docId } : {}),
+        title: doc.title,
+      }))
+    }
+    return mark.images || mark.docs ? mark : undefined
+  }
   function validate(live: LiveConversation, text: string, options: SendOptions): string | null {
     if (!text.trim()) return '请输入问题。'
     if (text.length > CHAT_LIMITS.question) return '请将单次问题缩短至 16000 字以内。'
@@ -168,19 +184,29 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     const problem = validate(live, regenerate ? (live.messages.filter(message => message.role === 'user').at(-1)?.content || '') : text, options)
     if (problem) { live.error = problem; return }
     live.error = ''
+    // 附件状态在 dispatch 开头取快照：这一轮按它决定「写不写记忆」，中途增删不影响这一轮。
+    const draftImages = options.attachments?.images || []
+    const draftDocs = options.attachments?.docs || []
+    const hasAttachments = draftImages.length > 0 || draftDocs.length > 0 || (live.attachments?.length ?? 0) > 0
     let injection: { text: string; tag: ChatMemoryTag } = { text: '', tag: emptyTag(options.scope.kind) }
     try { injection = await options.injectionFor(options.scope) } catch { /* 取注入失败按没有记忆继续发 */ }
     if (live.request) return
     const connection = options.connection as ChatConnection
     const question = regenerate ? (live.messages.filter(message => message.role === 'user').at(-1)?.content || text) : text
+    const memoryTag: ChatMemoryTag = hasAttachments ? { ...injection.tag, skipped: 'attachments' } : injection.tag
+    let turn: ChatModeMessage
     if (regenerate) {
       if (live.messages.at(-1)?.role === 'assistant') live.messages.pop()
       const user = live.messages.filter(message => message.role === 'user').at(-1)
       if (!user) return
-      user.memory = injection.tag
+      user.memory = memoryTag
+      turn = user
     } else {
-      const user: ChatModeMessage = { id: deps.uuid(), role: 'user', content: text, memory: injection.tag }
-      live.messages.push(user)
+      turn = { id: deps.uuid(), role: 'user', content: text, memory: memoryTag }
+      const mark = attachmentMark(draftImages, draftDocs)
+      if (mark) turn.attach = mark
+      if (draftImages.length) turn.images = [...draftImages]
+      live.messages.push(turn)
     }
     if (!live.title) live.title = chatTitle(question)
     const answer: ChatModeMessage = { id: deps.uuid(), role: 'assistant', content: '', reasoning: '', startedAt: deps.now(), model: connection.model, effort: connection.effort }
@@ -230,8 +256,12 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       live.updatedAt = deps.now()
       await saveNow(live)
       const success = !answer.failed && !answer.stopped && Boolean(answer.content.trim())
-      if (success && options.scope.kind !== 'none') {
-        deps.emit({ type: 'chat-turn', scope: options.scope, conversationId: live.id, question, answer: answer.content.slice(0, 300), at: deps.now() })
+      // 带附件的回合按规则不写学习记忆；文档范围一个事件，由记忆引擎分发到「文档 + 全局」。
+      if (success && learningTargets(options.scope, hasAttachments).length > 0) {
+        deps.emit({
+          type: 'chat-turn', scope: options.scope, conversationId: live.id, question,
+          answer: answer.content.slice(0, 300), at: deps.now(), turnId: turn.id,
+        })
       }
     }
   }

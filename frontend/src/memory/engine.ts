@@ -106,6 +106,8 @@ export function createMemoryEngine(deps: MemoryEngineDeps): MemoryEngine {
   let timer: unknown
   let saveTimer: unknown
   let indexDirty = false
+  /** 全局记忆读取失败：这一次不写全局，避免用空记忆覆盖真实内容。下次读成功会清掉。 */
+  let globalLoadFailed = false
   let activeController: AbortController | undefined
   let lastAutoRunAt = 0
   let busyRetries = 0
@@ -194,9 +196,14 @@ export function createMemoryEngine(deps: MemoryEngineDeps): MemoryEngine {
 
   async function getGlobal(): Promise<GlobalMemory> {
     if (state.global) return state.global
-    try { state.global = await deps.store.loadGlobal() } catch (error) {
+    try {
+      state.global = await deps.store.loadGlobal()
+      globalLoadFailed = false
+    } catch (error) {
+      // 读失败时不缓存空记忆：否则 commitGlobal 会用空记忆覆盖真实的全局记忆。
       state.error = messageOf(error)
-      state.global = emptyGlobalMemory(deps.now())
+      globalLoadFailed = true
+      return emptyGlobalMemory(deps.now())
     }
     return state.global
   }
@@ -245,11 +252,28 @@ export function createMemoryEngine(deps: MemoryEngineDeps): MemoryEngine {
         break
       }
       case 'chat-turn': {
+        // 规则只在引擎这一处落地：文档 A 的记忆 = 一个事件，同时写 A 与全局；两个目标各自 try，互不影响。
+        const at = deps.now()
         if (event.scope.kind === 'doc') {
-          const current = await ensure(event.scope.docId, true, event.scope.title)
-          if (current) await commitDoc(applyEvent(current, event, deps.now()), false)
+          try {
+            const current = await ensure(event.scope.docId, true, event.scope.title)
+            if (current) await commitDoc(applyEvent(current, event, at), false)
+          } catch (error) {
+            state.error = messageOf(error)
+          }
+          try {
+            const global = await getGlobal()
+            if (!globalLoadFailed) await commitGlobal(applyGlobalTurn(global, event, at), false)
+          } catch (error) {
+            state.error = messageOf(error)
+          }
         } else if (event.scope.kind === 'global') {
-          await commitGlobal(applyGlobalTurn(await getGlobal(), event, deps.now()), false)
+          try {
+            const global = await getGlobal()
+            if (!globalLoadFailed) await commitGlobal(applyGlobalTurn(global, event, at), false)
+          } catch (error) {
+            state.error = messageOf(error)
+          }
         }
         break
       }

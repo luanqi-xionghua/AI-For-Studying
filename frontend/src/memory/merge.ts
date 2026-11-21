@@ -48,15 +48,29 @@ export function applyEvent(
   now: number,
 ): DocumentMemory {
   if (event.type === 'assistant-turn' || event.type === 'chat-turn') {
+    const at = cleanTime(event.at) || now
+    const turnId = 'turnId' in event ? cleanLine(event.turnId, 64) : ''
+    // 同一轮的重新回答（turnId 相同）：只替换那一项的 answer / at，不追加、不新增证据、不重复计问题数。
+    if (turnId && memory.pending.some(item => item.turnId === turnId)) {
+      return {
+        ...memory,
+        pending: memory.pending.map(item => item.turnId === turnId
+          ? { ...item, answer: cleanText(event.answer, LIMITS.pendingAnswer), at }
+          : item),
+        updatedAt: now,
+        revision: memory.revision + 1,
+      }
+    }
     const entry: MemoryEvent = {
       id: randomId(),
       kind: event.type,
-      at: cleanTime(event.at) || now,
+      at,
       question: cleanText(event.question, LIMITS.pendingQuestion),
       answer: cleanText(event.answer, LIMITS.pendingAnswer),
     }
     if ('conversationId' in event && event.conversationId) entry.conversationId = cleanLine(event.conversationId, 64)
-    const reading = bumpActiveDay(memory, entry.at)
+    if (turnId) entry.turnId = turnId
+    const reading = bumpActiveDay(memory, at)
     return {
       ...memory,
       pending: pushCapped(memory.pending, entry, LIMITS.pending),
@@ -108,16 +122,29 @@ export function applyEvent(
   }
 }
 
-/** 全局范围的对话问答：进全局待总结队列 + 全局证据。 */
+/** 全局范围的对话问答：进全局待总结队列 + 全局证据。同一个 turnId 再次到达时只替换那一项。 */
 export function applyGlobalTurn(global: GlobalMemory, event: Extract<LearningEvent, { type: 'chat-turn' }>, now: number): GlobalMemory {
+  const at = cleanTime(event.at) || now
+  const turnId = cleanLine(event.turnId, 64)
+  if (turnId && global.pending.some(item => item.turnId === turnId)) {
+    return {
+      ...global,
+      pending: global.pending.map(item => item.turnId === turnId
+        ? { ...item, answer: cleanText(event.answer, LIMITS.pendingAnswer), at }
+        : item),
+      updatedAt: now,
+      revision: global.revision + 1,
+    }
+  }
   const entry: MemoryEvent = {
     id: randomId(),
     kind: 'chat-turn',
-    at: cleanTime(event.at) || now,
+    at,
     question: cleanText(event.question, LIMITS.pendingQuestion),
     answer: cleanText(event.answer, LIMITS.pendingAnswer),
   }
   if (event.conversationId) entry.conversationId = cleanLine(event.conversationId, 64)
+  if (turnId) entry.turnId = turnId
   return {
     ...global,
     pending: pushCapped(global.pending, entry, LIMITS.pending),

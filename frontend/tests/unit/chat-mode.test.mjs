@@ -220,3 +220,141 @@ test('chat storage: freezing drops saves', async () => {
   await store.saveConversation(conversation({ messages: [userMessage('q')] }), '')
   assert.equal(storage.map.has(conversationKey('c1')), true)
 })
+
+const libraryAttachment = { id: 'a1', source: 'library', docId: 'd1', title: '线性代数（第 5 版）', kind: 'pdf', addedAt: 3 }
+const tempAttachment = { id: 'a2', source: 'temp', title: '临时文档 1', kind: 'word', addedAt: 4 }
+
+test('chat storage: attachment descriptors, marks and refs survive a round trip', () => {
+  const loaded = normalizeChatConversation({
+    version: 1, id: 'c1', title: '对比', createdAt: 1, updatedAt: 2, scope: { kind: 'doc', docId: 'd1', title: '线性代数（第 5 版）' },
+    attachments: [libraryAttachment, tempAttachment],
+    customTitle: true,
+    messages: [
+      {
+        id: 'u1', role: 'user', content: '问题',
+        attach: { images: 2, docs: [{ aid: 'a1', source: 'library', docId: 'd1', title: '线性代数（第 5 版）' }] },
+        memory: { kind: 'doc', docId: 'd1', title: '线性代数（第 5 版）', injected: true, chars: 10, skipped: 'attachments' },
+      },
+      {
+        id: 'm1', role: 'assistant', content: '回答',
+        refs: {
+          docs: [{ aid: 'a1', title: '线性代数（第 5 版）', source: 'library', ok: true }, { aid: 'a2', title: '临时文档 1', source: 'temp', ok: false, error: '扫描件没有文字层' }],
+          cites: [{ id: 'S1a2b3c-1', d: 0, p: 212 }, { id: 'S1a2b3c-2', d: 1, l: 40 }],
+        },
+      },
+    ],
+  }, 'c1')
+  assert.equal(loaded.version, 1)
+  assert.equal(loaded.attachments.length, 2)
+  assert.equal(loaded.attachments[0].docId, 'd1')
+  assert.equal(loaded.attachments[1].source, 'temp')
+  assert.equal(loaded.customTitle, true)
+  assert.equal(loaded.messages[0].attach.images, 2)
+  assert.equal(loaded.messages[0].memory.skipped, 'attachments')
+  assert.deepEqual(loaded.messages[1].refs.cites, [{ id: 'S1a2b3c-1', d: 0, p: 212 }, { id: 'S1a2b3c-2', d: 1, l: 40 }])
+  assert.equal(loaded.messages[1].refs.docs[1].error, '扫描件没有文字层')
+})
+
+test('chat storage: an old conversation without the new fields loads with defaults', () => {
+  const loaded = normalizeChatConversation({ version: 1, id: 'c1', title: '旧', messages: [{ id: 'u', role: 'user', content: '问' }] }, 'c1')
+  assert.deepEqual(loaded.attachments, [])
+  assert.equal(loaded.customTitle, undefined)
+  assert.equal(loaded.messages[0].attach, undefined)
+  assert.equal(loaded.messages[0].refs, undefined)
+  assert.equal(loaded.version, 1)
+})
+
+test('chat storage: attachment descriptors are capped, deduplicated and validated', () => {
+  const loaded = normalizeChatConversation({
+    version: 1, id: 'c1', messages: [],
+    attachments: [
+      libraryAttachment,
+      { ...libraryAttachment, id: 'a9' },
+      { id: 'a3', source: 'library', title: '没有 docId', kind: 'pdf', addedAt: 1 },
+      { id: 'a4', source: 'temp', title: '稿', kind: 'docx', addedAt: 1 },
+      { id: 'a5', source: 'temp', title: '临时文档 2', kind: 'pdf', addedAt: 1 },
+      { id: 'a6', source: 'temp', title: '临时文档 3', kind: 'pdf', addedAt: 1 },
+    ],
+  }, 'c1')
+  assert.deepEqual(loaded.attachments.map(item => item.id), ['a1', 'a5', 'a6'])
+  assert.equal(loaded.attachments.length, 3)
+})
+
+test('chat storage: citations are capped at 40 per message and must point at a known document', () => {
+  const cites = Array.from({ length: 60 }, (_, index) => ({ id: `S1a2b3c-${index}`, d: 0, p: index + 1 }))
+  cites.push({ id: 'Sdead-1', d: 5, p: 1 })
+  const refs = normalizeChatConversation({
+    version: 1, id: 'c1', messages: [{ id: 'm1', role: 'assistant', content: '答', refs: { docs: [{ aid: 'a1', title: '书', source: 'library', ok: true }], cites } }],
+  }, 'c1').messages[0].refs
+  assert.equal(refs.cites.length, 40)
+  assert.equal(refs.cites.some(cite => cite.id === 'Sdead-1'), false)
+})
+
+test('chat storage: prepareConversation strips runtime-only fields and anonymises temporary documents', () => {
+  const live = conversation({
+    attachments: [{ id: 'a2', source: 'temp', title: '机密讲义.pdf', kind: 'pdf', addedAt: 1 }],
+    messages: [
+      userMessage('问', {
+        images: ['data:image/png;base64,AAAA'], attach: { images: 1, docs: [{ aid: 'a2', source: 'temp', title: '机密讲义.pdf' }] },
+        memory: { kind: 'global', injected: true, chars: 1, skipped: 'attachments' },
+      }),
+      {
+        id: 'm1', role: 'assistant', content: '答',
+        refs: { docs: [{ aid: 'a2', title: '机密讲义.pdf', source: 'temp', ok: true }], cites: [{ id: 'S1a2b3c-1', d: 0, p: 3 }] },
+        progress: [{ aid: 'a2', status: 'ok' }],
+      },
+    ],
+  })
+  live.draft = '草稿'
+  live.draftImages = ['data:image/png;base64,BBBB']
+  live.request = { controller: new AbortController() }
+  const prepared = prepareConversation(live)
+  const json = JSON.stringify(prepared)
+  assert.equal(json.includes('data:image'), false)
+  assert.equal(json.includes('机密讲义'), false)
+  assert.equal(json.includes('progress'), false)
+  assert.equal(json.includes('草稿'), false)
+  assert.equal(prepared.version, 1)
+  assert.equal(prepared.attachments[0].title, '临时文档 1')
+  assert.equal(prepared.messages[0].attach.docs[0].title, '临时文档 1')
+  assert.equal(prepared.messages[0].attach.images, 1)
+  assert.equal(prepared.messages[1].refs.docs[0].title, '临时文档 1')
+  assert.equal(prepared.messages[0].images, undefined)
+})
+
+test('chat storage: fitConversation drops citations on older answers before dropping messages', () => {
+  const docs = [{ aid: 'a1', title: '书'.repeat(50), source: 'library', ok: true }]
+  const cites = Array.from({ length: 40 }, (_, index) => ({ id: `S1a2b3c-${index}`, d: 0, p: index + 1 }))
+  const messages = Array.from({ length: 24 }, (_, index) => index % 2
+    ? { id: `a${index}`, role: 'assistant', content: 'x'.repeat(4000), refs: { docs, cites } }
+    : userMessage('问'.repeat(1000)))
+  const full = conversation({ messages })
+  const total = new TextEncoder().encode(JSON.stringify(full)).length
+  const fitted = fitConversation(full, total - 1)
+  assert.equal(fitted.messages.length, messages.length)
+  assert.equal(fitted.trimmed, undefined)
+  const assistants = fitted.messages.filter(message => message.role === 'assistant')
+  assert.equal(assistants.at(-1).refs.cites.length, 40)
+  assert.equal(assistants.slice(0, -10).every(message => message.refs.cites.length === 0), true)
+})
+
+test('chat storage: fitConversation still drops the oldest pairs when citations are not enough', () => {
+  const messages = Array.from({ length: 20 }, (_, index) => ({
+    id: `m${index}`, role: index % 2 ? 'assistant' : 'user', content: 'x'.repeat(20000), reasoning: 'y'.repeat(4000),
+  }))
+  const fitted = fitConversation(conversation({ messages }), 60000)
+  assert.equal(fitted.trimmed, true)
+  assert.ok(fitted.messages.length < messages.length)
+  assert.ok(new TextEncoder().encode(JSON.stringify(fitted)).length <= 60000)
+})
+
+test('chat storage: two conversations saved at the same time both survive in the index', async () => {
+  const storage = chatStorage()
+  const store = createChatStore(storage)
+  await Promise.all([
+    store.saveConversation(conversation({ id: 'c1', updatedAt: 2, messages: [userMessage('a')] }), ''),
+    store.saveConversation(conversation({ id: 'c2', updatedAt: 1, messages: [userMessage('b')] }), ''),
+  ])
+  const index = await store.loadIndex()
+  assert.deepEqual(index.list.map(item => item.id).sort(), ['c1', 'c2'])
+})

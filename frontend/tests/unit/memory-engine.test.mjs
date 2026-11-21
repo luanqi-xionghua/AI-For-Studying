@@ -587,3 +587,75 @@ test('engine: a failed write is reported and the memory stays in memory', async 
   const { memory } = await engine.loadDocument('d1')
   assert.equal(memory.pending.length, 1)
 })
+
+const chatTurn = (overrides = {}) => ({
+  type: 'chat-turn', scope: { kind: 'doc', docId: 'd1', title: '书d1' }, conversationId: 'c1',
+  question: '问题', answer: '回答', at: NOW, turnId: 'turn-1', ...overrides,
+})
+
+test('engine: a document-scope chat turn writes the document and the global memory', async () => {
+  const { engine } = makeEngine()
+  await engine.start()
+  emitLearningEvent(chatTurn())
+  await settle()
+  const { memory } = await engine.loadDocument('d1')
+  assert.equal(memory.pending.length, 1)
+  assert.equal(memory.pending[0].turnId, 'turn-1')
+  assert.equal(engine.state.index.docs[0].pending, 1)
+  assert.equal(engine.state.global.pending.length, 1)
+  assert.equal(engine.state.global.pending[0].turnId, 'turn-1')
+  assert.equal(engine.state.global.pending[0].answer, '回答')
+  await engine.flush()
+})
+
+test('engine: replaying the same turnId replaces the pending turn on both sides', async () => {
+  const { engine } = makeEngine()
+  await engine.start()
+  emitLearningEvent(chatTurn())
+  await settle()
+  emitLearningEvent(chatTurn({ answer: '第二版', at: NOW + 1000 }))
+  await settle()
+  const { memory } = await engine.loadDocument('d1')
+  assert.equal(memory.pending.length, 1)
+  assert.equal(memory.pending[0].answer, '第二版')
+  assert.equal(engine.state.global.pending.length, 1)
+  assert.equal(engine.state.global.pending[0].answer, '第二版')
+  await engine.flush()
+})
+
+test('engine: a document written by a newer version still gets the global half of the turn', async () => {
+  const { engine, storage } = makeEngine()
+  storage.map.set(docMemoryKey('d1'), JSON.stringify({ version: 2, docId: 'd1' }))
+  await engine.start()
+  emitLearningEvent(chatTurn())
+  await settle()
+  assert.equal(engine.state.index.docs.length, 0)
+  assert.equal(engine.state.global.pending.length, 1)
+  await engine.flush()
+})
+
+test('engine: a failed global read skips the global write and leaves the stored copy alone', async () => {
+  const { engine, storage } = makeEngine()
+  const read = storage.getSetting
+  storage.getSetting = async key => { if (key === MEMORY_KEYS.global) throw new Error('read failed'); return read(key) }
+  await engine.start()
+  emitLearningEvent(chatTurn())
+  await settle()
+  await engine.flush()
+  const { memory } = await engine.loadDocument('d1')
+  assert.equal(memory.pending.length, 1)
+  assert.equal(storage.map.has(MEMORY_KEYS.global), false)
+  assert.equal(engine.state.error, 'read failed')
+})
+
+test('engine: a global-scope turn is dropped when the global memory cannot be read', async () => {
+  const { engine, storage } = makeEngine()
+  storage.getSetting = async key => { if (key === MEMORY_KEYS.global) throw new Error('read failed'); return null }
+  await engine.start()
+  emitLearningEvent(chatTurn({ scope: { kind: 'global' } }))
+  await settle()
+  await engine.flush()
+  assert.equal(storage.map.has(MEMORY_KEYS.global), false)
+  assert.equal(engine.state.global, null)
+  assert.equal(engine.state.error, 'read failed')
+})

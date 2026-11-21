@@ -115,6 +115,15 @@ test('normalize: helper normalizers tolerate broken structures', () => {
   assert.equal(normalizeReading({ progress: 0.5, maxProgress: 0.2 }).maxProgress, 0.5)
 })
 
+test('normalize: the chat turnId survives a reload and is bounded', () => {
+  const [kept] = normalizePending([{ kind: 'chat-turn', at: 1, question: 'q', answer: 'a', turnId: 'user-1' }])
+  assert.equal(kept.turnId, 'user-1')
+  const [dropped] = normalizePending([{ kind: 'chat-turn', at: 1, question: 'q', answer: 'a', turnId: 42 }])
+  assert.equal(dropped.turnId, undefined)
+  const [trimmed] = normalizePending([{ kind: 'chat-turn', at: 1, question: 'q', answer: 'a', turnId: 'x'.repeat(80) }])
+  assert.equal(trimmed.turnId.length, 64)
+})
+
 test('normalize: storage keys satisfy the backend key rule', () => {
   const uuid = '7c1e5f0a-3b42-4d1c-9a6e-2f8d0b1c4e55'
   const rule = /^[a-zA-Z0-9._-]{1,100}$/

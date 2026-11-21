@@ -358,3 +358,25 @@ test('chat state: the total content limit refuses to grow', async () => {
   assert.equal(conversation.error, '这段对话已经很长，请新建对话继续，以控制上下文与内存。')
   assert.equal(model.calls.length, 0)
 })
+
+test('chat state: the learning event carries the user message id as turnId', async () => {
+  const { chat, events } = make()
+  await chat.load()
+  const conversation = chat.newConversation()
+  await chat.send(conversation.id, '问题', optionsFor())
+  const user = conversation.messages.find(message => message.role === 'user')
+  assert.equal(events.length, 1)
+  assert.equal(events[0].turnId, user.id)
+  assert.equal(events[0].type, 'chat-turn')
+})
+
+test('chat state: regenerating reuses the same turnId so memory replaces instead of appending', async () => {
+  const { chat, events } = make()
+  await chat.load()
+  const conversation = chat.newConversation()
+  await chat.send(conversation.id, '问题', optionsFor())
+  await chat.regenerate(conversation.id, optionsFor())
+  assert.equal(events.length, 2)
+  assert.equal(events[0].turnId, events[1].turnId)
+  assert.equal(events[0].turnId, conversation.messages[0].id)
+})

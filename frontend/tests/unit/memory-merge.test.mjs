@@ -251,3 +251,39 @@ test('merge: pure functions never mutate their input', () => {
   mergeGlobalSummary(global, { summary: 'G', profile: profile(), themes: [] }, { consumedIds: [], sources: [], now: NOW })
   assert.equal(JSON.stringify(global), globalSnapshot)
 })
+
+test('merge: the same turnId replaces the pending answer instead of appending', () => {
+  const event = { type: 'chat-turn', scope: { kind: 'global' }, conversationId: 'c', question: 'q', answer: '第一版', at: NOW, turnId: 'turn-1' }
+  let memory = applyEvent(doc(), { ...event, scope: { kind: 'doc', docId: 'd1', title: '书' } }, NOW)
+  assert.equal(memory.pending.length, 1)
+  assert.equal(memory.evidence.length, 1)
+  assert.equal(memory.reading.questions, 1)
+  memory = applyEvent(memory, { ...event, scope: { kind: 'doc', docId: 'd1', title: '书' }, answer: '第二版', at: NOW + 1000 }, NOW + 1000)
+  assert.equal(memory.pending.length, 1)
+  assert.equal(memory.pending[0].answer, '第二版')
+  assert.equal(memory.pending[0].at, NOW + 1000)
+  assert.equal(memory.pending[0].turnId, 'turn-1')
+  assert.equal(memory.evidence.length, 1, '重新回答不新增证据')
+  assert.equal(memory.reading.questions, 1, '重新回答不重复计问题数')
+  assert.equal(memory.evidence[0].text, 'q')
+})
+
+test('merge: a different turnId keeps both pending turns', () => {
+  const base = { type: 'chat-turn', scope: { kind: 'global' }, conversationId: 'c', question: 'q', at: NOW }
+  let memory = applyEvent(doc(), { ...base, scope: { kind: 'doc', docId: 'd1', title: '书' }, answer: 'a', turnId: 'turn-1' }, NOW)
+  memory = applyEvent(memory, { ...base, scope: { kind: 'doc', docId: 'd1', title: '书' }, answer: 'b', turnId: 'turn-2', at: NOW + 1 }, NOW + 1)
+  assert.equal(memory.pending.length, 2)
+  assert.deepEqual(memory.pending.map(item => item.turnId), ['turn-1', 'turn-2'])
+})
+
+test('merge: the global pending queue also replaces a repeated turnId', () => {
+  const event = { type: 'chat-turn', scope: { kind: 'global' }, conversationId: 'c', question: 'q', answer: '第一版', at: NOW, turnId: 'turn-9' }
+  let global = applyGlobalTurn(emptyGlobalMemory(NOW), event, NOW)
+  assert.equal(global.pending.length, 1)
+  assert.equal(global.evidence.length, 1)
+  global = applyGlobalTurn(global, { ...event, answer: '第二版', at: NOW + 500 }, NOW + 500)
+  assert.equal(global.pending.length, 1)
+  assert.equal(global.pending[0].answer, '第二版')
+  assert.equal(global.pending[0].at, NOW + 500)
+  assert.equal(global.evidence.length, 1, '重新回答不新增全局证据')
+})
