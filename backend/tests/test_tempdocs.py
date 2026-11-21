@@ -191,6 +191,15 @@ class TempDocsTests(unittest.TestCase):
         self.assertEqual(result.get("error"), "TEMP_CANCELLED")
         self.assertFalse((self.root / "chat-temp" / handle).exists())
 
+    def test_shutdown_removes_the_whole_chat_temp_folder(self):
+        pdf = self.write("讲义.pdf", PDF)
+        handle = self.add(pdf)["items"][0]["handle"]
+        folder = self.root / "chat-temp" / handle
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "converted.pdf").write_bytes(PDF)
+        self.temp.shutdown()
+        self.assertFalse((self.root / "chat-temp").exists())
+
     def test_error_messages_never_contain_a_path(self):
         paths = [
             self.write("坏.pdf", b"nope"),

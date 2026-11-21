@@ -545,6 +545,27 @@ test('chat state: attachments are capped at three', async () => {
   assert.deepEqual(conversation.attachments.map(doc => doc.id), ['a0', 'a1', 'a2'])
 })
 
+test('chat state: removing a conversation releases its temporary document handles', async () => {
+  const released = []
+  const { chat } = make({ releaseTemp: async handles => { released.push(...handles) } })
+  await chat.load()
+  const conversation = chat.newConversation()
+  chat.setAttachments(conversation.id, [{ id: 't1', source: 'temp', title: '临时文档 1', kind: 'pdf', addedAt: 1 }])
+  conversation.runtime.set('t1', { status: 'ready', handle: 'h1', name: '机密.pdf' })
+  await chat.remove(conversation.id)
+  assert.deepEqual(released, ['h1'])
+})
+
+test('chat state: removing a conversation without temporary documents does not call releaseTemp', async () => {
+  const released = []
+  const { chat } = make({ releaseTemp: async handles => { released.push(...handles) } })
+  await chat.load()
+  const conversation = chat.newConversation()
+  chat.setAttachments(conversation.id, [{ id: 'l1', source: 'library', docId: 'd1', title: '线代', kind: 'pdf', addedAt: 1 }])
+  await chat.remove(conversation.id)
+  assert.deepEqual(released, [])
+})
+
 test('chat state: renaming a conversation that is not loaded yet loads it first', async () => {
   const store = fakeStore({ version: 1, activeId: 'active', list: [
     { id: 'active', title: '当前', createdAt: 2, updatedAt: 2, scope: { kind: 'global' }, count: 2 },
