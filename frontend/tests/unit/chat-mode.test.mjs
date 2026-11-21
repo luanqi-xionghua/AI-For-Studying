@@ -75,6 +75,18 @@ test('chat history: older turns that carried images get a text marker, the lates
   assert.equal(wire[2].content, '新问')
 })
 
+test('chat history: old answers go back to the model as plain citations, not source ids', () => {
+  const wire = wireMessages(conversation({ messages: [
+    userMessage('旧问'),
+    {
+      id: 'a1', role: 'assistant', content: '结论 [S1a2b3c-1] 和 [Sfffffff-9]',
+      refs: { docs: [{ aid: 'a1', title: '线代', source: 'library', ok: true }], cites: [{ id: 'S1a2b3c-1', d: 0, p: 3 }] },
+    },
+    userMessage('新问'),
+  ] }))
+  assert.equal(wire[1].content, '结论 〔《线代》第 3 页〕 和 [Sfffffff-9]')
+})
+
 const presets = [
   { id: 'a', name: '主力', provider: 'deepseek', baseUrl: 'https://api.deepseek.com', protocol: 'chat', model: 'deepseek-v4-pro', effort: 'high', fast: false },
   { id: 'b', name: '省钱', provider: 'deepseek', baseUrl: 'https://api.deepseek.com', protocol: 'chat', model: 'deepseek-flash', effort: 'none', fast: false },

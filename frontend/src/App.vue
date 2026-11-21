@@ -101,6 +101,10 @@ function aiDocument(panel: AiPanel) { const doc = tabDoc(followedId(panel)); ret
 function aiAlternatives(panel: AiPanel) { const id = followedId(panel); return panel.doc ? [] : stagePaneIds.value.filter(item => sourceId(item) !== sourceId(id)).map(item => tabDoc(item)).filter(Boolean).map(doc => ({ id: doc!.id, title: doc!.name })) }
 function switchAiDocument(panel: AiPanel, id: string) { if (!panel.doc) followDoc.value = id }
 const libraryIndex = computed(() => documents.value.map(doc => ({ id: doc.id, title: doc.name })))
+// 对话模式的文档库附件选择：多带类型、页数与原文件状态（记忆范围选择器仍用 libraryIndex）。
+const chatDocuments = computed(() => documents.value.map(doc => ({
+  id: doc.id, title: doc.name, kind: doc.kind, size: doc.size, pageCount: doc.pageCount, sourceMissing: doc.sourceMissing === true,
+})))
 async function openConversationAt(target: { documentId: string; conversationId: string }) {
   const shown = stagePaneIds.value.find(id => sourceId(id) === target.documentId)
   const doc = (shown && tabDoc(shown)) || tabs.value.find(tab => tab.doc.id === target.documentId)?.doc || documents.value.find(item => item.id === target.documentId)
@@ -1902,7 +1906,7 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
 
       </Transition>
       <Transition name="view">
-        <ChatModePage v-if="page === 'chat' && !active" ref="chatPage" key="chat" :documents="libraryIndex" :settings-version="settingsVersion" :initial-scope="chatScope" @scope-applied="chatScope = null" @settings="openSettings('ai')" @memory="showPage('memory')" @notify="notify" />
+        <ChatModePage v-if="page === 'chat' && !active" ref="chatPage" key="chat" :documents="libraryIndex" :library-docs="chatDocuments" :settings-version="settingsVersion" :initial-scope="chatScope" @scope-applied="chatScope = null" @settings="openSettings('ai')" @memory="showPage('memory')" @notify="notify" />
       </Transition>
       <Transition name="view">
         <MemoryPage v-if="page === 'memory' && !active" ref="memoryPage" key="memory" :documents="memoryDocuments" :settings-version="settingsVersion" @settings="openSettings('ai')" @chat="openChatWithScope" @open-document="openDocumentById" @notify="notify" />

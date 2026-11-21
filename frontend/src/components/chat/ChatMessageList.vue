@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { LiveConversation } from '../../chat/state.ts'
+import { citationCount, citationGroups, renderCitations } from '../../chat/citations.ts'
 import { relativeTime } from '../../memory/prompts.ts'
 import MarkdownAnswer from '../ui/MarkdownAnswer.vue'
 import AppIcon from '../ui/AppIcon.vue'
@@ -45,6 +46,23 @@ function toggleThinking(id: string) {
   expanded.value = next
 }
 function copy(text: string) { emit('copy', text) }
+const openRefs = ref(new Set<string>())
+function toggleRefs(id: string) {
+  const next = new Set(openRefs.value)
+  if (next.has(id)) next.delete(id); else next.add(id)
+  openRefs.value = next
+}
+/** 回答正文里的 [sourceId] 渲染成「〔《书名》第 N 页〕」；认不出的 id 原样保留。 */
+function rendered(message: any) { return renderCitations(message.content, message.refs) }
+function messageTitle(aid: string, message: any) {
+  return (message.refs?.docs || []).find((doc: any) => doc.aid === aid)?.title || '文档'
+}
+function progressIcon(status: string) { return status === 'ok' ? '✓' : status === 'failed' ? '✗' : '…' }
+function tokenCount(value: number) { return value < 1000 ? String(value) : value < 10000 ? `${(value / 1000).toFixed(1)}k` : `${Math.round(value / 1000)}k` }
+function usageText(usage: any) {
+  const calls = usage.calls ? `${usage.calls} 次模型调用 · ` : ''
+  return `${calls}输入 ${tokenCount(usage.input || 0)} / 输出 ${tokenCount(usage.output || 0)}${usage.estimated ? '（估算）' : ''}`
+}
 function nearBottom() { const element = list.value; return !element || element.scrollHeight - element.scrollTop - element.clientHeight < 80 }
 let follow = true
 function onScroll() { if (!list.value) return; follow = nearBottom(); if (props.conversation) props.conversation.scrollTop = list.value.scrollTop }
@@ -82,6 +100,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         <div v-if="message.images?.length" class="chat-thumbs">
           <img v-for="(image, index) in message.images" :key="index" :src="image" :alt="`第 ${index + 1} 张图片`" />
         </div>
+        <div v-if="message.attach?.docs?.length" class="chat-doc-marks">
+          <span v-for="doc in message.attach.docs" :key="doc.aid" class="chat-doc-mark"><AppIcon name="doc" :size="11" />{{ doc.title }}</span>
+        </div>
         <div class="chat-bubble" @click="copy(message.content)">{{ message.content }}</div>
         <div class="chat-turn-meta">
           <span>{{ memoryLabel(message.memory) }}</span>
@@ -95,12 +116,30 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           {{ message.finishedAt ? `已思考 ${thinkingSeconds(message)}s` : `思考中… ${thinkingSeconds(message)}s` }}
         </button>
         <pre v-if="message.reasoning && expanded.has(message.id)" class="thinking-body">{{ message.reasoning }}</pre>
-        <MarkdownAnswer v-if="message.content" :content="message.content" :finished="Boolean(message.finishedAt)" :dark="dark" :appearance="style" />
+        <div v-if="message.progress?.length" class="doc-progress" aria-label="附件检索进度">
+          <span v-for="item in message.progress" :key="item.aid" class="doc-progress-item" :class="item.status">
+            <span class="doc-progress-icon" aria-hidden="true">{{ progressIcon(item.status) }}</span>
+            {{ messageTitle(item.aid, message) }}<template v-if="item.status === 'ok' && item.evidence"> · 查阅 {{ item.evidence }} 段</template><template v-else-if="item.note">：{{ item.note }}</template>
+          </span>
+        </div>
+        <MarkdownAnswer v-if="message.content" :content="rendered(message)" :finished="Boolean(message.finishedAt)" :dark="dark" :appearance="style" />
+        <div v-if="citationCount(message.refs)" class="chat-refs">
+          <button type="button" class="text-button" aria-label="展开或收起参考原文" :aria-expanded="openRefs.has(message.id)" @click="toggleRefs(message.id)">
+            参考原文 · {{ citationCount(message.refs) }} 段 {{ openRefs.has(message.id) ? '▴' : '▾' }}
+          </button>
+          <div v-if="openRefs.has(message.id)" class="refs-body">
+            <section v-for="group in citationGroups(message.refs)" :key="group.doc.aid">
+              <h4>{{ group.doc.title }}</h4>
+              <p v-for="item in group.items" :key="item.cite.id">{{ item.label }}<template v-if="item.text"> · {{ item.text }}</template></p>
+            </section>
+          </div>
+        </div>
         <p v-if="message.stopped" class="chat-flag">已停止</p>
         <p v-if="message.failed" class="chat-flag error">未完成{{ message.error ? `：${message.error}` : '' }}</p>
         <div class="chat-turn-meta">
           <button v-if="message.content" type="button" class="text-button" aria-label="复制回答" data-tip="复制回答" @click="copy(message.content)">复制回答</button>
           <button v-if="!props.busy && message === lastAssistant" type="button" class="text-button" aria-label="重新生成" data-tip="重新生成" @click="emit('regenerate')">{{ message.failed ? '重试' : '重新生成' }}</button>
+          <span v-if="message.usage" class="chat-usage">{{ usageText(message.usage) }}</span>
           <span class="chat-model">{{ message.model || '' }}<template v-if="message.effort"> · {{ message.effort }}</template></span>
           <span class="chat-time">{{ formatTime(message.finishedAt || message.startedAt) }}</span>
         </div>
@@ -127,6 +166,18 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 .chat-bubble { max-width: min(82%, 640px); padding: 9px 13px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 12%, var(--surface, var(--fill-1))); font-size: 13.5px; line-height: 1.75; color: var(--control-ink, var(--ink)); white-space: pre-wrap; overflow-wrap: anywhere; cursor: default; }
 .chat-thumbs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .chat-thumbs img { width: 56px; height: 56px; object-fit: cover; border: 1px solid var(--hairline); border-radius: var(--r-control); }
+.chat-doc-marks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.chat-doc-mark { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--hairline); border-radius: var(--r-full, 999px); background: var(--frost, var(--fill-2)); font-size: 11px; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-progress { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
+.doc-progress-item { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.doc-progress-item.ok { color: var(--accent); }
+.doc-progress-item.failed { color: var(--danger); }
+.doc-progress-icon { width: 12px; text-align: center; }
+.chat-refs { display: flex; flex-direction: column; gap: 4px; }
+.refs-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; border: 1px solid var(--hairline); border-radius: var(--r-md); background: color-mix(in srgb, var(--ink) 3%, transparent); font-size: 11.5px; line-height: 1.7; color: var(--muted); }
+.refs-body h4 { margin: 0; font-size: 12px; color: var(--control-ink, var(--ink)); }
+.refs-body p { margin: 2px 0 0; }
+.chat-usage { color: var(--muted); }
 .chat-turn-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
 .chat-turn.user .chat-turn-meta { justify-content: flex-end; }
 .thinking-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 0; border-radius: var(--r-control); background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--muted); font-size: 11.5px; cursor: pointer; }

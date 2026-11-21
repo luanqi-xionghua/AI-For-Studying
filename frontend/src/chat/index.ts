@@ -20,10 +20,21 @@ export const chat = createChatState({
   emit: emitLearningEvent,
   reportFailure: reportSaveFailure,
   streamChat: async options => (await import('../ai/providers.mjs')).streamChat(options),
-  // 带附件回合走 chat/compare.ts；第一条提问才需要，所以懒加载（首屏不拉文档管道）。
+  // 带附件回合走 chat/compare.ts；文档管道（pdf.js）只在实际打开文档时才加载。
   runAttachmentTurn: async (input: any) => {
     const [{ runAttachmentTurn }, { streamChat }] = await Promise.all([import('./compare.ts'), import('../ai/providers.mjs')])
-    return runAttachmentTurn(input, { streamChat, recordUsage, estimateTokens, now: () => Date.now() })
+    return runAttachmentTurn(input, {
+      streamChat,
+      streamDocumentChat: async (options: any, document: any, seed: any) =>
+        (await import('../ai/document-chat.mjs')).streamDocumentChat(options, document, seed),
+      openSource: async (descriptor: any, snapshot: any, signal: AbortSignal) =>
+        (await import('../document/ai-context.mjs')).openAiContext(descriptor, snapshot, signal),
+      createSession: async (context: any, descriptor: any, limits: any, vision: boolean, onEvidence: any, signal: AbortSignal) =>
+        (await import('../document/session.mjs')).createDocumentSession(context, descriptor, limits, vision, onEvidence, signal),
+      recordUsage,
+      estimateTokens,
+      now: () => Date.now(),
+    })
   },
   now: () => Date.now(),
   uuid: () => crypto.randomUUID(),

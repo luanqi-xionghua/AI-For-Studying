@@ -4,9 +4,10 @@ import { chat } from '../../chat'
 import { loadChatChoice, resolveChatChoice, saveChatChoice, type ResolvedChatChoice } from '../../chat/choice.ts'
 import { wireMessages } from '../../chat/history.ts'
 import { loadRailPreference, railRows, saveRailPreference, type ChatRailRow } from '../../chat/rail.ts'
-import { attachAvailability, attachmentContextTokens } from '../../chat/attachments.ts'
+import { attachAvailability, attachmentContextTokens, friendlyDocError, type PickableDoc } from '../../chat/attachments.ts'
 import { addImageToDraft, imageFilesFrom, toDataUrl } from '../../chat/images.ts'
-import { CHAT_ATTACH_LIMITS, type ChatModelChoice } from '../../chat/types.ts'
+import { CHAT_ATTACH_LIMITS, type ChatDocAttachment, type ChatModelChoice } from '../../chat/types.ts'
+import type { ChatDocRuntime, LiveConversation } from '../../chat/state.ts'
 import { getModel } from '../../ai/providers.mjs'
 import { loadAiSettings, NO_PRESET_MESSAGE } from '../../ai/settings.mjs'
 import { estimateTokens } from '../../ai/workspace'
@@ -16,6 +17,7 @@ import { relativeTime } from '../../memory/prompts.ts'
 import MemoryScopePicker from './MemoryScopePicker.vue'
 import ChatConversationRail from './ChatConversationRail.vue'
 import ChatAttachmentBar from './ChatAttachmentBar.vue'
+import ChatDocumentPicker from './ChatDocumentPicker.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import ChatComposer from './ChatComposer.vue'
 import AppIcon from '../ui/AppIcon.vue'
@@ -23,6 +25,7 @@ import ConfirmDialog from '../ui/ConfirmDialog.vue'
 
 const props = defineProps<{
   documents: { id: string; title: string }[]
+  libraryDocs?: PickableDoc[]
   settingsVersion: number
   initialScope?: MemoryScope | null
 }>()
@@ -37,6 +40,8 @@ const memoryState = shallowRef<any>(undefined)
 const composer = ref<{ focus?: () => void }>()
 const rail = ref<{ focusSearch?: () => void; focusActive?: () => void }>()
 const imageInput = ref<HTMLInputElement>()
+const libraryButton = ref<HTMLButtonElement>()
+const pickerOpen = ref(false)
 const attachNotice = ref('')
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
 const confirmRemove = ref<{ id: string; title: string } | null>(null)
@@ -85,14 +90,19 @@ const vision = computed(() => {
   return getModel(current.provider, current.model)?.vision !== false
 })
 const modelName = computed(() => resolved.value?.model || '')
+const EMPTY_RUNTIME = new Map<string, ChatDocRuntime>()
+const attachments = computed(() => conversation.value?.attachments || [])
+const runtimeMap = computed(() => conversation.value?.runtime || EMPTY_RUNTIME)
+const docsCount = computed(() => attachments.value.length)
+const attachedDocIds = computed(() => attachments.value.filter(doc => doc.source === 'library' && doc.docId).map(doc => doc.docId as string))
 const availability = computed(() => attachAvailability({
   busy: Boolean(currentBusy.value),
   hasPreset: Boolean(resolved.value),
   vision: vision.value,
   modelName: modelName.value,
   images: draftImages.value.length,
-  docs: conversation.value?.attachments?.length || 0,
-  libraryEmpty: props.documents.length === 0,
+  docs: docsCount.value,
+  libraryEmpty: !(props.libraryDocs?.length),
 }))
 const contextUsed = computed(() => {
   const messages = conversation.value ? wireMessages(conversation.value) : []
@@ -157,7 +167,7 @@ function connectionOptions() {
     ? { provider: resolved.value.provider, baseUrl: resolved.value.baseUrl, protocol: resolved.value.protocol, model: resolved.value.model, effort: resolved.value.effort }
     : null
   const reason = resolved.value ? undefined : (settings.value?.presets?.length ? '对话模式选的预设没有选模型：请在 设置 → AI 里给它选一个模型。' : NO_PRESET_MESSAGE)
-  return { connection, reason, scope: effectiveScope.value, injectionFor }
+  return { connection, reason, scope: effectiveScope.value, injectionFor, vision: vision.value, documentLimits: settings.value?.documentLimits }
 }
 function focus() { void composer.value?.focus?.() }
 
@@ -169,6 +179,7 @@ onMounted(async () => {
   const current = chat.current()
   if (!current.loaded) await chat.open(current.id)
   await ensureMemory()
+  void probeAttachments(current)
   if (!appliedInitial.value && props.initialScope) applyInitialScope()
   focus()
 })
@@ -237,6 +248,118 @@ function removeAllImages() {
   if (!current || current.request) return
   chat.setDraftImages(current.id, [])
 }
+
+function libraryInfo(docId?: string) {
+  return props.libraryDocs?.find(doc => doc.id === docId)
+}
+function noTextMessage(title: string) {
+  return `《${title}》是扫描件、没有文字层，当前模型不支持图片：请换识图模型。`
+}
+/** 打开一次文档，检查加密与「有没有文字层」；加密的时报错文案由 friendlyDocError 统一转写。 */
+async function probeDocument(doc: ChatDocAttachment): Promise<ChatDocRuntime> {
+  const { openAiContext } = await import('../../document/ai-context.mjs')
+  const controller = new AbortController()
+  const resource = await openAiContext({ id: doc.docId, kind: doc.kind, title: doc.title, passwordId: doc.docId }, { page: 1 }, controller.signal)
+  try {
+    if (!resource.context.pdf) return { status: 'ready' }
+    const page = await resource.context.pdf.getPage(1)
+    const content = await page.getTextContent()
+    const hasText = (content.items || []).some((item: any) => typeof item?.str === 'string' && item.str.trim())
+    if (hasText) return { status: 'ready' }
+    return vision.value
+      ? { status: 'ready', noText: true }
+      : { status: 'error', noText: true, error: noTextMessage(doc.title) }
+  } finally {
+    try { await resource.close?.() } catch { /* 已关闭 */ }
+  }
+}
+async function probeAttachment(live: LiveConversation, doc: ChatDocAttachment) {
+  if (doc.source !== 'library') { live.runtime.set(doc.id, { status: 'expired' }); return }
+  const info = libraryInfo(doc.docId)
+  if (!info) { live.runtime.set(doc.id, { status: 'removed' }); return }
+  if (info.sourceMissing) { live.runtime.set(doc.id, { status: 'missing' }); return }
+  live.runtime.set(doc.id, { status: 'preparing' })
+  try {
+    live.runtime.set(doc.id, await probeDocument(doc))
+  } catch (error) {
+    live.runtime.set(doc.id, { status: 'error', error: friendlyDocError(error, doc.title) })
+  }
+}
+async function probeAttachments(live: LiveConversation | null = conversation.value) {
+  if (!live) return
+  for (const doc of live.attachments || []) {
+    const runtime = live.runtime.get(doc.id)
+    if (runtime && runtime.status !== 'missing' && runtime.status !== 'removed') continue
+    await probeAttachment(live, doc)
+  }
+}
+function openPicker() {
+  if (availability.value.library.disabled) { notifyAttach(availability.value.library.tip); return }
+  pickerOpen.value = true
+}
+function closePicker() {
+  pickerOpen.value = false
+  void nextTick(() => libraryButton.value?.focus())
+}
+function attachDocuments(ids: string[]) {
+  const live = conversation.value
+  pickerOpen.value = false
+  if (!live) return
+  const previous = (live.attachments || []).length
+  const next = [...(live.attachments || [])]
+  for (const id of ids) {
+    if (next.length >= CHAT_ATTACH_LIMITS.docs) break
+    if (next.some(doc => doc.source === 'library' && doc.docId === id)) continue
+    const info = libraryInfo(id)
+    if (!info || info.sourceMissing) continue
+    next.push({
+      id: crypto.randomUUID(),
+      source: 'library',
+      docId: id,
+      title: (info.title || '文档').slice(0, CHAT_ATTACH_LIMITS.attachTitle),
+      kind: info.kind,
+      addedAt: Date.now(),
+    })
+  }
+  chat.setAttachments(live.id, next)
+  const added = next.length - previous
+  notifyAttach(added > 0 ? `已附加 ${added} 份文档。` : '没有添加新的文档。')
+  void probeAttachments(live)
+}
+function removeDocument(aid: string) {
+  const live = conversation.value
+  if (!live || live.request) return
+  live.runtime.delete(aid)
+  chat.setAttachments(live.id, (live.attachments || []).filter(doc => doc.id !== aid))
+}
+
+// 模型在识图 / 不识图之间切换时，「扫描件」的状态要跟着变。
+watch(vision, () => {
+  const live = conversation.value
+  if (!live) return
+  for (const doc of live.attachments || []) {
+    const runtime = live.runtime.get(doc.id)
+    if (!runtime?.noText) continue
+    live.runtime.set(doc.id, vision.value
+      ? { status: 'ready', noText: true }
+      : { status: 'error', noText: true, error: noTextMessage(doc.title) })
+  }
+})
+// 文档在文档库里被移除 / 找回时，chip 的状态跟着更新。
+watch(() => (props.libraryDocs || []).map(doc => `${doc.id}:${doc.sourceMissing ? 1 : 0}`).join(','), () => {
+  const live = conversation.value
+  if (!live) return
+  for (const doc of live.attachments || []) {
+    if (doc.source !== 'library') continue
+    const runtime = live.runtime.get(doc.id)
+    if (runtime?.status === 'preparing') continue
+    const info = libraryInfo(doc.docId)
+    if (!info) live.runtime.set(doc.id, { status: 'removed' })
+    else if (info.sourceMissing) live.runtime.set(doc.id, { status: 'missing' })
+    else if (runtime?.status === 'removed' || runtime?.status === 'missing') { live.runtime.delete(doc.id); void probeAttachment(live, doc) }
+  }
+})
+watch(() => conversation.value?.id, () => { void probeAttachments() })
 async function send(text: string) {
   const current = chat.current()
   if (!current) return
@@ -353,21 +476,53 @@ defineExpose({ focusPrompt })
           @images="addImages"
         >
           <template #attachments>
-            <ChatAttachmentBar :images="draftImages" :busy="Boolean(currentBusy)" :vision="vision" :model-name="modelName" @remove="removeImage" @remove-all="removeAllImages" />
+            <ChatAttachmentBar
+              :images="draftImages"
+              :docs="attachments"
+              :runtime="runtimeMap"
+              :busy="Boolean(currentBusy)"
+              :vision="vision"
+              :model-name="modelName"
+              @remove="removeImage"
+              @remove-all="removeAllImages"
+              @remove-doc="removeDocument"
+            />
           </template>
           <template #scope>
             <MemoryScopePicker up :scope="effectiveScope" :documents="props.documents" :memory-ids="memoryIds" :global-has-content="globalHasContent" :disabled="Boolean(currentBusy)" @update:scope="applyScope" @manage="emit('memory')" />
           </template>
           <template #attach>
-            <button
-              type="button"
-              class="attach-button"
-              :aria-disabled="availability.image.disabled ? 'true' : undefined"
-              aria-label="添加图片（也可以 Ctrl+V 粘贴）"
-              :data-tip="availability.image.tip"
-              @click="pickImages"
-            ><AppIcon name="image" :size="16" /></button>
-            <input ref="imageInput" class="attach-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple tabindex="-1" aria-hidden="true" @change="pickImagesFromInput" />
+            <div class="attach-host">
+              <button
+                type="button"
+                class="attach-button"
+                :aria-disabled="availability.image.disabled ? 'true' : undefined"
+                aria-label="添加图片（也可以 Ctrl+V 粘贴）"
+                :data-tip="availability.image.tip"
+                @click="pickImages"
+              ><AppIcon name="image" :size="16" /></button>
+              <input ref="imageInput" class="attach-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple tabindex="-1" aria-hidden="true" @change="pickImagesFromInput" @click="pickerOpen = false" />
+            </div>
+            <div class="attach-host">
+              <button
+                ref="libraryButton"
+                type="button"
+                class="attach-button"
+                :aria-disabled="availability.library.disabled ? 'true' : undefined"
+                aria-label="从文档库选择文档（本会话有效，最多 3 份）"
+                :data-tip="availability.library.tip"
+                @click="openPicker"
+              ><AppIcon name="library" :size="16" /></button>
+              <ChatDocumentPicker
+                v-if="pickerOpen"
+                :documents="props.libraryDocs || []"
+                :attached-ids="attachedDocIds"
+                :remaining="Math.max(0, CHAT_ATTACH_LIMITS.docs - docsCount)"
+                :limit="CHAT_ATTACH_LIMITS.docs"
+                @pick="attachDocuments"
+                @close="closePicker"
+              />
+            </div>
           </template>
         </ChatComposer>
       </div>
@@ -402,4 +557,5 @@ defineExpose({ focusPrompt })
 .attach-button[aria-disabled="true"] { opacity: .45; cursor: default; }
 .attach-button[aria-disabled="true"]:hover { background: none; color: var(--muted); }
 .attach-file { display: none; }
+.attach-host { position: relative; display: inline-flex; }
 </style>

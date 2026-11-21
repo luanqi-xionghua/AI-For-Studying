@@ -1,5 +1,6 @@
 /** 对话模式的历史裁剪、请求消息提取与标题生成。 */
 import { CHAT_LIMITS, type ChatModeConversation } from './types.ts'
+import { plainCitations } from './citations.ts'
 
 /** 标题：压缩空白、去首尾；超过 28 字取前 27 字加省略号。不调模型。 */
 export function chatTitle(question: string): string {
@@ -9,7 +10,8 @@ export function chatTitle(question: string): string {
 
 /**
  * 随请求发出的消息：只取 role / content，跳过失败的助手消息与空内容。
- * 历史里带过图片的旧用户消息只发文字，末尾补一句「曾附 N 张图片」——图片本身不随历史重发。
+ * - 历史里带过图片的旧用户消息只发文字，末尾补一句「曾附 N 张图片」——图片本身不随历史重发；
+ * - 历史回答里的 [sourceId] 换成书名 + 页码的纯文本，避免模型复用已经失效的旧来源编号。
  */
 export function wireMessages(conversation: ChatModeConversation): { role: 'user' | 'assistant'; content: string }[] {
   const kept = conversation.messages
@@ -17,11 +19,12 @@ export function wireMessages(conversation: ChatModeConversation): { role: 'user'
     .filter(message => !(message.role === 'assistant' && message.failed))
     .filter(message => message.content.trim().length > 0)
   return kept.map((message, index) => {
+    const base = message.role === 'assistant' ? plainCitations(message.content, message.refs) : message.content
     const isLatest = index === kept.length - 1
     const attached = isLatest ? 0 : (message.attach?.images ?? 0)
     const content = attached > 0
-      ? `${message.content}\n\n[这条消息当时附了 ${attached} 张图片，图片未随历史发送]`
-      : message.content
+      ? `${base}\n\n[这条消息当时附了 ${attached} 张图片，图片未随历史发送]`
+      : base
     return { role: message.role, content }
   })
 }

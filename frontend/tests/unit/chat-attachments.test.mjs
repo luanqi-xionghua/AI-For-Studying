@@ -3,8 +3,16 @@ import assert from 'node:assert/strict'
 import {
   IMAGE_TYPES, addImageToDraft, imageBudget, imageBudgetText, imageFilesFrom,
 } from '../../src/chat/images.ts'
-import { IMAGE_TOKENS, PER_DOC_CHARS, attachAvailability, attachmentContextTokens, hasAttachments } from '../../src/chat/attachments.ts'
+import {
+  IMAGE_TOKENS, PER_DOC_CHARS, attachAvailability, attachmentContextTokens, attachmentStatusText,
+  docsWithinBudget, friendlyDocError, friendlyTempError, hasAttachments, perDocLimits,
+} from '../../src/chat/attachments.ts'
 import { CHAT_ATTACH_LIMITS } from '../../src/chat/types.ts'
+
+const DEFAULT_LIMITS = {
+  images: 5, pages: 8, characters: 24000, calls: 12, rounds: 3,
+  searchPages: 120, searchMilliseconds: 10000, seedCharacters: 8000,
+}
 
 const fakeFile = (name, type, size) => ({ name, type, size })
 const image = size => 'x'.repeat(size)
@@ -95,4 +103,60 @@ test('attachments: hasAttachments and the context estimate', () => {
   assert.equal(attachmentContextTokens(2, 0), 2 * IMAGE_TOKENS)
   assert.equal(attachmentContextTokens(1, 3), IMAGE_TOKENS + 3 * PER_DOC_CHARS)
   assert.equal(attachmentContextTokens(-1, -2), 0)
+})
+
+test('attachments: per-document budgets follow the §5.3 table', () => {
+  const one = perDocLimits(DEFAULT_LIMITS, 1, true)
+  assert.deepEqual([one.calls, one.rounds, one.pages, one.characters, one.images], [12, 3, 8, 24000, 5])
+  const two = perDocLimits(DEFAULT_LIMITS, 2, true)
+  assert.deepEqual([two.calls, two.rounds, two.pages, two.characters, two.images], [6, 3, 4, 12000, 2])
+  const three = perDocLimits(DEFAULT_LIMITS, 3, true)
+  assert.deepEqual([three.calls, three.rounds, three.pages, three.characters, three.images], [4, 2, 3, 8000, 1])
+  assert.equal(perDocLimits(DEFAULT_LIMITS, 1, false).images, 0)
+  // 用户把预算调小后仍保底 3 次调用 / 3 页 / 6000 字。
+  const tiny = perDocLimits({ ...DEFAULT_LIMITS, calls: 4, pages: 4, characters: 6000, rounds: 3, images: 2 }, 2, true)
+  assert.deepEqual([tiny.calls, tiny.pages, tiny.characters, tiny.images], [3, 3, 6000, 1])
+  assert.equal(perDocLimits(DEFAULT_LIMITS, 3, true).seedCharacters, 8000)
+})
+
+test('attachments: document errors become fixed text and never leak a path', () => {
+  const password = Object.assign(new Error('No password given'), { name: 'PasswordException' })
+  assert.match(friendlyDocError(password, '线代A'), /《线代A》已加密：请先在阅读器里打开并输入密码/)
+  assert.match(friendlyDocError(new Error('No such file: C:\\Users\\me\\secret.pdf'), '线代A'), /原文件找不到/)
+  assert.match(friendlyDocError(new Error('TEMP_MISSING'), '临时文档 1'), /原文件找不到/)
+  assert.match(friendlyDocError(new Error('TimeoutError'), '线代A'), /读取超时（150 秒）/)
+  assert.match(friendlyDocError(new Error('扫描件没有文字层'), '线代A'), /扫描件、没有文字层/)
+  for (const error of [new Error('C:\\Users\\me\\secret.pdf 打不开'), new Error('\\\\server\\share\\x.pdf 出错'), 'oops']) {
+    const text = friendlyDocError(error, '线代A')
+    assert.equal(text.includes('C:\\'), false, text)
+    assert.equal(text.includes('\\\\server'), false, text)
+    assert.match(text, /读取失败，请稍后重试/)
+  }
+})
+
+test('attachments: temporary document error codes map to fixed text', () => {
+  assert.match(friendlyTempError(new Error('TEMP_LIMIT：太多了')), /最多附 3 份文档/)
+  assert.match(friendlyTempError(new Error('TEMP_TYPE：只能附加 PDF')), /只能附加 PDF、Markdown 或 Word/)
+  assert.match(friendlyTempError(new Error('TEMP_SIZE：太大')), /大小限制/)
+  assert.match(friendlyTempError(new Error('TEMP_HEADER：坏了')), /内容与扩展名不符/)
+  assert.match(friendlyTempError(new Error('TEMP_ENCODING：不是 UTF-8')), /UTF-8/)
+  assert.match(friendlyTempError(new Error('TEMP_NOT_FILE：不是文件')), /不是一个普通文件/)
+  assert.match(friendlyTempError(new Error('TEMP_MISSING：没了')), /移动、删除或修改/)
+  assert.match(friendlyTempError(new Error('TEMP_HANDLE：失效')), /已失效/)
+  assert.match(friendlyTempError(new Error('TEMP_CONVERT：Word / WPS 没能完成转换')), /Word 转换失败：Word \/ WPS 没能完成转换/)
+  assert.match(friendlyTempError(new Error('TEMP_CANCELLED：取消')), /已取消/)
+  assert.match(friendlyTempError(new Error('TEMP_IO：读不了')), /本机读取临时文档失败/)
+  assert.match(friendlyTempError(new Error('C:\\secret\\x.doc 出错')), /本机读取临时文档失败/)
+})
+
+test('attachments: runtime status text and the document size budget', () => {
+  assert.equal(attachmentStatusText('ready', '线代A'), null)
+  assert.match(attachmentStatusText('preparing', '线代A'), /还在转换/)
+  assert.match(attachmentStatusText('expired', '临时文档 1'), /已失效/)
+  assert.match(attachmentStatusText('removed', '线代A'), /已从文档库移除/)
+  assert.match(attachmentStatusText('missing', '线代A'), /原文件找不到/)
+  assert.match(attachmentStatusText('error', '线代A', '《线代A》已加密'), /已加密/)
+  assert.equal(docsWithinBudget([100, 200]), true)
+  assert.equal(docsWithinBudget([CHAT_ATTACH_LIMITS.docBytesTotal]), true)
+  assert.equal(docsWithinBudget([CHAT_ATTACH_LIMITS.docBytesTotal + 1]), false)
 })

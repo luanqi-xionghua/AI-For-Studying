@@ -40,7 +40,10 @@ export function normalizeScope(raw: unknown): MemoryScope {
 function normalizeUsage(raw: unknown): ChatUsage | undefined {
   if (!isRecord(raw)) return undefined
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
-  return { input: number(raw.input), output: number(raw.output), reasoning: number(raw.reasoning), estimated: raw.estimated === true }
+  const usage: ChatUsage = { input: number(raw.input), output: number(raw.output), reasoning: number(raw.reasoning), estimated: raw.estimated === true }
+  const calls = number(raw.calls)
+  if (calls) usage.calls = calls
+  return usage
 }
 
 function normalizeMemoryTag(raw: unknown): ChatMemoryTag | undefined {

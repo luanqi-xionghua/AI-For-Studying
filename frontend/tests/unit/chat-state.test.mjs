@@ -492,6 +492,59 @@ test('chat state: draft images are capped at six and can be cleared', async () =
   assert.deepEqual(conversation.draftImages, [])
 })
 
+test('chat state: documents attached to the conversation go through the compare runner', async () => {
+  const calls = []
+  const { chat, store, usages } = make({
+    runAttachmentTurn: async input => {
+      calls.push(input)
+      input.onDelta('对比回答 [Saaaaaa-1]')
+      input.onProgress?.([{ aid: 'd1', status: 'ok' }])
+      return {
+        usage: { input: 5, output: 5, reasoning: 0, estimated: false },
+        calls: 3,
+        refs: { docs: [{ aid: 'd1', title: '线代', source: 'library', ok: true }], cites: [{ id: 'Saaaaaa-1', d: 0, p: 3 }] },
+      }
+    },
+  })
+  await chat.load()
+  const conversation = chat.newConversation()
+  chat.setAttachments(conversation.id, [{ id: 'a1', source: 'library', docId: 'd1', title: '线代', kind: 'pdf', addedAt: 1 }])
+  conversation.runtime.set('a1', { status: 'ready' })
+  await chat.send(conversation.id, '对比', optionsFor())
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].docs.map(doc => [doc.aid, doc.status]), [['a1', 'ready']])
+  const answer = conversation.messages[1]
+  assert.equal(answer.content, '对比回答 [Saaaaaa-1]')
+  assert.deepEqual(answer.refs.cites, [{ id: 'Saaaaaa-1', d: 0, p: 3 }])
+  assert.deepEqual(answer.progress, [{ aid: 'd1', status: 'ok' }])
+  assert.equal(answer.usage.calls, 3)
+  assert.equal(usages.length, 0, '带附件回合由编排层记用量')
+  await chat.flush()
+  assert.equal(JSON.parse(store.conversations.get(conversation.id)).attachments.length, 1)
+})
+
+test('chat state: a failed attachment turn marks the answer failed', async () => {
+  const { chat } = make({
+    runAttachmentTurn: async () => ({ usage: { input: 0, output: 0, reasoning: 0, estimated: true }, calls: 0, failed: true, error: '《线代》读取失败，请稍后重试。' }),
+  })
+  await chat.load()
+  const conversation = chat.newConversation()
+  chat.setAttachments(conversation.id, [{ id: 'a1', source: 'library', docId: 'd1', title: '线代', kind: 'pdf', addedAt: 1 }])
+  await chat.send(conversation.id, '对比', optionsFor())
+  assert.equal(conversation.messages[1].failed, true)
+  assert.equal(conversation.error, '《线代》读取失败，请稍后重试。')
+})
+
+test('chat state: attachments are capped at three', async () => {
+  const { chat } = make()
+  await chat.load()
+  const conversation = chat.newConversation()
+  const docs = Array.from({ length: 5 }, (_, index) => ({ id: `a${index}`, source: 'library', docId: `d${index}`, title: `书${index}`, kind: 'pdf', addedAt: index }))
+  chat.setAttachments(conversation.id, docs)
+  assert.equal(conversation.attachments.length, 3)
+  assert.deepEqual(conversation.attachments.map(doc => doc.id), ['a0', 'a1', 'a2'])
+})
+
 test('chat state: renaming a conversation that is not loaded yet loads it first', async () => {
   const store = fakeStore({ version: 1, activeId: 'active', list: [
     { id: 'active', title: '当前', createdAt: 2, updatedAt: 2, scope: { kind: 'global' }, count: 2 },

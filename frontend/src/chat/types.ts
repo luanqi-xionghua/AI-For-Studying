@@ -70,7 +70,7 @@ export type ChatModelChoice = {
   effort: string
 }
 
-export type ChatUsage = { input: number; output: number; reasoning: number; estimated: boolean }
+export type ChatUsage = { input: number; output: number; reasoning: number; estimated: boolean; calls?: number }
 
 /** 一条消息发出时用的记忆范围，供历史里显示范围标记。不保存注入文本本身。 */
 export type ChatMemoryTag = {
@@ -108,7 +108,9 @@ export type ChatAttachmentMark = { images?: number; docs?: ChatDocMark[] }
 /** 回答里的引用映射：docs 是这一轮附件的顺序表，cites[].d 是它的下标。 */
 export type ChatCitationDoc = { aid: string; title: string; source: ChatDocSource; ok: boolean; error?: string }
 export type ChatCitation = { id: string; d: number; p?: number; l?: number }
-export type ChatMessageRefs = { docs: ChatCitationDoc[]; cites: ChatCitation[] }
+/** 「参考原文」用的片段：只在本次运行内有原文，落库前剥掉。 */
+export type ChatCitationSnippet = { id: string; d: number; p?: number; l?: number; text: string }
+export type ChatMessageRefs = { docs: ChatCitationDoc[]; cites: ChatCitation[]; snippets?: ChatCitationSnippet[] }
 
 /** 多文档检索进度：只在内存里，供界面显示。 */
 export type ChatDocProgress = {
