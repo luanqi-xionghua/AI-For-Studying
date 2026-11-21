@@ -111,6 +111,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         </div>
       </template>
       <template v-else>
+        <p v-if="busyHere && !message.finishedAt && !message.content && !message.reasoning" class="chat-thinking" role="status">
+          <span class="thinking-dots" aria-hidden="true"><i /><i /><i /></span>模型正在思考中…
+        </p>
         <button v-if="message.reasoning" type="button" class="thinking-toggle" aria-label="展开或收起思考过程" @click="toggleThinking(message.id)">
           <AppIcon name="chevron-right" :size="12" :class="{ open: expanded.has(message.id) }" />
           {{ message.finishedAt ? `已思考 ${thinkingSeconds(message)}s` : `思考中… ${thinkingSeconds(message)}s` }}
@@ -180,6 +183,13 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 .chat-usage { color: var(--muted); }
 .chat-turn-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
 .chat-turn.user .chat-turn-meta { justify-content: flex-end; }
+.chat-thinking { display: inline-flex; align-items: center; gap: 7px; align-self: flex-start; margin: 0; padding: 6px 11px; border-radius: var(--r-full, 999px); background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--muted); font-size: 12px; }
+.thinking-dots { display: inline-flex; align-items: center; gap: 3px; }
+.thinking-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: thinking-bounce 1.1s var(--ease-soft, ease-in-out) infinite; }
+.thinking-dots i:nth-child(2) { animation-delay: .15s; }
+.thinking-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes thinking-bounce { 0%, 60%, 100% { opacity: .35; translate: 0 0; } 30% { opacity: 1; translate: 0 -2px; } }
+@media (prefers-reduced-motion: reduce) { .thinking-dots i { animation: none; opacity: .7; } }
 .thinking-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 0; border-radius: var(--r-control); background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--muted); font-size: 11.5px; cursor: pointer; }
 .thinking-toggle svg { transition: transform var(--dur-1) var(--ease-soft); }
 .thinking-toggle svg.open { transform: rotate(90deg); }

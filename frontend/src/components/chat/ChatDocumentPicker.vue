@@ -102,7 +102,38 @@ defineExpose({ focusSearch: () => { void nextTick(() => searchField.value?.focus
 .picker-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 .picker-row.disabled { opacity: .55; }
 .picker-label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; font-size: 12.5px; }
-.picker-label input { flex: none; width: 14px; height: 14px; accent-color: var(--accent); }
+/* 全局把 checkbox 画成了 iOS 开关；这里还原成紧凑的方形复选框，避免错位与压字。 */
+.picker-label input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--ink) 32%, transparent);
+  border-radius: 4px;
+  background: var(--surface, var(--fill-1));
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-soft), border-color var(--dur-1) var(--ease-soft);
+}
+.picker-label input[type='checkbox']::before { content: none; }
+.picker-label input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 2px;
+  background: transparent;
+  clip-path: polygon(14% 52%, 38% 76%, 86% 20%, 72% 8%, 36% 56%, 22% 42%);
+}
+.picker-label input[type='checkbox']:checked { background: var(--accent); border-color: var(--accent); }
+.picker-label input[type='checkbox']:checked::after { background: var(--accent-on, #fff); }
+.picker-label input[type='checkbox']:hover:not(:disabled) { border-color: var(--accent); }
+.picker-label input[type='checkbox']:focus { box-shadow: none; border-color: var(--accent); }
+.picker-label input[type='checkbox']:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.picker-label input[type='checkbox']:disabled { opacity: .4; cursor: default; }
 .picker-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--control-ink, var(--ink)); }
 .picker-meta { flex: none; font-size: 11px; color: var(--muted); }
 .picker-note { margin: 0; padding: 6px 4px; font-size: 12px; color: var(--muted); }

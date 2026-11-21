@@ -91,3 +91,14 @@ test('chat rail: the rail styles follow the scoped-style rule and reduced motion
   assert.ok(style.includes('prefers-reduced-motion'))
   assert.ok(style.includes('forced-colors'))
 })
+
+test('chat surfaces: picker restores a compact checkbox and the list shows a thinking hint', async () => {
+  const picker = await source('components/chat/ChatDocumentPicker.vue')
+  // 全局把 checkbox 画成 iOS 开关；弹层必须显式还原，否则会错位压字。
+  assert.ok(picker.includes(".picker-label input[type='checkbox']"))
+  assert.ok(picker.includes('appearance: none'))
+  assert.ok(picker.includes('content: none'))
+  const list = await source('components/chat/ChatMessageList.vue')
+  assert.ok(list.includes('模型正在思考中'))
+  assert.ok(list.includes('prefers-reduced-motion'))
+})
