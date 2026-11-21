@@ -20,6 +20,11 @@ export const chat = createChatState({
   emit: emitLearningEvent,
   reportFailure: reportSaveFailure,
   streamChat: async options => (await import('../ai/providers.mjs')).streamChat(options),
+  // 带附件回合走 chat/compare.ts；第一条提问才需要，所以懒加载（首屏不拉文档管道）。
+  runAttachmentTurn: async (input: any) => {
+    const [{ runAttachmentTurn }, { streamChat }] = await Promise.all([import('./compare.ts'), import('../ai/providers.mjs')])
+    return runAttachmentTurn(input, { streamChat, recordUsage, estimateTokens, now: () => Date.now() })
+  },
   now: () => Date.now(),
   uuid: () => crypto.randomUUID(),
 })

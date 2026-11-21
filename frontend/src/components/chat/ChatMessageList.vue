@@ -29,6 +29,7 @@ const style = computed<'glass' | 'warm' | 'sketch'>(() => {
 })
 function formatTime(at?: number) { if (!at) return ''; const date = new Date(at); return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}` }
 function memoryLabel(memory: any) {
+  if (memory?.skipped === 'attachments') return '本轮带附件 · 未写入学习记忆'
   if (!memory || memory.kind === 'none') return '未使用记忆'
   const base = memory.kind === 'global' ? '全局记忆' : `《${memory.title || '文档'}》的记忆`
   return memory.injected ? base : `${base}（记忆为空，未注入）`
@@ -78,8 +79,15 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     <template v-else>
     <article v-for="message in messages" :key="message.id" class="chat-turn" :class="message.role">
       <template v-if="message.role === 'user'">
+        <div v-if="message.images?.length" class="chat-thumbs">
+          <img v-for="(image, index) in message.images" :key="index" :src="image" :alt="`第 ${index + 1} 张图片`" />
+        </div>
         <div class="chat-bubble" @click="copy(message.content)">{{ message.content }}</div>
-        <div class="chat-turn-meta"><span>{{ memoryLabel(message.memory) }}</span><button type="button" class="icon-button" aria-label="复制问题" data-tip="复制" @click="copy(message.content)"><AppIcon name="copy" :size="13" /></button></div>
+        <div class="chat-turn-meta">
+          <span>{{ memoryLabel(message.memory) }}</span>
+          <span v-if="!message.images?.length && message.attach?.images">曾附 {{ message.attach.images }} 张图片（图片不随记录保存）</span>
+          <button type="button" class="icon-button" aria-label="复制问题" data-tip="复制" @click="copy(message.content)"><AppIcon name="copy" :size="13" /></button>
+        </div>
       </template>
       <template v-else>
         <button v-if="message.reasoning" type="button" class="thinking-toggle" aria-label="展开或收起思考过程" @click="toggleThinking(message.id)">
@@ -117,6 +125,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 .chat-turn.user { align-items: flex-end; }
 .chat-turn.assistant { align-items: stretch; }
 .chat-bubble { max-width: min(82%, 640px); padding: 9px 13px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 12%, var(--surface, var(--fill-1))); font-size: 13.5px; line-height: 1.75; color: var(--control-ink, var(--ink)); white-space: pre-wrap; overflow-wrap: anywhere; cursor: default; }
+.chat-thumbs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.chat-thumbs img { width: 56px; height: 56px; object-fit: cover; border: 1px solid var(--hairline); border-radius: var(--r-control); }
 .chat-turn-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
 .chat-turn.user .chat-turn-meta { justify-content: flex-end; }
 .thinking-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 0; border-radius: var(--r-control); background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--muted); font-size: 11.5px; cursor: pointer; }

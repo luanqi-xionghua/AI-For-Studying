@@ -45,6 +45,12 @@ test('memory surfaces: chat places the scope picker in the composer, opening upw
 
   const composer = source('components/chat/ChatComposer.vue')
   assert.ok(composer.includes('<slot name="scope" />'))
+  // 附件按钮插槽必须排在记忆范围之后、弹性空白之前（实施清单 §3.2）。
+  const scopeAt = composer.indexOf('<slot name="scope" />')
+  const attachAt = composer.indexOf('<slot name="attach" />')
+  const spaceAt = composer.indexOf('composer-space')
+  assert.ok(scopeAt >= 0 && attachAt > scopeAt && spaceAt > attachAt)
+  assert.ok(composer.indexOf('<slot name="attachments" />') >= 0)
 
   const picker = source('components/chat/MemoryScopePicker.vue')
   assert.ok(picker.includes('up?: boolean'))

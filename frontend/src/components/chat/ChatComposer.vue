@@ -17,6 +17,8 @@ const props = defineProps<{
   choice: ChatModelChoice
   resolved: ResolvedChatChoice | null
   contextUsed: number
+  /** 输入栏里有附件：底注追加附件说明。 */
+  hasAttachments?: boolean
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -24,6 +26,7 @@ const emit = defineEmits<{
   stop: []
   choice: [choice: ChatModelChoice]
   settings: []
+  images: [files: File[]]
 }>()
 
 const EFFORT_LABELS: Record<string, string> = { '': '默认', none: '不思考', minimal: '极简', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高', ultra: '极致' }
@@ -83,18 +86,44 @@ watch(pickerOpen, open => {
 })
 function escape(event: KeyboardEvent) { if (pickerOpen.value && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePicker() } }
 onBeforeUnmount(() => document.removeEventListener('pointerdown', outside, true))
+function imageFiles(files?: FileList | null): File[] {
+  return [...(files || [])].filter(file => file.type.startsWith('image/'))
+}
+/** 粘贴图片：只处理带图片文件的剪贴板；文字粘贴保持浏览器默认行为。 */
+function pasteImages(event: ClipboardEvent) {
+  const files = imageFiles(event.clipboardData?.files)
+  if (!files.length) return
+  event.preventDefault()
+  emit('images', files)
+}
+/** 拖入图片数据（浏览器/截图工具拖出的图片，不是资源管理器里的文件路径）：只在带文件时接管。 */
+function dragImages(event: DragEvent) {
+  if (![...(event.dataTransfer?.types || [])].includes('Files')) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+function dropImages(event: DragEvent) {
+  const files = imageFiles(event.dataTransfer?.files)
+  if (!files.length) return
+  event.preventDefault()
+  event.stopPropagation()
+  emit('images', files)
+}
 function focus() { void nextTick(() => field.value?.focus()) }
 defineExpose({ focus })
 </script>
 
 <template>
   <div ref="host" class="chat-composer" @keydown="escape">
-    <div class="composer-field" :class="{ busy: props.busy }">
-      <textarea ref="field" :value="props.modelValue" :disabled="props.disabled" rows="1" :aria-label="props.disabled ? undefined : '向模型提问'" :placeholder="props.disabled ? '先新建模型预设才能开始对话' : '输入问题，Enter 发送，Shift + Enter 换行'" @input="input" @keydown="keydown" />
+    <slot name="attachments" />
+    <div class="composer-field" :class="{ busy: props.busy }" @dragover="dragImages" @drop="dropImages">
+      <textarea ref="field" :value="props.modelValue" :disabled="props.disabled" rows="1" :aria-label="props.disabled ? undefined : '向模型提问'" :placeholder="props.disabled ? '先新建模型预设才能开始对话' : '输入问题，Enter 发送，Shift + Enter 换行'" @input="input" @keydown="keydown" @paste="pasteImages" />
     </div>
     <div class="composer-actions">
       <button type="button" class="text-button" data-tip="本次打开应用以来的模型用量" @click="usageOpen = true">用量</button>
       <slot name="scope" />
+      <slot name="attach" />
       <span class="composer-space"></span>
       <div ref="pickerHost" class="model-picker-host">
         <button type="button" class="model-picker" :class="{ empty: !props.resolved }" :disabled="props.busy || props.disabled" :aria-expanded="pickerOpen" aria-label="选择模型与思考强度" data-tip="模型与思考强度（只影响对话模式）" @click="openPicker">
@@ -118,7 +147,7 @@ defineExpose({ focus })
         @close="closePicker"
       />
     </div>
-    <p class="composer-note">记忆只保存在本机。使用记忆范围时，记忆摘要会随问题发给你配置的模型服务商。</p>
+    <p class="composer-note">记忆只保存在本机。使用记忆范围时，记忆摘要会随问题发给你配置的模型服务商。<template v-if="props.hasAttachments"> 附件（图片、文档摘录）只在本机和你配置的模型服务商之间传输；临时文档不进文档库、不进备份，退出应用后清理。</template></p>
     <UsagePanel v-if="usageOpen" :context-used="props.contextUsed" :context-limit="contextLimit" :model="modelLabel" @close="usageOpen = false; focus()" />
   </div>
 </template>

@@ -65,7 +65,7 @@ function hangingStream() {
 }
 
 const active = []
-function make({ stream } = {}) {
+function make({ stream, ...extra } = {}) {
   const model = stream || normalStream()
   const store = fakeStore()
   const events = [], usages = []
@@ -79,6 +79,7 @@ function make({ stream } = {}) {
     now: () => ++now,
     uuid: () => `id-${++seq}`,
     reportFailure: () => {},
+    ...extra,
   })
   active.push(chat)
   return { chat, store, events, usages, model }
@@ -439,6 +440,56 @@ test('chat state: rename length is capped and renaming an empty conversation is 
   await chat.send(conversation.id, '问题', optionsFor())
   await chat.rename(conversation.id, '字'.repeat(40))
   assert.equal(conversation.title.length, 28)
+})
+
+test('chat state: a turn with images goes through the attachment runner and records only its usage', async () => {
+  const calls = []
+  const { chat, usages } = make({
+    runAttachmentTurn: async input => {
+      calls.push(input)
+      input.onDelta('看图回答')
+      input.onUsage({ input: 30, output: 7, reasoning: 0, estimated: false })
+      return { usage: { input: 30, output: 7, reasoning: 0, estimated: false } }
+    },
+  })
+  await chat.load()
+  const conversation = chat.newConversation()
+  chat.setDraftImages(conversation.id, ['img-1', 'img-2'])
+  await chat.send(conversation.id, '看图', optionsFor())
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].images, ['img-1', 'img-2'])
+  assert.equal(usages.length, 0, '带附件回合不再由 state 记一条总量')
+  assert.deepEqual(conversation.draftImages, [])
+  const user = conversation.messages[0]
+  assert.deepEqual(user.images, ['img-1', 'img-2'])
+  assert.equal(user.attach.images, 2)
+  assert.equal(user.memory.skipped, 'attachments')
+  assert.equal(conversation.messages[1].content, '看图回答')
+})
+
+test('chat state: regenerating an image turn sends the same images again', async () => {
+  const calls = []
+  const { chat } = make({
+    runAttachmentTurn: async input => { calls.push(input); input.onDelta('再答') },
+  })
+  await chat.load()
+  const conversation = chat.newConversation()
+  chat.setDraftImages(conversation.id, ['img-1'])
+  await chat.send(conversation.id, '看图', optionsFor())
+  await chat.regenerate(conversation.id, optionsFor())
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[1].images, ['img-1'])
+  assert.equal(conversation.messages.filter(message => message.role === 'user').length, 1)
+})
+
+test('chat state: draft images are capped at six and can be cleared', async () => {
+  const { chat } = make()
+  await chat.load()
+  const conversation = chat.newConversation()
+  chat.setDraftImages(conversation.id, Array.from({ length: 8 }, (_, index) => `img-${index}`))
+  assert.equal(conversation.draftImages.length, 6)
+  chat.setDraftImages(conversation.id, [])
+  assert.deepEqual(conversation.draftImages, [])
 })
 
 test('chat state: renaming a conversation that is not loaded yet loads it first', async () => {

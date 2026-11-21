@@ -1743,10 +1743,14 @@ async function listenForFileDrop() {
       const value = event.payload
       if (value.type === 'enter') draggingFiles.value = value.paths.some(path => DOCUMENT_PATTERN.test(path))
       else if (value.type === 'leave') draggingFiles.value = false
-      // 桌面版拖放只给文件路径：图片请走阅读助手的「添加图片」或粘贴，不当成文档导入。
+      // 桌面版拖放只给文件路径：图片请走「添加图片」按钮或粘贴，不当成文档导入。
       else if (value.type === 'drop') {
-        if (value.paths.length && value.paths.every(path => /\.(png|jpe?g|webp|gif)$/i.test(path))) { draggingFiles.value = false; notify('图片请在阅读助手里点「添加图片」，或复制后在输入框 Ctrl+V 粘贴。') }
-        else void dropDocuments(value.paths)
+        if (value.paths.length && value.paths.every(path => /\.(png|jpe?g|webp|gif)$/i.test(path))) {
+          draggingFiles.value = false
+          notify(page.value === 'chat'
+            ? '图片请点输入栏的「图片」按钮，或复制后 Ctrl+V 粘贴。'
+            : '图片请在阅读助手里点「添加图片」，或复制后在输入框 Ctrl+V 粘贴。')
+        } else void dropDocuments(value.paths)
       }
     })
     if (disposed) unlisten(); else stopDropListening = unlisten

@@ -24,6 +24,8 @@ export type ChatStateDeps = {
   now: () => number
   uuid: () => string
   reportFailure: (id: string, label: string, error: unknown, retry: () => Promise<void>) => void
+  /** 带附件回合的编排（懒加载 chat/compare.ts）；缺省时退回普通 streamChat。 */
+  runAttachmentTurn?: (input: any) => Promise<unknown>
 }
 export type SendOptions = {
   /** 这一轮的连接参数；null = 没有预设或没有模型，由 reason 说明。 */
@@ -37,6 +39,8 @@ export type SendOptions = {
 }
 export type LiveConversation = ChatModeConversation & {
   draft: string
+  /** 输入栏里还没发出去的图片（data URL，只在内存里）；发送后挂到那条用户消息上。 */
+  draftImages: string[]
   error: string
   loaded: boolean
   damaged: boolean
@@ -50,6 +54,7 @@ export type ChatState = {
   current(): LiveConversation
   newConversation(scope?: MemoryScope): LiveConversation
   setScope(id: string, scope: MemoryScope): void
+  setDraftImages(id: string, images: string[]): void
   send(id: string, text: string, options: SendOptions): Promise<void>
   regenerate(id: string, options: SendOptions): Promise<void>
   stop(id: string): void
@@ -67,7 +72,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
   function register(conversation: ChatModeConversation, loaded = false): LiveConversation {
-    const live: LiveConversation = { ...conversation, draft: '', error: '', loaded, damaged: false, scrollTop: 0, request: null }
+    const live: LiveConversation = { ...conversation, draft: '', draftImages: [], error: '', loaded, damaged: false, scrollTop: 0, request: null }
     state.conversations.set(live.id, live)
     return state.conversations.get(live.id)!
   }
@@ -149,6 +154,22 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     live.updatedAt = deps.now()
     scheduleSave(live)
   }
+  /** 输入栏里的图片草稿：只在内存里，不落库、不改变 updatedAt。 */
+  function setDraftImages(id: string, images: string[]): void {
+    const live = state.conversations.get(id)
+    if (!live) return
+    live.draftImages = images.filter(Boolean).slice(0, CHAT_ATTACH_LIMITS.images)
+  }
+  /** 内存里保留的历史图片超过上限时，从最早的消息开始丢原图，只留「曾附 N 张图片」标记。 */
+  function trimLiveImages(live: LiveConversation): void {
+    const carriers = live.messages.filter(message => message.images?.length)
+    let total = carriers.reduce((sum, message) => sum + (message.images || []).reduce((size, image) => size + image.length, 0), 0)
+    for (const message of carriers) {
+      if (total <= CHAT_ATTACH_LIMITS.liveImageChars) break
+      total -= (message.images || []).reduce((size, image) => size + image.length, 0)
+      delete message.images
+    }
+  }
   function busyCount(): number {
     let total = 0
     for (const live of state.conversations.values()) if (live.request) total++
@@ -186,7 +207,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     if (problem) { live.error = problem; return }
     live.error = ''
     // 附件状态在 dispatch 开头取快照：这一轮按它决定「写不写记忆」，中途增删不影响这一轮。
-    const draftImages = options.attachments?.images || []
+    const draftImages = options.attachments?.images ?? live.draftImages
     const draftDocs = options.attachments?.docs || []
     const hasAttachments = draftImages.length > 0 || draftDocs.length > 0 || (live.attachments?.length ?? 0) > 0
     let injection: { text: string; tag: ChatMemoryTag } = { text: '', tag: emptyTag(options.scope.kind) }
@@ -195,6 +216,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     const connection = options.connection as ChatConnection
     const question = regenerate ? (live.messages.filter(message => message.role === 'user').at(-1)?.content || text) : text
     let attachmentsThisTurn = hasAttachments
+    let imagesThisTurn = regenerate ? [] : draftImages
     let turn: ChatModeMessage
     if (regenerate) {
       if (live.messages.at(-1)?.role === 'assistant') live.messages.pop()
@@ -202,6 +224,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       if (!user) return
       // 重新回答沿用同一个用户消息：那一轮当时带过附件，就一直按「带附件的回合」处理。
       if ((user.attach?.images ?? 0) > 0 || Boolean(user.attach?.docs?.length)) attachmentsThisTurn = true
+      imagesThisTurn = user.images || []
       turn = user
     } else {
       turn = { id: deps.uuid(), role: 'user', content: text, memory: emptyTag(options.scope.kind) }
@@ -209,12 +232,15 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       if (mark) turn.attach = mark
       if (draftImages.length) turn.images = [...draftImages]
       live.messages.push(turn)
+      // 图片只跟随这一次提问：发出去之后输入栏清空，草稿不再保留。
+      live.draftImages = []
     }
     // 用户消息上的记忆标记：带附件时带 skipped，界面据此显示「本轮带附件 · 未写入学习记忆」。
     turn.memory = attachmentsThisTurn ? { ...injection.tag, skipped: 'attachments' } : injection.tag
     if (!live.title) live.title = chatTitle(question)
     const answer: ChatModeMessage = { id: deps.uuid(), role: 'assistant', content: '', reasoning: '', startedAt: deps.now(), model: connection.model, effort: connection.effort }
     live.messages.push(answer)
+    trimLiveImages(live)
     live.draft = ''
     live.updatedAt = deps.now()
     const controller = new AbortController()
@@ -222,6 +248,8 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     const history = boundChatHistory(wireMessages(live))
     const startedAt = deps.now()
     let reported: ChatUsage | undefined
+    // 只有图片（T1）走带附件编排；文档单本/多本（T2/T3）在 M4 接入同一个入口。
+    const useAttachmentTurn = Boolean(deps.runAttachmentTurn) && imagesThisTurn.length > 0
     const onDelta = (delta: string) => {
       answer.content += delta
       if (!answer.firstTokenAt) answer.firstTokenAt = deps.now()
@@ -235,12 +263,22 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     }
     const onUsage = (usage: ChatUsage) => { reported = usage }
     try {
-      await deps.streamChat({
-        provider: connection.provider, baseUrl: connection.baseUrl, protocol: connection.protocol,
-        model: connection.model, effort: connection.effort, signal: controller.signal,
-        messages: history, systemPrefix: CHAT_SYSTEM_PREFIX, extraInstructions: injection.text,
-        onDelta, onReasoning, onUsage,
-      })
+      if (useAttachmentTurn) {
+        // 用量由编排层按子调用记，state 的 finally 不再重复记一条总量。
+        await deps.runAttachmentTurn!({
+          provider: connection.provider, baseUrl: connection.baseUrl, protocol: connection.protocol,
+          model: connection.model, effort: connection.effort, signal: controller.signal,
+          messages: history, systemPrefix: CHAT_SYSTEM_PREFIX, extraInstructions: injection.text,
+          images: imagesThisTurn, onDelta, onReasoning, onUsage,
+        })
+      } else {
+        await deps.streamChat({
+          provider: connection.provider, baseUrl: connection.baseUrl, protocol: connection.protocol,
+          model: connection.model, effort: connection.effort, signal: controller.signal,
+          messages: history, systemPrefix: CHAT_SYSTEM_PREFIX, extraInstructions: injection.text,
+          onDelta, onReasoning, onUsage,
+        })
+      }
       answer.finishedAt = deps.now()
       if (!answer.content.trim()) { answer.failed = true; live.error = '模型没有返回内容，请重试。' }
     } catch (error) {
@@ -249,14 +287,16 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       else { answer.failed = true; answer.error = messageOf(error); live.error = answer.error }
     } finally {
       live.request = null
-      deps.recordUsage({
-        kind: 'chatmode', provider: connection.provider, model: connection.model,
-        ms: deps.now() - startedAt,
-        input: reported?.input ?? deps.estimateTokens(history.map(message => message.content).join('\n')),
-        output: reported?.output ?? deps.estimateTokens(answer.content),
-        reasoning: reported?.reasoning ?? deps.estimateTokens(answer.reasoning || ''),
-        estimated: !reported,
-      })
+      if (!useAttachmentTurn) {
+        deps.recordUsage({
+          kind: 'chatmode', provider: connection.provider, model: connection.model,
+          ms: deps.now() - startedAt,
+          input: reported?.input ?? deps.estimateTokens(history.map(message => message.content).join('\n')),
+          output: reported?.output ?? deps.estimateTokens(answer.content),
+          reasoning: reported?.reasoning ?? deps.estimateTokens(answer.reasoning || ''),
+          estimated: !reported,
+        })
+      }
       live.updatedAt = deps.now()
       await saveNow(live)
       const success = !answer.failed && !answer.stopped && Boolean(answer.content.trim())
@@ -309,6 +349,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     current: ensureActive,
     newConversation,
     setScope,
+    setDraftImages,
     send: (id, text, options) => dispatch(id, text, options, false),
     regenerate: (id, options) => dispatch(id, '', options, true),
     stop: id => { state.conversations.get(id)?.request?.controller.abort() },

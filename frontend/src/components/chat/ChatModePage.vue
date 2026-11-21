@@ -4,7 +4,10 @@ import { chat } from '../../chat'
 import { loadChatChoice, resolveChatChoice, saveChatChoice, type ResolvedChatChoice } from '../../chat/choice.ts'
 import { wireMessages } from '../../chat/history.ts'
 import { loadRailPreference, railRows, saveRailPreference, type ChatRailRow } from '../../chat/rail.ts'
-import type { ChatModelChoice } from '../../chat/types.ts'
+import { attachAvailability, attachmentContextTokens } from '../../chat/attachments.ts'
+import { addImageToDraft, imageFilesFrom, toDataUrl } from '../../chat/images.ts'
+import { CHAT_ATTACH_LIMITS, type ChatModelChoice } from '../../chat/types.ts'
+import { getModel } from '../../ai/providers.mjs'
 import { loadAiSettings, NO_PRESET_MESSAGE } from '../../ai/settings.mjs'
 import { estimateTokens } from '../../ai/workspace'
 import { hasMemoryContent } from '../../memory/merge.ts'
@@ -12,6 +15,7 @@ import type { MemoryScope } from '../../memory/types.ts'
 import { relativeTime } from '../../memory/prompts.ts'
 import MemoryScopePicker from './MemoryScopePicker.vue'
 import ChatConversationRail from './ChatConversationRail.vue'
+import ChatAttachmentBar from './ChatAttachmentBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import ChatComposer from './ChatComposer.vue'
 import AppIcon from '../ui/AppIcon.vue'
@@ -32,6 +36,9 @@ const memoryModule = shallowRef<any>(undefined)
 const memoryState = shallowRef<any>(undefined)
 const composer = ref<{ focus?: () => void }>()
 const rail = ref<{ focusSearch?: () => void; focusActive?: () => void }>()
+const imageInput = ref<HTMLInputElement>()
+const attachNotice = ref('')
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
 const confirmRemove = ref<{ id: string; title: string } | null>(null)
 const appliedInitial = ref(false)
 const pageRoot = ref<HTMLElement>()
@@ -68,25 +75,48 @@ const effectiveScope = computed<MemoryScope>(() => {
 const removedScope = computed(() => conversation.value?.scope.kind === 'doc' && !props.documents.some(doc => doc.id === (conversation.value!.scope as any).docId))
 const memoryIds = computed(() => new Set<string>((memoryState.value?.index?.docs || []).map((entry: any) => entry.docId)))
 const globalHasContent = computed(() => hasMemoryContent(memoryState.value?.global || null))
+/** 输入栏里还没发出去的图片（data URL，只在内存里）。 */
+const draftImages = computed(() => conversation.value?.draftImages || [])
+/** 附件栏非空：图片草稿或整会话文档附件（文档在 M4 接入）。 */
+const hasAttachmentsNow = computed(() => draftImages.value.length > 0 || (conversation.value?.attachments?.length ?? 0) > 0)
+const vision = computed(() => {
+  const current = resolved.value
+  if (!current) return true
+  return getModel(current.provider, current.model)?.vision !== false
+})
+const modelName = computed(() => resolved.value?.model || '')
+const availability = computed(() => attachAvailability({
+  busy: Boolean(currentBusy.value),
+  hasPreset: Boolean(resolved.value),
+  vision: vision.value,
+  modelName: modelName.value,
+  images: draftImages.value.length,
+  docs: conversation.value?.attachments?.length || 0,
+  libraryEmpty: props.documents.length === 0,
+}))
 const contextUsed = computed(() => {
   const messages = conversation.value ? wireMessages(conversation.value) : []
-  return estimateTokens(messages.map(message => message.content).join('\n'))
+  const history = estimateTokens(messages.map(message => message.content).join('\n'))
+  return history + attachmentContextTokens(draftImages.value.length, conversation.value?.attachments?.length || 0)
 })
 const statusText = computed(() => {
   const scope = effectiveScope.value
+  const suffix = hasAttachmentsNow.value ? ' 本会话带附件，问答不写入学习记忆。' : ''
   if (scope.kind === 'none') {
-    if (removedScope.value && conversation.value?.scope.kind === 'doc') return `《${(conversation.value!.scope as any).title || '这本书'}》已从文档库移除，这段对话按「不使用记忆」处理。`
-    return '这段对话不使用记忆。'
+    if (removedScope.value && conversation.value?.scope.kind === 'doc') return `《${(conversation.value!.scope as any).title || '这本书'}》已从文档库移除，这段对话按「不使用记忆」处理。${suffix}`
+    return `这段对话不使用记忆。${suffix}`
   }
   if (scope.kind === 'global') {
     const global = memoryState.value?.global
-    if (!globalHasContent.value) return '全局记忆还是空的，本轮不会注入内容；继续对话后会逐步建立。'
-    return `正在使用全局记忆（上次更新：${relativeTime(global.summarizedAt, Date.now())}）。`
+    if (!globalHasContent.value) return `全局记忆还是空的，本轮不会注入内容；继续对话后会逐步建立。${suffix}`
+    return `正在使用全局记忆（上次更新：${relativeTime(global.summarizedAt, Date.now())}）。${suffix}`
   }
   const entry = (memoryState.value?.index?.docs || []).find((item: any) => item.docId === scope.docId)
-  if (!entry || (!entry.summarizedAt && !entry.hasOnboarding && !entry.pending)) return '该书暂无记忆，本轮不会注入内容；继续对话后会为它建立记忆。'
-  return `正在使用《${scope.title || '这本书'}》的记忆${entry.summarizedAt ? `（上次更新：${relativeTime(entry.summarizedAt, Date.now())}）` : ''}。`
+  if (!entry || (!entry.summarizedAt && !entry.hasOnboarding && !entry.pending)) return `该书暂无记忆，本轮不会注入内容；继续对话后会为它建立记忆。${suffix}`
+  return `正在使用《${scope.title || '这本书'}》的记忆${entry.summarizedAt ? `（上次更新：${relativeTime(entry.summarizedAt, Date.now())}）` : ''}。${suffix}`
 })
+/** 附件操作的原因（添加不了、忽略文件等）临时显示在状态行。 */
+const statusLine = computed(() => attachNotice.value || statusText.value)
 
 function reloadSettings() { settings.value = loadAiSettings() }
 watch(() => props.settingsVersion, reloadSettings)
@@ -142,7 +172,11 @@ onMounted(async () => {
   if (!appliedInitial.value && props.initialScope) applyInitialScope()
   focus()
 })
-onBeforeUnmount(() => { observer?.disconnect(); observer = undefined })
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  observer = undefined
+  if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = undefined }
+})
 function applyInitialScope() {
   if (!props.initialScope) return
   appliedInitial.value = true
@@ -151,9 +185,66 @@ function applyInitialScope() {
 }
 watch(() => [chat.state.ready, props.initialScope], () => { if (chat.state.ready && !appliedInitial.value && props.initialScope) applyInitialScope() })
 
+function notifyAttach(text: string) {
+  attachNotice.value = text
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => { attachNotice.value = ''; noticeTimer = undefined }, 6000)
+}
+function pickImages() {
+  if (availability.value.image.disabled) { notifyAttach(availability.value.image.tip); return }
+  imageInput.value?.click()
+}
+function pickImagesFromInput(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = input.files ? [...input.files] : []
+  input.value = ''
+  void addImages(files)
+}
+async function addImages(files: File[]) {
+  const current = conversation.value
+  if (!current || !files.length) return
+  if (availability.value.image.disabled) { notifyAttach(availability.value.image.tip); return }
+  const { files: accepted, rejected } = imageFilesFrom(files)
+  if (rejected.length) {
+    const wrongType = rejected.filter(item => item.reason === 'type').length
+    const tooBig = rejected.filter(item => item.reason === 'size')
+    if (wrongType) notifyAttach(`已忽略 ${wrongType} 个不是图片的文件：只支持 PNG、JPEG、WebP、GIF、BMP。`)
+    else if (tooBig.length) notifyAttach(`图片「${tooBig[0].name}」超过 20 MB，已跳过。`)
+    if (!accepted.length) return
+  }
+  for (const file of accepted) {
+    if (current.draftImages.length >= CHAT_ATTACH_LIMITS.images) { notifyAttach(`一次最多 ${CHAT_ATTACH_LIMITS.images} 张图片`); return }
+    try {
+      const dataUrl = await toDataUrl(file)
+      // 解码期间可能切了会话：这时不要再往旧会话里塞图。
+      if (conversation.value !== current) return
+      const result = addImageToDraft(current.draftImages, dataUrl)
+      if (result.reason === 'count') { notifyAttach(`一次最多 ${CHAT_ATTACH_LIMITS.images} 张图片`); return }
+      if (result.reason === 'chars') { notifyAttach('图片总量太大，请减少几张或换小一点的图片。'); return }
+      chat.setDraftImages(current.id, result.images)
+    } catch {
+      notifyAttach(`无法读取图片「${file.name || '这张图片'}」。`)
+    }
+  }
+}
+function removeImage(index: number) {
+  const current = conversation.value
+  if (!current || current.request) return
+  chat.setDraftImages(current.id, current.draftImages.filter((_, at) => at !== index))
+}
+function removeAllImages() {
+  const current = conversation.value
+  if (!current || current.request) return
+  chat.setDraftImages(current.id, [])
+}
 async function send(text: string) {
   const current = chat.current()
   if (!current) return
+  // 计划 §5.5：带图但模型不识图时拦截发送，预览条给出 [移除全部图片]。
+  if (current.draftImages.length && !vision.value) {
+    current.error = '当前模型不支持图片：请换识图模型，或移除图片后发送。'
+    return
+  }
   await chat.send(current.id, text, connectionOptions() as any)
   focus()
 }
@@ -228,7 +319,7 @@ defineExpose({ focusPrompt })
       </div>
     </header>
     <p class="page-note">不打开文档，直接和模型聊。可以带上学习记忆，让回答更贴合你的情况。</p>
-    <p class="chat-status" role="status">{{ statusText }}</p>
+    <p class="chat-status" role="status">{{ statusLine }}</p>
     <div class="chat-layout">
       <ChatConversationRail
         v-if="!narrow && !railCollapsed"
@@ -253,14 +344,30 @@ defineExpose({ focusPrompt })
           :choice="choice"
           :resolved="resolved"
           :context-used="contextUsed"
+          :has-attachments="hasAttachmentsNow"
           @update:model-value="updateDraft"
           @send="send"
           @stop="stop"
           @choice="applyChoice"
           @settings="emit('settings')"
+          @images="addImages"
         >
+          <template #attachments>
+            <ChatAttachmentBar :images="draftImages" :busy="Boolean(currentBusy)" :vision="vision" :model-name="modelName" @remove="removeImage" @remove-all="removeAllImages" />
+          </template>
           <template #scope>
             <MemoryScopePicker up :scope="effectiveScope" :documents="props.documents" :memory-ids="memoryIds" :global-has-content="globalHasContent" :disabled="Boolean(currentBusy)" @update:scope="applyScope" @manage="emit('memory')" />
+          </template>
+          <template #attach>
+            <button
+              type="button"
+              class="attach-button"
+              :aria-disabled="availability.image.disabled ? 'true' : undefined"
+              aria-label="添加图片（也可以 Ctrl+V 粘贴）"
+              :data-tip="availability.image.tip"
+              @click="pickImages"
+            ><AppIcon name="image" :size="16" /></button>
+            <input ref="imageInput" class="attach-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple tabindex="-1" aria-hidden="true" @change="pickImagesFromInput" />
           </template>
         </ChatComposer>
       </div>
@@ -290,4 +397,9 @@ defineExpose({ focusPrompt })
 .chat-status { margin: 0; font-size: 12px; color: var(--muted); }
 .chat-layout { flex: 1; min-height: 0; display: flex; gap: 12px; position: relative; }
 .chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.attach-button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--hairline); border-radius: var(--r-control); background: none; color: var(--muted); cursor: pointer; }
+.attach-button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); }
+.attach-button[aria-disabled="true"] { opacity: .45; cursor: default; }
+.attach-button[aria-disabled="true"]:hover { background: none; color: var(--muted); }
+.attach-file { display: none; }
 </style>

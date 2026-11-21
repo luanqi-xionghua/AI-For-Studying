@@ -65,6 +65,16 @@ test('chat history: wireMessages skips failed and empty messages', () => {
   assert.deepEqual(wire.map(message => message.content), ['问', '再问'])
 })
 
+test('chat history: older turns that carried images get a text marker, the latest turn does not', () => {
+  const wire = wireMessages(conversation({ messages: [
+    userMessage('旧问', { attach: { images: 2 } }),
+    { id: 'a1', role: 'assistant', content: '答' },
+    userMessage('新问', { attach: { images: 1 } }),
+  ] }))
+  assert.equal(wire[0].content, '旧问\n\n[这条消息当时附了 2 张图片，图片未随历史发送]')
+  assert.equal(wire[2].content, '新问')
+})
+
 const presets = [
   { id: 'a', name: '主力', provider: 'deepseek', baseUrl: 'https://api.deepseek.com', protocol: 'chat', model: 'deepseek-v4-pro', effort: 'high', fast: false },
   { id: 'b', name: '省钱', provider: 'deepseek', baseUrl: 'https://api.deepseek.com', protocol: 'chat', model: 'deepseek-flash', effort: 'none', fast: false },

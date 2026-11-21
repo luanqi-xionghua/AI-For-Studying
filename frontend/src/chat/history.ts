@@ -7,13 +7,23 @@ export function chatTitle(question: string): string {
   return text.length > CHAT_LIMITS.title ? `${text.slice(0, CHAT_LIMITS.title - 1)}…` : text
 }
 
-/** 随请求发出的消息：只取 role / content，跳过失败的助手消息与空内容。 */
+/**
+ * 随请求发出的消息：只取 role / content，跳过失败的助手消息与空内容。
+ * 历史里带过图片的旧用户消息只发文字，末尾补一句「曾附 N 张图片」——图片本身不随历史重发。
+ */
 export function wireMessages(conversation: ChatModeConversation): { role: 'user' | 'assistant'; content: string }[] {
-  return conversation.messages
+  const kept = conversation.messages
     .filter(message => message.role === 'user' || message.role === 'assistant')
     .filter(message => !(message.role === 'assistant' && message.failed))
     .filter(message => message.content.trim().length > 0)
-    .map(message => ({ role: message.role, content: message.content }))
+  return kept.map((message, index) => {
+    const isLatest = index === kept.length - 1
+    const attached = isLatest ? 0 : (message.attach?.images ?? 0)
+    const content = attached > 0
+      ? `${message.content}\n\n[这条消息当时附了 ${attached} 张图片，图片未随历史发送]`
+      : message.content
+    return { role: message.role, content }
+  })
 }
 
 /**
