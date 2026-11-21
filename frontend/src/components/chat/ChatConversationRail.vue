@@ -215,7 +215,7 @@ defineExpose({
 </template>
 
 <style scoped>
-.chat-rail { flex: 0 0 clamp(200px, 21%, 250px); max-width: 250px; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--hairline); border-radius: var(--r-xl); background: color-mix(in srgb, var(--ink) 3%, transparent); overflow: auto; }
+.chat-rail { flex: 0 0 clamp(200px, 21%, 230px); max-width: 230px; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--hairline); border-radius: var(--r-xl); background: color-mix(in srgb, var(--ink) 3%, transparent); overflow: auto; }
 .rail-head { display: flex; align-items: center; gap: 6px; }
 .rail-new { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 10px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost, var(--fill-2)); color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .rail-new:hover { background: var(--frost-hover, var(--fill-3)); }
