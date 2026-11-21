@@ -38,7 +38,7 @@ export async function invoke<T=unknown>(cmd:string,args:Record<string,any>={}):P
     const value=await r.json()
     return value as T
   } catch(e){forget(ch?.id);throw e}
-  finally{if(cmd==='ai_cancel')forget(requests.get(payload.id)); if(cmd==='update_download'||cmd==='import_documents')forget(ch?.id)}
+  finally{if(cmd==='ai_cancel')forget(requests.get(payload.id)); if(cmd==='update_download'||cmd==='import_documents'||cmd==='material_sync')forget(ch?.id)}
 }
 export const open=(options:{multiple?:boolean;title?:string}={})=>invoke<string[]|string|null>('select_files',options)
 function listen(name:string,fn:EventListener){window.addEventListener(name,fn);return Promise.resolve(()=>window.removeEventListener(name,fn))}

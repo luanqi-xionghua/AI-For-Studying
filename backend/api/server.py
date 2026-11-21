@@ -11,6 +11,7 @@ from aiohttp import ClientSession, DummyCookieJar, WSMsgType, web
 
 from ..runtime.harness import Harness
 from ..services.library import Library
+from ..services.materials import Materials
 from ..services.tempdocs import TempDocs
 from ..services.updates import Updates
 from ..core.windows import Credentials
@@ -19,6 +20,8 @@ DATA = "get_startup_settings list_documents import_documents relocate_document b
 AI = {"ai_start", "ai_cancel", "ai_tool_result", "ai_set_key", "ai_has_key"}
 UPDATE = "update_status update_check update_download update_cancel update_install update_open_page".split()
 TEMP = {"temp_doc_pick", "temp_doc_prepare", "temp_doc_read", "temp_doc_release"}
+MATERIAL = {"material_status", "material_sync", "material_cancel",
+            "material_search", "material_open", "material_clear"}
 GUI = [
     "select_files",
     "select_backup_destination",
@@ -87,6 +90,7 @@ class DesktopService:
         self.up = Updates(
             self.client, self.lib.root, self.emit, lambda: self.gui("quit", {})
         )
+        self.materials = Materials(self.client, self.lib, self.lib.root, self.emit)
         self.runner = web.AppRunner(self.app, access_log=None, shutdown_timeout=5)
         await self.runner.setup()
         await web.SockSite(self.runner, sock).start()
@@ -197,6 +201,8 @@ class DesktopService:
                     if cmd in UPDATE
                     else self.temp
                     if cmd in TEMP
+                    else self.materials
+                    if cmd in MATERIAL
                     else None
                 )
                 if owner is None:
@@ -233,11 +239,13 @@ class DesktopService:
         self.temp.release_all()
         await self.ai.close()
         await self.up.update_cancel()
+        await self.materials.material_cancel()
 
     async def close(self):
         if self.ws is not None:
             await self.ws.close()
         await self.clear()
         self.temp.shutdown()
+        self.materials.close()
         await self.runner.cleanup()
         await self.client.close()

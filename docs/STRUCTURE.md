@@ -68,7 +68,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | 文件 | 作用 |
 | --- | --- |
 | `backend/api/__init__.py` | 包说明。 |
-| `backend/api/server.py` | 一个桌面实例一个回环监听器：Host/Origin/令牌校验、`POST /api/{cmd}` 命令分派、`/events` WebSocket 事件通道、`/` 静态文件（`frontend/dist`）服务。命令按 GUI / DATA / AI / UPDATE / TEMP 五类映射到对应服务对象（TEMP：`temp_doc_pick/prepare/read/release`）。 |
+| `backend/api/server.py` | 一个桌面实例一个回环监听器：Host/Origin/令牌校验、`POST /api/{cmd}` 命令分派、`/events` WebSocket 事件通道、`/` 静态文件（`frontend/dist`）服务。命令按 GUI / DATA / AI / UPDATE / TEMP / MATERIAL 六类映射到对应服务对象（TEMP：`temp_doc_pick/prepare/read/release`；MATERIAL：`material_status/sync/cancel/search/open/clear`）。 |
 
 ### 3.3 core/（桌面外壳与 Windows 能力）
 
@@ -94,6 +94,8 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | `backend/services/word.py` | Word（.doc/.docx）→ PDF：依次尝试本机 Word、WPS、LibreOffice；带超时、临时目录、缓存与错误分类。 |
 | `backend/services/updates.py` | 应用更新：读取 GitHub Release（只认 `vX.Y.Z`）、校验 SHA-256 摘要、下载、静默安装/便携版替换、打开页面。 |
 | `backend/services/tempdocs.py`（1.1.1） | 对话模式的临时文档：原生对话框选中的文件登记成不透明句柄（路径只留在后端）、扩展名/大小/文件头/UTF-8 校验、Word 转 PDF、指纹校验、临时目录与清理、固定错误码（`TEMP_*`，永不含路径）。 |
+| `backend/services/material_index.py`（资料检索） | 纯函数层：NFKC 与中文二元组分词、三源记录解析与过滤、按「文件名+大小」合并去重、BM25 内存索引、查询解析（课程简称、意图正则）、置信度闸门、文档库匹配、URL 白名单校验。不做 IO。 |
+| `backend/services/materials.py`（资料检索） | `Materials` 服务：独立 `materials.sqlite3`、三源同步（超时/重试/重定向白名单/取消/进度）、索引懒加载、六个命令（`material_status/sync/cancel/search/open/clear`）、`webbrowser.open` 开外链。 |
 
 ### 3.6 scripts/（自检脚本）
 
@@ -162,7 +164,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | `frontend/src/ai/render.ts` | Markdown 渲染：KaTeX 公式、代码高亮、表格/代码块复制按钮、mermaid 图示（`renderDiagrams`）。 |
 | `frontend/src/ai/highlight.ts` | 代码语法高亮（highlight.js 常用语言集合）。 |
 | `frontend/src/ai/intelligent-ui.ts` | 回答里的 ` ```ui ` 交互块渲染与回传。 |
-| `frontend/src/ai/usage.ts` | 用量账本：按 kind/model 汇总、按天持久化；1.1.0 新增 `chatmode`/`memory`。 |
+| `frontend/src/ai/usage.ts` | 用量账本：按 kind/model 汇总、按天持久化；1.1.0 新增 `chatmode`/`memory`，资料检索新增 `discover`。 |
 | `frontend/src/ai/request-scheduler.mjs` | 全应用请求队列（并发、排队、取消）；只放调度元数据。 |
 | `frontend/src/ai/storage-codec.mjs` | 大设置值的 UTF-8 分块与拼回（SQLite 设置值有上限）。 |
 
@@ -449,6 +451,9 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | `r15-manifold.test.mjs` | 历史需求回归：流形背景。 |
 | `r16-select.test.mjs` | 历史需求回归：选择框选。 |
 | `r17-features.test.mjs`、`r18-features.test.mjs` | 历史需求回归：功能清单。 |
+| `materials-state.test.mjs`（资料检索） | 状态机：未同步、坏的本地存储、空查询、查询竞态、最近搜索、同步进度、连点、取消、写库阶段取消、失败横幅、重排可用性/生效/失败/条数门槛、错误文案、清空。 |
+| `materials-rerank.test.mjs`（资料检索） | 候选序列化、提示词、解析与校验（越界/重复/非整数/代码块/去链接）、超时与超长中止、调用参数、可用性判断。 |
+| `materials-surfaces.test.mjs`（资料检索） | 源码约束：不直连外网、无 `<a>`/`v-html`、App 接线、通道与用量登记、`complete.ts` 原文保留、`state.ts` 不依赖 sdk/设置/模型、无 `:global(x) .y`。 |
 
 #### 组件模拟测试（`frontend/tests/sim/`，不在 `npm test` 内，需临时安装 vitest/@vue/test-utils/happy-dom 后运行）
 
@@ -460,6 +465,17 @@ DeepSeek Harness（Node.js 子进程，harness/）
 
 ---
 
+### 4.17 src/materials/ 与 components/materials/（资料检索）
+
+| 文件 | 作用 |
+| --- | --- |
+| `frontend/src/materials/types.ts` | 前端契约：状态/结果/进度类型、`MATERIALS_LIMITS`、来源与意图标签、`friendlyMaterialError` 错误码映射、`MaterialsClient` 接口。纯类型与纯函数。 |
+| `frontend/src/materials/client.ts` | 六个 `material_*` 命令的 RPC 封装；`sync` 用 `Channel` 只转发 `type==='progress'` 的事件。 |
+| `frontend/src/materials/state.ts` | `createMaterialsState(deps)`：响应式状态、`view`/`displayed`/`banner` 派生值、同步与取消、查询竞态（`epoch`）、AI 重排（中止/缓存/降级）、最近搜索持久化。不 import sdk/设置/模型。 |
+| `frontend/src/materials/index.ts` | 默认实例装配：真实 client、动态 `import('../ai/materials')` 与 `complete`、`loadAiSettings()`、`localStorage`。 |
+| `frontend/src/components/materials/MaterialsPage.vue` | 资料检索整页：页头状态与同步按钮、⋯ 菜单（清空/重新同步/来源说明）、横幅、搜索框、九种视图状态、文档库组与网络资料组、AI 排序开关。 |
+| `frontend/src/components/materials/MaterialResultRow.vue` | 单行结果：格式标签、标题按钮、你已有、元信息、AI 理由、主链接与镜像、复制、在文档库打开。 |
+| `frontend/src/ai/materials.ts` | 资料检索的 AI 层：`REWRITE_SYSTEM` + `parseRewrite` + `rewriteQuery`（把口语改写成「规范课程名 + 资料类型」，失败抛错由调用方回落到原查询）、`RERANK_SYSTEM`、候选序列化、消息构造、解析校验、`applyRerank`、`rerankMaterials`（超时/超长中止）、`rerankAvailability`。 |
 ## 5. harness/（Node 模型运行时）
 
 | 文件 | 作用 |
@@ -500,14 +516,16 @@ DeepSeek Harness（Node.js 子进程，harness/）
 - **数据目录**：默认 `%APPDATA%\com.phydog.reading.python`；可用 `--data-dir` 或 `KAIZHI_DATA_DIR` 覆盖（不要指向正在使用的真实书库）。
   - `library.sqlite3`：文档条目、设置键、索引、封面等。
   - `web/`、`web-cache/`：Qt WebEngine 的 localStorage/缓存（页面偏好、对话模式模型选择等）。
-  - `credentials`：DPAPI 加密的 API 凭据。
+  - credentials：DPAPI 加密的 API 凭据。
+  - `materials.sqlite3`（资料检索）：三源公开资料目录的缓存，含 `-wal`/`-shm`；损坏时改名 `.corrupt`。不进备份，可随时删除重建。
+
   - `desktop-port.txt`：本机服务端口（保持 origin 稳定）。
   - `chat-temp/<handle>/`（1.1.1）：临时文档里 Word 转出的 PDF；启动、页面断开、退出、删除会话或移除 chip 时清理，不进备份。
 - **SQLite settings 键**（1.1.0 新增粗体）：
   - 既有：文档/设置/对话相关键（保持旧语义不变）。
   - **`memory.v1.index` / `memory.v1.global` / `memory.v1.doc.<docId>` / `memory.v1.settings`**
   - **`chatmode.v1.index` / `chatmode.v1.c.<conversationId>`**（1.1.1 起这两个键的值里可能带 `attachments` / `customTitle` / 消息的 `attach` / `refs` / `skipped`，全部是可选字段，版本号仍为 1）
-- **localStorage 键**：`paperdesk.ai.settings.v1`（新增 `memoryPreset` / `memoryEffort`）、**`kaizhi.chatmode.choice.v1`**、**`kaizhi.import.learning.v1`**、**`kaizhi.chatmode.rail.v1`**（1.1.1 会话附属栏收起状态）。
+- **localStorage 键**：`paperdesk.ai.settings.v1`（新增 `memoryPreset` / `memoryEffort`）、**`kaizhi.chatmode.choice.v1`**、**`kaizhi.import.learning.v1`**、**`kaizhi.chatmode.rail.v1`**（1.1.1 会话附属栏收起状态）、**`kaizhi.materials.v1`**（资料检索：最近搜索、AI 排序开关、优先镜像）。
 - **护栏常量**（`frontend/src/memory/scheduler.ts`）：每 3 轮总结、静默 45s、同书冷却 10min、全局冷却 15min、请求间隔 60s、遗留 30min、每日 40 次、超时 90s、失败退避 5/30min、连续 3 次暂停 30min、输出上限 12000 字。
 - **兼容性**：SQLite `user_version` 仍为 1；`import_documents` 参数未变；未新增 npm/Python 依赖。1.1.1 的后端改动只有新增 `backend/services/tempdocs.py` 与 `server.py` 的 TEMP 命令接线，`library.py` / `word.py` / `desktop.py` / `runtime/harness.py` / `harness/*` 未动。
 

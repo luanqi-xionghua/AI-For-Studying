@@ -20,7 +20,7 @@ export function unsupportedImage(cause: unknown): boolean {
   return /(?:unsupported|not support(?:ed)?|does not (?:support|accept)|不支持).{0,60}(?:images?|vision|multimodal|图[片像])|(?:images?|vision|multimodal|图[片像]).{0,60}(?:unsupported|not supported|不支持)|(?:only supports?|仅支持).{0,18}(?:text|文本)|text.only model/i.test(message)
 }
 
-export type CompleteOptions = { kind: UsageKind; translation?: ReturnType<typeof translationSettings>; messages: { role: 'user' | 'assistant' | 'system'; content: string; images?: string[] }[]; fast?: boolean; signal: AbortSignal; onDelta?: (text: string, all: string) => void; onReasoning?: (text: string) => void; /** 学习记忆等附加 system 内容（见 ai/memory-context.ts）。 */ extraInstructions?: string }
+export type CompleteOptions = { kind: UsageKind; translation?: ReturnType<typeof translationSettings>; messages: { role: 'user' | 'assistant' | 'system'; content: string; images?: string[] }[]; fast?: boolean; signal: AbortSignal; onDelta?: (text: string, all: string) => void; onReasoning?: (text: string) => void; /** 学习记忆等附加 system 内容（见 ai/memory-context.ts）。 */ extraInstructions?: string; /** 覆盖默认的 READER_SYSTEM 前缀（资料检索重排用）；不传时保持原行为。 */ systemPrefix?: string }
 
 export async function complete(options: CompleteOptions): Promise<string> {
   // 翻译与快速解释各用自己选的模型预设，其余（/btw、/compress）沿用阅读助手的预设。
@@ -37,6 +37,7 @@ export async function complete(options: CompleteOptions): Promise<string> {
   try {
     await streamChat({ ...settings, ...choice, fast: own ? settings.fast : options.fast ? false : settings.fast, signal: options.signal, messages: options.messages,
       extraInstructions: options.extraInstructions,
+      ...(typeof options.systemPrefix === 'string' ? { systemPrefix: options.systemPrefix } : {}),
       onDelta: (delta: string) => { text += delta; options.onDelta?.(delta, text) }, onReasoning: (delta: string) => options.onReasoning?.(delta),
       onUsage: (usage: { input?: number; output?: number; reasoning?: number }) => { reported = { input: (reported?.input || 0) + (usage.input || 0), output: (reported?.output || 0) + (usage.output || 0), reasoning: (reported?.reasoning || 0) + (usage.reasoning || 0) } } })
   } finally {

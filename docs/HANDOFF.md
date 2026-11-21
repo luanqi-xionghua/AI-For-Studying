@@ -232,3 +232,67 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 8. **回退**：按里程碑 `git revert` 即可；数据层不迁移、不升版本，旧版会把新字段静默丢弃（正文/标题保留）。撤回 M5 后如残留 `chat-temp/` 需要手动删除。
 
 
+
+## 资料检索（三源公开资料目录，待发布 1.2.0）
+
+侧栏新增与「对话模式」「记忆管理」并列的整页「资料检索」：缓存 OpenISE、SYSU-Exam、破壁计划（arxiv.jaison.ink）三个公开来源的资料目录，在本机按课程与意图做 BM25 检索；文档库里已有的书排在最前、网络结果标「你已有」；配置了 AI 预设时由模型在候选集内重排并各写一句理由；结果只给外链，点开交给系统默认浏览器。
+
+### 模块清单
+
+| 层 | 文件 | 职责 |
+| --- | --- | --- |
+| 后端（纯函数） | `backend/services/material_index.py` | NFKC 与中文二元组分词、三源记录解析与过滤、按「文件名+大小」合并去重、BM25 索引、查询解析（课程简称、意图正则、课程边界规则）、置信度闸门、文档库匹配、URL 白名单 |
+| 后端（服务） | `backend/services/materials.py` | 独立 `materials.sqlite3`、三源同步（显式 30s 超时、3 次退避重试、重定向白名单、可取消、WebSocket 进度）、索引懒加载、六个命令、`webbrowser.open` 开外链 |
+| 后端（接线） | `backend/api/server.py` | `MATERIAL` 命令组、`start()` 建实例、`api()` owner 链、`clear()`/`close()` 取消与收尾 |
+| 前端 | `frontend/src/materials/{types,client,state,index}.ts` | 契约、RPC、状态机、默认装配 |
+| 前端 | `frontend/src/components/materials/{MaterialsPage,MaterialResultRow}.vue` | 整页与结果行 |
+| 前端 | `frontend/src/ai/materials.ts` | 重排提示词、序列化、解析校验、超时/超长中止 |
+| 接线 | `App.vue`（6 处）、`AppIcon.vue`（1 行）、`sdk/python.ts`（1 处）、`ai/usage.ts`（2 行）、`ai/complete.ts`（2 行） | 页面入口、图标、通道注销、`discover` 用量、`systemPrefix` 透传 |
+
+### 后端改动范围
+
+- 只**新增**两个 service 文件与一个测试文件；`server.py` 六处接线。
+- **未改动**：`library.py`、`word.py`、`updates.py`、`tempdocs.py`、`core/*`、`runtime/*`、`main.py`、`requirements.txt`、`harness/*`。`library.sqlite3` 的 schema 与 `user_version` 仍为 1，只被只读调用 `list_documents()`。
+- **无新依赖**：分词、BM25、SQLite 全部用标准库 + 已有 aiohttp。
+- 数据文件：`<数据目录>/materials.sqlite3`（WAL），独立于书库，不进备份，损坏时改名 `.corrupt` 并自动重建。
+- 外部访问：`api.github.com`、`arxiv.jaison.ink`；`allow_redirects=False` 且手动跟随只在白名单内，UA 为 `YueqianXingqiong-Materials/<版本>`，不带 Cookie/Authorization。
+- 开外链：`material_open` 只收条目 id，URL 从本机索引取，再过 `validate_open_url`（https、主机白名单、无 userinfo、端口空/443、无 fragment）。资料页**不使用 `<a>`**（`desktop.py` 的 `acceptNavigationRequest` 会把任意 http 链接交给系统打开）。
+
+### 实测数据（2026-11-21）
+
+| 来源 | 原始 | 过滤后 | 合并后主条目 |
+| --- | --- | --- | --- |
+| OpenISE | 2988 blob | 1608 | 1549 |
+| SYSU-Exam | 376 | 301（含 12 个图片目录折叠） | 247 |
+| 破壁计划 materials | 5303 | 2641 | 998 |
+| 破壁计划 packages | 199 | 188 | 188 |
+| 合计 | — | 4738 | **2982** |
+
+索引构建约 90 ms，单次检索 2–10 ms。真实同步约 81 s（57 个请求）。
+
+### 基线（本次实施后实跑）
+
+- 后端：`unittest discover -s backend/tests -t .` → 67 项，其中资料检索 26 项全过；环境性失败 11 项（缺 `harness/dist`、缺 PySide6、缺 DPAPI），与本次改动无关。
+- 前端：`npm test` → **468 项全部通过**（原有 431 + 新增 37）。
+- 前端构建：`npm run build` 通过，`MaterialsPage` 独立 chunk 约 31.6 kB。
+- 未跑：Qt 真机走查（本机没装 PySide6，无法启动桌面壳）；发布前需按方案 §12.4 人工过一遍四种外观。
+
+### 已知限制（本次）
+
+1. **不下载、不预览、不加入文档库**：只给外链。破壁计划的下载接口需要登录，所以产品上不承诺能直接拿到文件。
+2. **只索引目录，不索引正文**：能回答「有没有这份资料」，不能回答「哪份资料里讲了某个定理」。
+3. **不上后台定时同步**：只有用户点「同步/更新索引」才联网；索引超过 7 天只在页面上提示。
+4. **破壁计划是个人站点**：接口没有稳定性承诺，字段或分页行为变化会表现为「部分来源没有连上」，旧索引照常可用。
+5. **GitHub 未认证限速 60 次/小时**：一次同步只用 2 次，并强制 60 秒冷却；被限流时只保留 GitHub 的旧数据。
+6. **AI 重排只在已召回候选内排序**：模型不生成链接；失败、超时、输出超长都静默回落到本地顺序，不弹提示。
+7. **`category` 元数据不可用**：实测 88.6% 是 `other` 或空，所以意图判断完全走标题正则。
+8. **回退**：只新增文件 + 少量接线，按里程碑 `git revert` 即可；旧版本程序会忽略 `materials.sqlite3`，`localStorage['kaizhi.materials.v1']` 留着无害。
+
+### 1.2.0 增补：查询改写（AI 辅助的第一步）
+
+- 位置：`frontend/src/ai/materials.ts`（`REWRITE_SYSTEM` / `parseRewrite` / `rewriteQuery`）+ `materials/state.ts` 的 `submit()`（`rewriteForSearch`）。
+- 时机：`prefs.aiRerank` 为真、`rerankAvailable().ok` 为真、查询长度 ≥ 2 时，先调一次小模型（`kind:'discover'`、`fast:true`、阅读助手预设）把口语改写成「规范课程名 + 资料类型」。
+- 兜底：改写失败/超时（8s）/输出为空/越界，一律回落到原查询；改写后 `found=false` 时用原话再搜一次，原话有结果就以原话为准。
+- 展示：`state.search.rewritten` 非空时，页面在搜索框下方显示「已按「…」检索」。
+- 接口开关：页面上的「AI 排序」改名为「AI 辅助」，一处开关同时管改写与重排。
+- 测试：`materials-rerank.test.mjs` 增 5 项（解析、空输出、截断、调用参数、超时中止）；`materials-state.test.mjs` 增 4 项（改写生效、失败回落、改写无结果回落、无预设不改写）。

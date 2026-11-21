@@ -1,12 +1,12 @@
 /**
- * 用量账本：本次打开应用以来每一次模型请求（对话、侧边对话、/btw、/compress、翻译、问题预判、对话模式、记忆更新）
+ * 用量账本：本次打开应用以来每一次模型请求（对话、侧边对话、/btw、/compress、翻译、问题预判、对话模式、记忆更新、资料检索重排）
  * 的 token 用量与用时，供 /usage 面板汇总；按天的合计存在本机，用来画「今天」那一条。
  */
 import { reactive } from 'vue'
 
-export type UsageKind = 'chat' | 'side' | 'btw' | 'compress' | 'translate' | 'predict' | 'explain' | 'chatmode' | 'memory'
+export type UsageKind = 'chat' | 'side' | 'btw' | 'compress' | 'translate' | 'predict' | 'explain' | 'chatmode' | 'memory' | 'discover'
 export type UsageEntry = { kind: UsageKind; provider: string; model: string; input: number; output: number; reasoning: number; estimated: boolean; ms: number; at: number }
-export const USAGE_KINDS: Record<UsageKind, string> = { chat: '主对话', side: '侧边对话', btw: '/btw 顺便问', compress: '/compress 压缩', translate: '翻译', predict: '问题预判', explain: '快速解释', chatmode: '对话模式', memory: '记忆更新' }
+export const USAGE_KINDS: Record<UsageKind, string> = { chat: '主对话', side: '侧边对话', btw: '/btw 顺便问', compress: '/compress 压缩', translate: '翻译', predict: '问题预判', explain: '快速解释', chatmode: '对话模式', memory: '记忆更新', discover: '资料检索' }
 
 const DAILY_KEY = 'kaizhi.usage.daily.v1'
 const KEEP_DAYS = 14
