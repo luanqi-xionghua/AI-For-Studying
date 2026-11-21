@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { MANIFOLDS, MANIFOLD_IDS, THEOREMS, buildMesh, nextManifold } from '../../src/sketch/manifolds.ts'
+import { MANIFOLDS, MANIFOLD_IDS, DEFAULT_SCENE_IDS, THEOREMS, buildMesh, nextManifold } from '../../src/sketch/manifolds.ts'
 import { defaultPreferences, normalizePreferences, preferenceErrors } from '../../src/settings/model.ts'
 
 test('the Dijkstra path animation skips the trailing out-of-range point', async () => {
@@ -40,14 +40,20 @@ test('the next manifold differs from the current one when there is a choice', ()
   assert.equal(nextManifold(['nope'], undefined), undefined)
 })
 
-test('manifold preferences: shown in the library, hidden while reading, all shapes by default; at least one shape kept', () => {
-  assert.deepEqual(defaultPreferences().appearance.manifold, { show: true, reader: false, shapes: MANIFOLD_IDS, known: MANIFOLD_IDS })
+test('manifold preferences: shown in the library, hidden while reading, curated shapes by default; at least one shape kept', () => {
+  assert.deepEqual(defaultPreferences().appearance.manifold, { show: true, reader: false, shapes: DEFAULT_SCENE_IDS, known: MANIFOLD_IDS })
+  // 默认只开 8 个流形 + 4 个精选草稿；9 个神经网络默认关闭。
+  assert.equal(DEFAULT_SCENE_IDS.length, 12)
+  assert.deepEqual(DEFAULT_SCENE_IDS.slice(8), ['dna', 'cayley', 'higgs', 'dijkstra'])
+  for (const id of ['transformer', 'cnn', 'mlp', 'lstm', 'autoencoder', 'resnet', 'unet', 'gan', 'gnn']) {
+    assert.ok(!DEFAULT_SCENE_IDS.includes(id), `${id} 默认应当关闭`)
+  }
   const custom = normalizePreferences({ appearance: { manifold: { show: false, reader: true, shapes: ['klein', 'boy', 'boy', 'sphere'] } } })
   // Settings saved before a scene existed get that scene switched on once; `known` then records it.
   assert.deepEqual(custom.appearance.manifold, { show: false, reader: true, shapes: ['klein', 'boy', 'rsi'], known: MANIFOLD_IDS })
   // Saved again with the new scene unticked: it stays off.
   assert.deepEqual(normalizePreferences({ appearance: { manifold: { shapes: ['klein', 'boy'], known: MANIFOLD_IDS } } }).appearance.manifold.shapes, ['klein', 'boy'])
-  assert.deepEqual(normalizePreferences({ appearance: { manifold: { shapes: ['sphere'] } } }).appearance.manifold.shapes, MANIFOLD_IDS)
+  assert.deepEqual(normalizePreferences({ appearance: { manifold: { shapes: ['sphere'] } } }).appearance.manifold.shapes, DEFAULT_SCENE_IDS)
   assert.deepEqual(preferenceErrors(custom), [])
   assert.ok(preferenceErrors({ ...custom, appearance: { ...custom.appearance, manifold: { show: true, reader: false, shapes: [] } } }).includes('请至少选择一种流形。'))
 })
@@ -61,7 +67,7 @@ test('neural networks build finite graphs and rotate with the manifolds; every n
   for (const item of SKETCHES) { assert.ok(item.facts.length >= 8, item.id); for (const fact of item.facts) assert.ok(!/[\u4e00-\u9fff]/.test(fact) && !/GB300/i.test(fact), fact) }
   // 存着旧的一整套画面：升级后带上新画面；自己挑过的不动。
   const { LEGACY_SCENE_IDS } = await import('../../src/sketch/manifolds.ts')
-  assert.deepEqual(normalizePreferences({ appearance: { manifold: { shapes: LEGACY_SCENE_IDS } } }).appearance.manifold.shapes, MANIFOLD_IDS)
+  assert.deepEqual(normalizePreferences({ appearance: { manifold: { shapes: LEGACY_SCENE_IDS } } }).appearance.manifold.shapes, DEFAULT_SCENE_IDS)
   assert.deepEqual(MANIFOLD_IDS, SCENES.map(item => item.id))
   for (const network of NETWORKS) {
     const graph = network.build()

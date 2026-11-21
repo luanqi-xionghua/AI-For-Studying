@@ -194,6 +194,12 @@ export const SCENES: { id: string; name: string; kind: 'manifold' | 'network' | 
 export const LEGACY_SCENE_IDS = [...MANIFOLDS, ...NETWORKS.filter(item => !['resnet', 'unet', 'gan', 'gnn'].includes(item.id))].map(item => item.id)
 export const MANIFOLD_IDS = SCENES.map(item => item.id)
 
+/** 默认勾选的画面：8 个流形 + 4 个精选草稿（DNA、凯莱图、墨西哥帽势、Dijkstra）。其余默认关闭，可在设置里自己勾。 */
+export const DEFAULT_SCENE_IDS = [
+  ...MANIFOLDS.map(item => item.id),
+  'dna', 'cayley', 'higgs', 'dijkstra',
+]
+
 /** Next scene to show: a different one from the list when there is a choice. */
 export function nextManifold(ids: string[], current: string | undefined, random = Math.random): string | undefined {
   const pool = ids.filter(id => MANIFOLD_IDS.includes(id))
