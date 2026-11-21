@@ -225,6 +225,8 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       // 重新回答沿用同一个用户消息：那一轮当时带过附件，就一直按「带附件的回合」处理。
       if ((user.attach?.images ?? 0) > 0 || Boolean(user.attach?.docs?.length)) attachmentsThisTurn = true
       imagesThisTurn = user.images || []
+      // 兜底：内存里还留着图片，但标记丢了（旧数据 / 手工构造）时也算带附件。
+      if (imagesThisTurn.length) attachmentsThisTurn = true
       turn = user
     } else {
       turn = { id: deps.uuid(), role: 'user', content: text, memory: emptyTag(options.scope.kind) }

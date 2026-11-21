@@ -37,8 +37,8 @@ test('images: the budget caps six images and eight megabytes', () => {
   const tooBig = image(CHAT_ATTACH_LIMITS.imageTotalChars + 1)
   assert.equal(imageBudget([tooBig]).reason, 'chars')
   assert.equal(addImageToDraft([image(CHAT_ATTACH_LIMITS.imageTotalChars - 10)], image(100)).reason, 'chars')
-  assert.equal(imageBudgetText(six), '6/6 · 0.0 MB / 8.0 MB')
-  assert.equal(imageBudgetText([image(1024 * 1024)]), '1/6 · 1.0 MB / 8.0 MB')
+  assert.equal(imageBudgetText(six), '图片 6/6 · 0.0 MB / 8.0 MB')
+  assert.equal(imageBudgetText([image(1024 * 1024)]), '图片 1/6 · 1.0 MB / 8.0 MB')
 })
 
 test('images: adding a valid image appends without touching the original array', () => {

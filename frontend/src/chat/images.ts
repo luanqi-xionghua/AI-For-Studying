@@ -53,10 +53,10 @@ export function addImageToDraft(draft: readonly string[], dataUrl: string): { im
 
 const megabytes = (chars: number) => (chars / (1024 * 1024)).toFixed(1)
 
-/** 预览条上的预算文案：「3/6 · 2.4 MB / 8 MB」。 */
+/** 预览条上的预算文案：「图片 3/6 · 2.4 MB / 8 MB」。 */
 export function imageBudgetText(images: readonly string[]): string {
   const chars = images.reduce((sum, image) => sum + image.length, 0)
-  return `${images.length}/${CHAT_ATTACH_LIMITS.images} · ${megabytes(chars)} MB / ${megabytes(CHAT_ATTACH_LIMITS.imageTotalChars)} MB`
+  return `图片 ${images.length}/${CHAT_ATTACH_LIMITS.images} · ${megabytes(chars)} MB / ${megabytes(CHAT_ATTACH_LIMITS.imageTotalChars)} MB`
 }
 
 /**
