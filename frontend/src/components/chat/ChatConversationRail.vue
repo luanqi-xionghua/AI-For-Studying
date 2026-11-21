@@ -68,12 +68,13 @@ async function startRename(row: ChatRailRow) {
   renameField.value?.focus()
   renameField.value?.select()
 }
-function commitRename(row: ChatRailRow) {
+function commitRename(row: ChatRailRow, refocus = false) {
   if (renamingId.value !== row.id) return
   renamingId.value = ''
   const value = draftTitle.value.trim()
   if (value !== row.title) emit('rename', row.id, value)
-  focusRow(row.id)
+  // 只有显式按 Enter 才把焦点放回该行；失焦提交时不要再抢焦点（用户可能点了别的行）。
+  if (refocus) focusRow(row.id)
 }
 function cancelRename() {
   const id = renamingId.value
@@ -112,6 +113,11 @@ function onVisibility() {
 
 watch(() => props.rows.map(row => row.id).join(','), () => {
   if (focusIndex.value > visible.value.length - 1) focusIndex.value = Math.max(0, visible.value.length - 1)
+})
+// 搜索结果变化后 roving tabindex 回到第一行，避免焦点索引指向被过滤掉的行。
+watch(query, () => { focusIndex.value = 0 })
+watch(() => visible.value.length, length => {
+  if (focusIndex.value > length - 1) focusIndex.value = Math.max(0, length - 1)
 })
 watch(() => props.activeId, id => {
   const index = rowIndexOf(id)
@@ -173,7 +179,7 @@ defineExpose({
             :maxlength="TITLE_LIMIT"
             :aria-label="`重命名「${titleOf(row)}」`"
             @input="draftTitle = ($event.target as HTMLInputElement).value"
-            @keydown.enter.prevent="commitRename(row)"
+            @keydown.enter.prevent="commitRename(row, true)"
             @keydown.esc.prevent.stop="cancelRename()"
             @blur="commitRename(row)"
           />

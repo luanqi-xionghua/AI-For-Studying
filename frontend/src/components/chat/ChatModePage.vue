@@ -182,9 +182,16 @@ function applyScope(scope: MemoryScope) {
   else chat.setScope(current.id, scope)
 }
 async function selectConversation(id: string) {
+  const fromDrawer = narrow.value && drawerOpen.value
   await chat.open(id)
   chat.state.activeId = id
-  if (narrow.value) drawerOpen.value = false
+  // 计划 §3.6：抽屉的每条关闭路径都要把焦点还给「对话列表」按钮（选中某行也算关闭）。
+  if (fromDrawer) {
+    drawerOpen.value = false
+    await nextTick()
+    railToggle.value?.focus()
+    return
+  }
   focus()
 }
 function renameConversation(id: string, title: string) { void chat.rename(id, title) }
