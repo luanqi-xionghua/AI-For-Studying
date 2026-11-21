@@ -1,8 +1,8 @@
 # 阅迁星穹 · 交接文档（目录结构与文件职责）
 
-> 适用版本：**v1.1.0**（`backend/__init__.py` → `VERSION = "1.1.0"`）
-> 对应提交：`3345484`（GitHub `luanqi-xionghua/AI-For-Studying` 的 `main`）
-> 文档生成：2026-11-20
+> 适用版本：**v1.1.5**（`backend/__init__.py` → `VERSION = "1.1.5"`）
+> 对应提交：`v1.1.5`（GitHub `luanqi-xionghua/AI-For-Studying` 的 `main`）
+> 文档生成：2026-11-20（2026-11-21 随 1.1.5 更新）
 > 阅读建议：先看第 1、2 节了解全貌，再按目录查具体文件；第 8–12 节是接手后最常用的数据、命令与注意事项。
 
 ---
