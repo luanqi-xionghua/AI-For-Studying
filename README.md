@@ -185,3 +185,5 @@ npm.cmd --prefix frontend run build                                   # 类型�
 ## License
 
 项目代码使用 [MIT 许可](LICENSE)；第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+本项目是在 [graohene10-spec/pdf-copilot](https://github.com/graohene10-spec/pdf-copilot) 的基础上重写并扩展而来。上游以 MIT 许可发布（`Copyright (c) 2026 PDF Copilot contributors`），本项目按 MIT 要求保留其版权声明；上游许可原文见 [LICENSE-pdf-copilot](LICENSE-pdf-copilot)。

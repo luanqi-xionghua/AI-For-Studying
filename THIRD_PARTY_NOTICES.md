@@ -17,3 +17,9 @@
 用户在设置中导入的字体保存在其本机文档库，不会加入项目发布包。
 
 AI 模型调用使用 DeepSeek Harness 的 `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-llm-pi-ai` 与 Cordis，不分发用户登录凭据。依赖版本见 `harness/package-lock.json`。构建脚本在 `harness/dist/licenses/` 收集模型运行时与 Node.js 的许可文本并随 EXE 分发。
+
+## 上游项目：pdf-copilot（MIT）
+
+本项目（阅迁星穹）是在 [graohene10-spec/pdf-copilot](https://github.com/graohene10-spec/pdf-copilot) 的基础上重写并扩展而来。上游是 Edge / Chrome 的轻量 PDF 阅读与 AI 对话扩展（附可选的 Windows Codex 小助手）；本项目是 Windows 桌面阅读器：桌面外壳、本机 Python 服务、阅读器、助手与界面均为重写，同时沿用了原有的产品思路与部分实现。
+
+上游以 MIT 许可发布，版权声明为 `Copyright (c) 2026 PDF Copilot contributors`。按 MIT 许可要求，本项目随包的 `LICENSE`（安装版内为 `LICENSE.txt`）保留了该版权行与完整许可文本；上游许可原文另存为仓库根目录的 [LICENSE-pdf-copilot](LICENSE-pdf-copilot)。
