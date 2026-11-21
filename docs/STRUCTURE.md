@@ -68,7 +68,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | 文件 | 作用 |
 | --- | --- |
 | `backend/api/__init__.py` | 包说明。 |
-| `backend/api/server.py` | 一个桌面实例一个回环监听器：Host/Origin/令牌校验、`POST /api/{cmd}` 命令分派、`/events` WebSocket 事件通道、`/` 静态文件（`frontend/dist`）服务。命令按 GUI / DATA / AI / UPDATE 四类映射到对应服务对象。 |
+| `backend/api/server.py` | 一个桌面实例一个回环监听器：Host/Origin/令牌校验、`POST /api/{cmd}` 命令分派、`/events` WebSocket 事件通道、`/` 静态文件（`frontend/dist`）服务。命令按 GUI / DATA / AI / UPDATE / TEMP 五类映射到对应服务对象（TEMP：`temp_doc_pick/prepare/read/release`）。 |
 
 ### 3.3 core/（桌面外壳与 Windows 能力）
 
@@ -93,6 +93,7 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | `backend/services/library.py` | 文档库 SQLite（保持旧 schema 与前端字段名）：文档条目、设置键、索引、导入/移除、备份/恢复、设置读取（含 1 MiB 上限）。 |
 | `backend/services/word.py` | Word（.doc/.docx）→ PDF：依次尝试本机 Word、WPS、LibreOffice；带超时、临时目录、缓存与错误分类。 |
 | `backend/services/updates.py` | 应用更新：读取 GitHub Release（只认 `vX.Y.Z`）、校验 SHA-256 摘要、下载、静默安装/便携版替换、打开页面。 |
+| `backend/services/tempdocs.py`（1.1.1） | 对话模式的临时文档：原生对话框选中的文件登记成不透明句柄（路径只留在后端）、扩展名/大小/文件头/UTF-8 校验、Word 转 PDF、指纹校验、临时目录与清理、固定错误码（`TEMP_*`，永不含路径）。 |
 
 ### 3.6 scripts/（自检脚本）
 
@@ -165,16 +166,22 @@ DeepSeek Harness（Node.js 子进程，harness/）
 | `frontend/src/ai/request-scheduler.mjs` | 全应用请求队列（并发、排队、取消）；只放调度元数据。 |
 | `frontend/src/ai/storage-codec.mjs` | 大设置值的 UTF-8 分块与拼回（SQLite 设置值有上限）。 |
 
-### 4.4 src/chat/（对话模式，1.1.0 新增）
+### 4.4 src/chat/（对话模式，1.1.0 新增；1.1.1 加附件与附属栏）
 
 | 文件 | 作用 |
 | --- | --- |
-| `frontend/src/chat/types.ts` | 对话模式类型与上限：会话、消息、记忆范围标记、模型选择、索引、`CHAT_LIMITS`。 |
-| `frontend/src/chat/history.ts` | 历史裁剪（最后一条必留、最多 12 条/40000 字、首条助手消息去掉）、`wireMessages`、标题生成。 |
+| `frontend/src/chat/types.ts` | 对话模式类型与上限：会话、消息、记忆范围标记、模型选择、索引、`CHAT_LIMITS`；1.1.1 加附件描述符/标记/引用/进度、`CHAT_ATTACH_LIMITS`（6 张 / 8 MB / 3 份文档 / 超时与预算）。 |
+| `frontend/src/chat/history.ts` | 历史裁剪（最后一条必留、最多 12 条/40000 字、首条助手消息去掉）、`wireMessages`（历史引用转纯文本、带图旧消息补文字标记）、标题生成。 |
 | `frontend/src/chat/choice.ts` | 对话模式自己的模型选择：localStorage 存取、连接指纹校验、按预设/模型/强度解析与回退。 |
-| `frontend/src/chat/storage.ts` | 会话持久化：清单键 + 每会话键、结构归一化、落库前截断（正文 60000/思考 4000/60 条）、超 900 KiB 先丢思考再成对丢旧消息、40 段上限、冻结。 |
-| `frontend/src/chat/state.ts` | 对话状态：加载/新建/切换/删除会话，发送/停止/重新生成，校验（16000 字、60 条、150000 字、2 路并发），取记忆注入、发 `chat-turn` 学习事件、记用量、500ms 防抖落库。 |
-| `frontend/src/chat/index.ts` | 默认实例装配：接真实 `library` 存储、懒加载 `streamChat`、用量、事件总线、storage-gate；导出 `chat`、`chatBusy`。 |
+| `frontend/src/chat/storage.ts` | 会话持久化：清单键 + 每会话键、结构归一化（附件/标记/引用/`skipped`）、落库前剥运行时字段与临时文档文件名、超 900 KiB 先丢思考再去较早引用再成对丢旧消息、索引读改写串行化、40 段上限、冻结。 |
+| `frontend/src/chat/state.ts` | 对话状态：加载/新建/切换/重命名/删除会话，发送/停止/重新生成，校验，取记忆注入、纯文字回合发 `chat-turn`、带附件回合走编排层并按规则跳过写入，记用量、草稿图片与附件运行时状态、500ms 防抖落库（附件改动立即落库）。 |
+| `frontend/src/chat/index.ts` | 默认实例装配：接 `library`/`tempDocs` 存储、懒加载 `streamChat`、`compare` 与文档管道、用量、事件总线、storage-gate；导出 `chat`、`chatBusy`。 |
+| `frontend/src/chat/memory-rule.ts`（1.1.1） | `learningTargets(scope, hasAttachments)`：带附件一律不写；文档范围写 doc + global；全局只写 global；不使用记忆不写。 |
+| `frontend/src/chat/rail.ts`（1.1.1） | 会话附属栏纯逻辑：标题搜索（忽略大小写与空白）、按更新时间倒序且当前空会话置顶、`kaizhi.chatmode.rail.v1` 收起偏好。 |
+| `frontend/src/chat/images.ts`（1.1.1） | 图片采集与预算：5 种位图、单文件 ≤20 MiB、6 张 / 8 MB、压缩成长边 ≤1600 的 data URL（复用框选截图管道）。 |
+| `frontend/src/chat/attachments.ts`（1.1.1） | 附件规则：三个按钮的可用性与原因、`hasAttachments`、上下文估算、`perDocLimits` 预算表、`friendlyDocError`/`friendlyTempError`（固定文案、永不含路径）、运行时状态文案。 |
+| `frontend/src/chat/compare.ts`（1.1.1） | 带附件回合编排：T1 图片一次调用；T2 单本 `streamDocumentChat`；T3 每本证据笔记（并发 2）+ 合成（只有合成带图）；超时、失败隔离、sourceId 冲突重开会话、用量逐条记。 |
+| `frontend/src/chat/citations.ts`（1.1.1） | 证据索引与引用：只收集正文引用过的 `[sourceId]`（≤40）、渲染成〔《书名》第 N 页/行〕、「参考原文」分组、历史纯文本化。 |
 
 ### 4.5 src/memory/（学习记忆与记忆管理，1.1.0 新增）
 
@@ -212,11 +219,13 @@ DeepSeek Harness（Node.js 子进程，harness/）
 
 | 文件 | 作用 |
 | --- | --- |
-| `ChatModePage.vue` | 对话模式整页：加载/切换会话、记忆范围状态、发送/停止/重新生成、历史与删除确认；记忆范围选择器在输入栏（scope 槽位）。 |
+| `ChatModePage.vue` | 对话模式整页：会话附属栏 + 主列布局、加载/切换/重命名/删除会话、记忆范围状态、附件运行时（文档探测、临时上传与转换、失效标记）、图片草稿、发送/停止/重新生成；记忆范围选择器在输入栏（scope 槽位），附件预览在 attachments 槽位，三个附件按钮在 attach 槽位；窄窗口时附属栏转为抽屉。 |
 | `MemoryScopePicker.vue` | 记忆范围选择弹层（不使用/全局/某本书 + 搜索）；在输入栏内向上展开。 |
-| `ChatHistoryPanel.vue` | 对话历史与「新对话」：列表、范围标记、删除入口。 |
-| `ChatMessageList.vue` | 消息列表：空态/无预设空态、思考折叠、Markdown 回答、停止/失败标记、复制/重新生成、自动滚动。 |
-| `ChatComposer.vue` | 输入栏：Enter/Shift+Enter、字数与禁用、用量、记忆范围槽位（scope）、模型按钮抽屉、停止/发送、隐私说明。 |
+| `ChatConversationRail.vue`（1.1.1） | 会话附属栏：新建、搜索、切换、行内重命名、删除、回答中标记、相对时间刷新、roving tabindex 与 F2/Delete、常驻与抽屉两形态、收起。 |
+| `ChatAttachmentBar.vue`（1.1.1） | 附件预览条：文档 chip（标题、临时标签、转换中/已移除/找不到/已失效）、图片缩略图与预算、不识图警示与「移除全部图片」。 |
+| `ChatDocumentPicker.vue`（1.1.1） | 文档库多选弹层：搜索、原生复选框、已附加/缺失不可选、剩余额度、添加 N 份、Esc 关闭。 |
+| `ChatMessageList.vue` | 消息列表：空态/无预设空态、思考折叠、Markdown 回答、引用渲染与「参考原文」、每本检索进度、用量合计、停止/失败标记、复制/重新生成、自动滚动。 |
+| `ChatComposer.vue` | 输入栏：Enter/Shift+Enter、字数与禁用、用量、记忆范围/附件预览/附件按钮三个槽位、图片粘贴与拖入、模型按钮抽屉、停止/发送、隐私说明（有附件时追加）。 |
 
 #### memory/ 记忆管理页面组件
 
@@ -493,13 +502,14 @@ DeepSeek Harness（Node.js 子进程，harness/）
   - `web/`、`web-cache/`：Qt WebEngine 的 localStorage/缓存（页面偏好、对话模式模型选择等）。
   - `credentials`：DPAPI 加密的 API 凭据。
   - `desktop-port.txt`：本机服务端口（保持 origin 稳定）。
+  - `chat-temp/<handle>/`（1.1.1）：临时文档里 Word 转出的 PDF；启动、页面断开、退出、删除会话或移除 chip 时清理，不进备份。
 - **SQLite settings 键**（1.1.0 新增粗体）：
   - 既有：文档/设置/对话相关键（保持旧语义不变）。
   - **`memory.v1.index` / `memory.v1.global` / `memory.v1.doc.<docId>` / `memory.v1.settings`**
-  - **`chatmode.v1.index` / `chatmode.v1.c.<conversationId>`**
-- **localStorage 键**：`paperdesk.ai.settings.v1`（新增 `memoryPreset` / `memoryEffort`）、**`kaizhi.chatmode.choice.v1`**、**`kaizhi.import.learning.v1`**。
+  - **`chatmode.v1.index` / `chatmode.v1.c.<conversationId>`**（1.1.1 起这两个键的值里可能带 `attachments` / `customTitle` / 消息的 `attach` / `refs` / `skipped`，全部是可选字段，版本号仍为 1）
+- **localStorage 键**：`paperdesk.ai.settings.v1`（新增 `memoryPreset` / `memoryEffort`）、**`kaizhi.chatmode.choice.v1`**、**`kaizhi.import.learning.v1`**、**`kaizhi.chatmode.rail.v1`**（1.1.1 会话附属栏收起状态）。
 - **护栏常量**（`frontend/src/memory/scheduler.ts`）：每 3 轮总结、静默 45s、同书冷却 10min、全局冷却 15min、请求间隔 60s、遗留 30min、每日 40 次、超时 90s、失败退避 5/30min、连续 3 次暂停 30min、输出上限 12000 字。
-- **兼容性**：后端 Python 零改动；SQLite `user_version` 仍为 1；`import_documents` 参数未变；未新增 npm/Python 依赖（1.0.5 → 1.1.0）。
+- **兼容性**：SQLite `user_version` 仍为 1；`import_documents` 参数未变；未新增 npm/Python 依赖。1.1.1 的后端改动只有新增 `backend/services/tempdocs.py` 与 `server.py` 的 TEMP 命令接线，`library.py` / `word.py` / `desktop.py` / `runtime/harness.py` / `harness/*` 未动。
 
 ## 9. 运行、构建、测试命令
 

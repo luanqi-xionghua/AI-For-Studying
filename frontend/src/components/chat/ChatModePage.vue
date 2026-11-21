@@ -4,7 +4,8 @@ import { chat } from '../../chat'
 import { loadChatChoice, resolveChatChoice, saveChatChoice, type ResolvedChatChoice } from '../../chat/choice.ts'
 import { wireMessages } from '../../chat/history.ts'
 import { loadRailPreference, railRows, saveRailPreference, type ChatRailRow } from '../../chat/rail.ts'
-import { attachAvailability, attachmentContextTokens, friendlyDocError, type PickableDoc } from '../../chat/attachments.ts'
+import { attachAvailability, attachmentContextTokens, friendlyDocError, friendlyTempError, type PickableDoc } from '../../chat/attachments.ts'
+import { tempDocs } from '../../sdk'
 import { addImageToDraft, imageFilesFrom, toDataUrl } from '../../chat/images.ts'
 import { CHAT_ATTACH_LIMITS, type ChatDocAttachment, type ChatModelChoice } from '../../chat/types.ts'
 import type { ChatDocRuntime, LiveConversation } from '../../chat/state.ts'
@@ -42,6 +43,7 @@ const rail = ref<{ focusSearch?: () => void; focusActive?: () => void }>()
 const imageInput = ref<HTMLInputElement>()
 const libraryButton = ref<HTMLButtonElement>()
 const pickerOpen = ref(false)
+const pickingTemp = ref(false)
 const attachNotice = ref('')
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
 const confirmRemove = ref<{ id: string; title: string } | null>(null)
@@ -103,6 +105,7 @@ const availability = computed(() => attachAvailability({
   images: draftImages.value.length,
   docs: docsCount.value,
   libraryEmpty: !(props.libraryDocs?.length),
+  picking: pickingTemp.value,
 }))
 const contextUsed = computed(() => {
   const messages = conversation.value ? wireMessages(conversation.value) : []
@@ -331,8 +334,68 @@ function attachDocuments(ids: string[]) {
 function removeDocument(aid: string) {
   const live = conversation.value
   if (!live || live.request) return
+  const doc = (live.attachments || []).find(item => item.id === aid)
+  const handle = live.runtime.get(aid)?.handle
   live.runtime.delete(aid)
-  chat.setAttachments(live.id, (live.attachments || []).filter(doc => doc.id !== aid))
+  chat.setAttachments(live.id, (live.attachments || []).filter(item => item.id !== aid))
+  // 临时文档：让后端删掉临时目录；转换中的只打取消标记，结束后清理。
+  if (doc?.source === 'temp' && handle) void tempDocs.release([handle])
+}
+/** 上传电脑上的文档：后端调起原生对话框，前端只拿句柄；Word 转换阶段显示在 chip 上。 */
+async function pickTemp() {
+  const live = conversation.value
+  if (!live) return
+  if (availability.value.temp.disabled) { notifyAttach(availability.value.temp.tip); return }
+  pickingTemp.value = true
+  try {
+    const room = Math.max(1, CHAT_ATTACH_LIMITS.docs - docsCount.value)
+    const result = await tempDocs.pick(room)
+    if (result.rejected?.length) notifyAttach(friendlyTempError(result.rejected[0].error))
+    if (!result.items?.length) return
+    const next = [...(live.attachments || [])]
+    let tempCount = next.filter(item => item.source === 'temp').length
+    const preparing: { id: string; handle: string }[] = []
+    for (const item of result.items) {
+      if (next.length >= CHAT_ATTACH_LIMITS.docs) break
+      tempCount++
+      const id = crypto.randomUUID()
+      next.push({ id, source: 'temp', title: `临时文档 ${tempCount}`, kind: item.kind, addedAt: Date.now() })
+      live.runtime.set(id, { status: 'preparing', handle: item.handle, name: item.name })
+      preparing.push({ id, handle: item.handle })
+    }
+    chat.setAttachments(live.id, next)
+    if (preparing.length) void prepareTemps(live, preparing)
+  } catch (error) {
+    notifyAttach(friendlyTempError(error))
+  } finally {
+    pickingTemp.value = false
+  }
+}
+async function prepareTemps(live: LiveConversation, items: { id: string; handle: string }[]) {
+  for (const item of items) {
+    const attached = () => (live.attachments || []).some(doc => doc.id === item.id)
+    try {
+      await tempDocs.prepare(item.handle, stage => {
+        const runtime = live.runtime.get(item.id)
+        if (!runtime) return
+        live.runtime.set(item.id, { ...runtime, status: 'preparing', error: stage === 'office' ? '正在用 Office 转换…' : '正在用 LibreOffice 转换…' })
+      })
+      if (!attached()) { void tempDocs.release([item.handle]); continue }
+      const runtime = live.runtime.get(item.id)
+      live.runtime.set(item.id, { status: 'ready', handle: item.handle, ...(runtime?.name ? { name: runtime.name } : {}) })
+    } catch (error) {
+      if (!attached()) continue
+      const message = friendlyTempError(error)
+      if (message === '已取消。' || message.includes('已取消')) {
+        chat.setAttachments(live.id, (live.attachments || []).filter(doc => doc.id !== item.id))
+        live.runtime.delete(item.id)
+        continue
+      }
+      const runtime = live.runtime.get(item.id)
+      live.runtime.set(item.id, { status: 'error', handle: item.handle, error: message, ...(runtime?.name ? { name: runtime.name } : {}) })
+      notifyAttach(message)
+    }
+  }
 }
 
 // 模型在识图 / 不识图之间切换时，「扫描件」的状态要跟着变。
@@ -524,6 +587,16 @@ defineExpose({ focusPrompt })
                 @pick="attachDocuments"
                 @close="closePicker"
               />
+            </div>
+            <div class="attach-host">
+              <button
+                type="button"
+                class="attach-button"
+                :aria-disabled="availability.temp.disabled ? 'true' : undefined"
+                aria-label="上传电脑上的文档（临时，不进文档库）"
+                :data-tip="availability.temp.tip"
+                @click="pickTemp"
+              ><AppIcon name="import" :size="16" /></button>
             </div>
           </template>
         </ChatComposer>

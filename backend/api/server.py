@@ -11,12 +11,14 @@ from aiohttp import ClientSession, DummyCookieJar, WSMsgType, web
 
 from ..runtime.harness import Harness
 from ..services.library import Library
+from ..services.tempdocs import TempDocs
 from ..services.updates import Updates
 from ..core.windows import Credentials
 
 DATA = "get_startup_settings list_documents import_documents relocate_document backup_database restore_database read_document update_document remove_document read_asset index_document get_setting set_setting delete_setting".split()
 AI = {"ai_start", "ai_cancel", "ai_tool_result", "ai_set_key", "ai_has_key"}
 UPDATE = "update_status update_check update_download update_cancel update_install update_open_page".split()
+TEMP = {"temp_doc_pick", "temp_doc_prepare", "temp_doc_read", "temp_doc_release"}
 GUI = [
     "select_files",
     "select_backup_destination",
@@ -29,6 +31,7 @@ GUI = [
 class DesktopService:
     def __init__(self, root, dist, gui):
         self.lib = Library(root)
+        self.temp = TempDocs(root)
         self.creds = Credentials(root)
         self.dist = Path(dist).resolve()
         self.gui = gui
@@ -130,6 +133,22 @@ class DesktopService:
 
         return lambda event: asyncio.run_coroutine_threadsafe(send(event), loop)
 
+    async def temp_pick(self, args):
+        """后端自己调起原生文件对话框；前端只拿到句柄、文件名与类型。"""
+        try:
+            limit = max(1, min(3, int(args.get("limit", 1))))
+        except (TypeError, ValueError):
+            limit = 1
+        paths = await self.gui(
+            "select_files",
+            {"title": "选择要临时附加的文档（不会加入文档库）", "multiple": limit > 1},
+        )
+        if not paths:
+            paths = []
+        elif isinstance(paths, str):
+            paths = [paths]
+        return await asyncio.to_thread(self.temp.add, list(paths), limit)
+
     async def events(self, req):
         ws = web.WebSocketResponse(max_msg_size=1024, heartbeat=30)
         await ws.prepare(req)
@@ -166,6 +185,8 @@ class DesktopService:
                 raise ValueError("AI 事件通道尚未连接")
             if cmd in GUI:
                 value = await self.gui(cmd, args)
+            elif cmd == "temp_doc_pick":
+                value = await self.temp_pick(args)
             else:
                 owner = (
                     self.lib
@@ -174,12 +195,16 @@ class DesktopService:
                     if cmd in AI
                     else self.up
                     if cmd in UPDATE
+                    else self.temp
+                    if cmd in TEMP
                     else None
                 )
                 if owner is None:
                     raise web.HTTPNotFound()
                 fn = getattr(owner, cmd)
                 if cmd == "import_documents" and args.get("onProgress") is not None:
+                    args["onProgress"] = self.progress(args["onProgress"])
+                if cmd == "temp_doc_prepare" and args.get("onProgress") is not None:
                     args["onProgress"] = self.progress(args["onProgress"])
                 value = (
                     await fn(**args)
@@ -205,6 +230,7 @@ class DesktopService:
             )
 
     async def clear(self):
+        self.temp.release_all()
         await self.ai.close()
         await self.up.update_cancel()
 
@@ -212,5 +238,6 @@ class DesktopService:
         if self.ws is not None:
             await self.ws.close()
         await self.clear()
+        self.temp.shutdown()
         await self.runner.cleanup()
         await self.client.close()

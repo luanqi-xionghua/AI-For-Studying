@@ -208,6 +208,29 @@ test('compare T2: one document streams through streamDocumentChat and collects c
   assert.equal(w.calls.closed >= 2, true)
 })
 
+test('compare T2: a temporary document is read through the injected reader', async () => {
+  const handled = []
+  const w = world({ noteFor: () => '要点 [Saaaaaa-1]' })
+  const deps = {
+    ...w.deps,
+    readTemp: async handle => {
+      handled.push(handle)
+      return new Uint8Array([1, 2, 3])
+    },
+    openSource: async descriptor => {
+      if (typeof descriptor.read !== 'function') throw new Error('临时文档必须走 descriptor.read')
+      const data = await descriptor.read(new AbortController().signal)
+      handled.push(Array.from(data))
+      return { context: { descriptor }, close() { /* noop */ } }
+    },
+  }
+  const result = await runAttachmentTurn(compareInput([
+    { aid: 'tmp-1', title: '临时文档 1', source: 'temp', kind: 'word', handle: 'h1', status: 'ready' },
+  ]), deps)
+  assert.equal(result.refs.docs[0].ok, true)
+  assert.deepEqual(handled, ['h1', [1, 2, 3]])
+})
+
 test('compare T2: an unreadable document fails without calling the model', async () => {
   const w = world()
   const result = await runAttachmentTurn(compareInput([doc('A', { status: 'missing' })]), w.deps)

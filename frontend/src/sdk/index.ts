@@ -1,7 +1,7 @@
 import { invoke, open, Channel } from './python';
-import type { Doc, Library } from './types';
+import type { Doc, Library, TempDocs } from './types';
 import type { ImportStage } from '../library/importer';
-export type { Doc, Library } from './types';
+export type { Doc, Library, TempDocItem, TempDocRejected, TempDocs } from './types';
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try { return await invoke<T>(command, args); }
   catch (error) { throw error instanceof Error ? error : new Error(String(error)); }
@@ -52,3 +52,18 @@ export function importDocument(path: string, onStage?: (stage: ImportStage) => v
   channel.onmessage = event => onStage(event.stage);
   return call('import_documents', { paths: [path], onProgress: channel });
 }
+/**
+ * 对话模式的临时文档：选择由后端调起原生对话框完成，前端拿不到路径。
+ * 只有句柄、文件名、类型；Word 转换阶段只有 'office' / 'libreoffice'。
+ */
+export const tempDocs: TempDocs = {
+  pick: (limit: number) => call('temp_doc_pick', { limit }),
+  prepare: (handle: string, onStage?: (stage: string) => void) => {
+    if (!onStage) return call('temp_doc_prepare', { handle });
+    const channel = new Channel<{ stage: string }>();
+    channel.onmessage = event => onStage(String(event.stage || ''));
+    return call('temp_doc_prepare', { handle, onProgress: channel });
+  },
+  read: async (handle: string) => bytes(await call<ArrayBuffer>('temp_doc_read', { handle })),
+  release: (handles: string[]) => call('temp_doc_release', { handles }),
+};

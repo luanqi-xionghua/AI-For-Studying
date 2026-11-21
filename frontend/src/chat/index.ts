@@ -1,5 +1,5 @@
 /** 对话模式模块的对外入口：接上真实的本机存储、Harness 调用、用量账本与保存失败提示。 */
-import { library } from '../sdk'
+import { library, tempDocs } from '../sdk'
 import { recordUsage } from '../ai/usage'
 import { estimateTokens } from '../ai/workspace'
 import { reportSaveFailure } from '../ui/save-errors'
@@ -31,11 +31,13 @@ export const chat = createChatState({
         (await import('../document/ai-context.mjs')).openAiContext(descriptor, snapshot, signal),
       createSession: async (context: any, descriptor: any, limits: any, vision: boolean, onEvidence: any, signal: AbortSignal) =>
         (await import('../document/session.mjs')).createDocumentSession(context, descriptor, limits, vision, onEvidence, signal),
+      readTemp: (handle: string) => tempDocs.read(handle),
       recordUsage,
       estimateTokens,
       now: () => Date.now(),
     })
   },
+  releaseTemp: handles => tempDocs.release(handles),
   now: () => Date.now(),
   uuid: () => crypto.randomUUID(),
 })

@@ -31,3 +31,24 @@ export interface Library {
   setSetting(key: string, value: string): Promise<void>;
   deleteSetting(key: string): Promise<void>;
 }
+
+/** 临时文档：后端调起原生对话框，只把不透明句柄、文件名和类型交给前端。 */
+export interface TempDocItem {
+  handle: string;
+  name: string;
+  kind: 'pdf' | 'markdown' | 'word';
+  size: number;
+  /** Word 需要后端转成 PDF（转换阶段只有 'office' / 'libreoffice'）。 */
+  needsConvert: boolean;
+}
+export interface TempDocRejected {
+  name: string;
+  /** 形如「TEMP_TYPE：只能附加…」，不含路径。 */
+  error: string;
+}
+export interface TempDocs {
+  pick(limit: number): Promise<{ items: TempDocItem[]; rejected: TempDocRejected[] }>;
+  prepare(handle: string, onStage?: (stage: string) => void): Promise<{ handle: string; kind: 'pdf' | 'markdown'; size: number }>;
+  read(handle: string): Promise<Uint8Array>;
+  release(handles: string[]): Promise<{ released: number }>;
+}

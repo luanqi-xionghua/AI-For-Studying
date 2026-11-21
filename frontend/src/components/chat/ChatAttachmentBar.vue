@@ -48,7 +48,7 @@ function removeAll() {
   <div v-if="props.docs.length || props.images.length || !props.vision" class="attachment-bar">
     <div v-if="props.docs.length" class="doc-chips">
       <span v-for="doc in props.docs" :key="doc.id" class="doc-chip" :class="statusOf(doc).tone">
-        <span class="doc-name">{{ statusOf(doc).tone === 'bad' ? `临时文档 ${doc.title.replace(/^临时文档\s*/, '')}` : titleOf(doc) }}</span>
+        <span class="doc-name">{{ titleOf(doc) }}</span>
         <span v-if="doc.source === 'temp'" class="doc-tag">临时</span>
         <span v-if="statusOf(doc).text" class="doc-status">{{ statusOf(doc).text }}</span>
         <button type="button" class="chip-close" :aria-label="`移除附件《${titleOf(doc)}》`" :aria-disabled="props.busy ? 'true' : undefined" data-tip="移除" @click="removeDoc(doc.id)"><AppIcon name="close" :size="10" /></button>

@@ -28,6 +28,8 @@ export type ChatStateDeps = {
   reportFailure: (id: string, label: string, error: unknown, retry: () => Promise<void>) => void
   /** 带附件回合的编排（懒加载 chat/compare.ts）；缺省时退回普通 streamChat。 */
   runAttachmentTurn?: (input: any) => Promise<unknown>
+  /** 释放临时文档句柄（删除会话 / 移除 chip 时用）。 */
+  releaseTemp?: (handles: string[]) => Promise<unknown>
 }
 export type SendOptions = {
   /** 这一轮的连接参数；null = 没有预设或没有模型，由 reason 说明。 */
@@ -393,6 +395,14 @@ export function createChatState(deps: ChatStateDeps): ChatState {
   async function remove(id: string): Promise<void> {
     const live = state.conversations.get(id)
     live?.request?.controller.abort()
+    // 这段会话的临时文档随会话一起清理（句柄只在内存里；后端删除临时目录）。
+    const handles = (live?.attachments || [])
+      .filter(doc => doc.source === 'temp')
+      .map(doc => live?.runtime.get(doc.id)?.handle)
+      .filter((handle): handle is string => Boolean(handle))
+    if (handles.length && deps.releaseTemp) {
+      try { await deps.releaseTemp(handles) } catch { /* 清理失败不影响删除会话 */ }
+    }
     if (timers.has(id)) { clearTimeout(timers.get(id)); timers.delete(id) }
     // 先从内存里拿掉，避免在途请求的 finally 把会话又写回去。
     state.conversations.delete(id)

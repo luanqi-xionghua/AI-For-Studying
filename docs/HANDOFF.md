@@ -174,3 +174,54 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 - 冒烟：`backend\main.py --harness-smoke` 退出码 0；`backend\main.py --smoke` 退出码 0（临时数据目录，未碰真实书库）。
 - 日志：`D:\work\logs\m0-*.log`。
 
+### 本次改动范围（M1–M5，按里程碑提交）
+
+| 里程碑 | 内容 | 提交 |
+| --- | --- | --- |
+| M1 | 数据模型（附件描述符/标记/引用/进度、`CHAT_ATTACH_LIMITS`）、落库清洗与引用截断、索引读改写串行化；`learningTargets` 规则、`chat-turn.turnId` 幂等、文档范围同时写 doc + global、全局读失败不覆盖真实记忆 | `99e22ac`、`1469c47` |
+| M2 | 会话附属栏（`ChatConversationRail` / `rail.ts`）、重命名、搜索、删除、收起与窄窗口抽屉；删除页头「历史」与 `ChatHistoryPanel`；抽屉焦点归还与搜索后键盘复位 | `1c16089`、`7016731` |
+| M3 | 图片附件（采集/压缩/预算、粘贴与拖入、预览条、识图判断与拦截、T1 编排、历史文字标记、拖放提示） | `d9352d1`、`49c1431` |
+| M4 | 文档库附件（多选弹层、探测、失效标记、持久化）、T2/T3 对比编排、引用渲染与「参考原文」、每本进度与用量合计、`ai-context` 支持 `descriptor.read` | `5d6c5eb`、`e0438da` |
+| M5 | 临时文档后端接口（`tempdocs.py` + `server.py` TEMP 接线 + 14 项后端测试）、前端 `sdk.tempDocs`、上传入口/转换状态/失效占位、删除会话释放句柄、三份文档 | 见 `git log` |
+
+### 后端改动范围（唯一改动）
+
+- 新增 `backend/services/tempdocs.py`：不透明句柄、路径只留在后端、扩展名/大小/文件头/UTF-8 校验、Word 转 PDF、指纹校验、`chat-temp/` 清理、固定错误码（`TEMP_*`，永不含路径）。
+- `backend/api/server.py`：`TEMP` 命令组（`temp_doc_pick/prepare/read/release`）、`self.temp = TempDocs(root)`、pick 走原生对话框、prepare 进度通道、`clear()`/`close()` 清理。
+- **未改**：`library.py`、`word.py`、`core/desktop.py`、`runtime/harness.py`、`harness/*`。SQLite `user_version` 仍为 1，未新增 npm / Python 依赖。
+
+### 存储字段
+
+- `chatmode.v1.c.<id>` 新增可选字段：会话 `attachments`（≤3，temp 只存「临时文档 N」占位）、`customTitle`；用户消息 `attach`（图片张数 + 本轮文档标记，落库前临时标题匿名化）、`refs`（docs/cites，≤40 条，`snippets` 只在内存）、`progress` 只在内存；图片 data URL 只在内存；`usage.calls` 可选。
+- `memory.v1.*`：`MemoryEvent.turnId` 可选，用于重新回答时替换待总结项。
+- localStorage 新增 `kaizhi.chatmode.rail.v1`（`{version:1,collapsed}`）。
+- 临时文档句柄、真实文件名、转换目录都只在内存/`chat-temp/`，不进 SQLite、不进备份。
+
+### 记忆写入规则（优先级从高到低）
+
+| 记忆范围 \ 本轮 | 无附件且成功 | 带图片或文档 | 失败 / 停止 / 空回答 |
+| --- | --- | --- | --- |
+| 文档 A | 写 A + 全局 | 不写 | 不写 |
+| 全局 | 只写全局 | 不写 | 不写 |
+| 不使用记忆 | 不写 | 不写 | 不写 |
+| A 已从文档库移除（降级为 none） | 不写 | 不写 | 不写 |
+
+同一 `turnId` 重新回答时只替换待总结项的 answer/at，不追加、不新增证据、不重复计问题数。
+
+### 界面与测试
+
+- 界面走查（临时书库 + CDP 远程调试）：M2 **29/29**、M3 **21/21**、M4 **18/18**、M5 **9/9**；截图 `C:\Users\15076\Desktop\dsh workspace\screenshots\m2-* / m3-* / m4-* / m5-*`。
+- 最终回归：前端 `npm test`（427 项）+ `vue-tsc` + `npm run build`；后端 `unittest`（46 项，skipped=1）；`--smoke` / `--harness-smoke` 退出码 0。
+
+### 已知限制（本次）
+
+1. **Word 转换不能中途取消**：`release` 只打取消标记，chip 会显示「正在取消…」，等本机 Office/LibreOffice 转换结束后才清理临时目录（最长约 200s）。
+2. **资源管理器拖入图片不支持**：Qt 只把文件路径交给页面；对话页提示改用「图片」按钮或 Ctrl+V；从浏览器/截图工具拖出的图片数据可以拖放。
+3. **真实模型端到端未自动跑**：3 本对比、带图回合、引用页码抽查需要有效 API Key，留给发布前人工验收（S09/S10/S12/S17–S19）。
+4. **加密 PDF**：文档库里的加密 PDF 必须在本次运行内先在阅读器里解锁；临时文档的加密 PDF 直接拒绝并提示另存无密码副本。
+5. **扫描件**：只在「附加时探测第一页有没有文字」；识图模型可读，不识图模型直接标错误并提示换模型。
+6. **全局总结重复计入**：文档范围的问答会同时进入「A 的总结来源」和「全局待总结」，这是决策 6 的预期行为，额度护栏不变。
+7. **首屏不加载 pdf.js**：`pdf-engine` 仍是独立 chunk，对话页 chunk 里只有动态导入引用；M4 的 `pdf-engine` 预览警告属既有结构（`providers.mjs` 在 `settings.mjs` 里本来就有静态引用）。
+8. **回退**：按里程碑 `git revert` 即可；数据层不迁移、不升版本，旧版会把新字段静默丢弃（正文/标题保留）。撤回 M5 后如残留 `chat-temp/` 需要手动删除。
+
+
