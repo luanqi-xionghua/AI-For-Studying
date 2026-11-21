@@ -634,6 +634,17 @@ test('engine: a document written by a newer version still gets the global half o
   await engine.flush()
 })
 
+test('engine: a global-scope chat turn writes only the global memory', async () => {
+  const { engine } = makeEngine()
+  await engine.start()
+  emitLearningEvent(chatTurn({ scope: { kind: 'global' } }))
+  await settle()
+  assert.equal(engine.state.index.docs.length, 0)
+  assert.equal(engine.state.global.pending.length, 1)
+  assert.equal(engine.state.global.pending[0].turnId, 'turn-1')
+  await engine.flush()
+})
+
 test('engine: a failed global read skips the global write and leaves the stored copy alone', async () => {
   const { engine, storage } = makeEngine()
   const read = storage.getSetting

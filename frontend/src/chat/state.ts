@@ -193,21 +193,24 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     if (live.request) return
     const connection = options.connection as ChatConnection
     const question = regenerate ? (live.messages.filter(message => message.role === 'user').at(-1)?.content || text) : text
-    const memoryTag: ChatMemoryTag = hasAttachments ? { ...injection.tag, skipped: 'attachments' } : injection.tag
+    let attachmentsThisTurn = hasAttachments
     let turn: ChatModeMessage
     if (regenerate) {
       if (live.messages.at(-1)?.role === 'assistant') live.messages.pop()
       const user = live.messages.filter(message => message.role === 'user').at(-1)
       if (!user) return
-      user.memory = memoryTag
+      // 重新回答沿用同一个用户消息：那一轮当时带过附件，就一直按「带附件的回合」处理。
+      if ((user.attach?.images ?? 0) > 0 || Boolean(user.attach?.docs?.length)) attachmentsThisTurn = true
       turn = user
     } else {
-      turn = { id: deps.uuid(), role: 'user', content: text, memory: memoryTag }
+      turn = { id: deps.uuid(), role: 'user', content: text, memory: emptyTag(options.scope.kind) }
       const mark = attachmentMark(draftImages, draftDocs)
       if (mark) turn.attach = mark
       if (draftImages.length) turn.images = [...draftImages]
       live.messages.push(turn)
     }
+    // 用户消息上的记忆标记：带附件时带 skipped，界面据此显示「本轮带附件 · 未写入学习记忆」。
+    turn.memory = attachmentsThisTurn ? { ...injection.tag, skipped: 'attachments' } : injection.tag
     if (!live.title) live.title = chatTitle(question)
     const answer: ChatModeMessage = { id: deps.uuid(), role: 'assistant', content: '', reasoning: '', startedAt: deps.now(), model: connection.model, effort: connection.effort }
     live.messages.push(answer)
@@ -257,7 +260,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       await saveNow(live)
       const success = !answer.failed && !answer.stopped && Boolean(answer.content.trim())
       // 带附件的回合按规则不写学习记忆；文档范围一个事件，由记忆引擎分发到「文档 + 全局」。
-      if (success && learningTargets(options.scope, hasAttachments).length > 0) {
+      if (success && learningTargets(options.scope, attachmentsThisTurn).length > 0) {
         deps.emit({
           type: 'chat-turn', scope: options.scope, conversationId: live.id, question,
           answer: answer.content.slice(0, 300), at: deps.now(), turnId: turn.id,

@@ -380,3 +380,16 @@ test('chat state: regenerating reuses the same turnId so memory replaces instead
   assert.equal(events[0].turnId, events[1].turnId)
   assert.equal(events[0].turnId, conversation.messages[0].id)
 })
+
+test('chat state: regenerating a turn that carried images still writes nothing', async () => {
+  const { chat, events } = make()
+  await chat.load()
+  const conversation = chat.newConversation()
+  await chat.send(conversation.id, '看图', { ...optionsFor(), attachments: { images: ['data:image/png;base64,AAAA'] } })
+  assert.equal(events.length, 0)
+  await chat.regenerate(conversation.id, optionsFor())
+  assert.equal(events.length, 0)
+  const user = conversation.messages.find(message => message.role === 'user')
+  assert.equal(user.attach.images, 1)
+  assert.equal(user.memory.skipped, 'attachments')
+})
