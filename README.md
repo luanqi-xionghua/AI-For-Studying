@@ -1,5 +1,5 @@
 # 阅迁星穹
-
+# 乱崎凶华--AI For Studying
 阅迁星穹是一款 Windows 桌面 AI 阅读器：把 PDF、Markdown 和 Word 文档放进本地文档库，边读边问「阅读助手」、随手交给「翻译助手」翻译。界面是 Vue 3，外壳是 PySide6 / Qt WebEngine，文件、书库和凭据由本机 Python 服务管理，模型请求经本机 DeepSeek Harness 发给用户自己配置的 API。
 
 ![阅读助手与翻译助手](docs/images/reading-assistants.jpg)
