@@ -499,15 +499,17 @@ defineExpose({ focusPrompt })
 
 <template>
   <section ref="pageRoot" class="page-view chat-page" aria-label="对话模式">
-    <header class="page-heading">
+    <header class="page-heading chat-heading">
       <h1>对话模式</h1>
+      <div class="chat-head-info">
+        <p class="page-note">不打开文档，直接和模型聊。可以带上学习记忆，让回答更贴合你的情况。</p>
+        <p class="chat-status" role="status">{{ statusLine }}</p>
+      </div>
       <div v-if="railHidden" class="chat-head-actions">
         <button ref="railToggle" type="button" class="head-button" aria-label="对话列表" :aria-expanded="narrow && drawerOpen" data-tip="对话列表" @click="toggleRail"><AppIcon name="list" :size="14" />对话列表</button>
         <button type="button" class="head-button" aria-label="新对话" data-tip="新对话" @click="newConversation"><AppIcon name="plus" :size="14" />新对话</button>
       </div>
     </header>
-    <p class="page-note">不打开文档，直接和模型聊。可以带上学习记忆，让回答更贴合你的情况。</p>
-    <p class="chat-status" role="status">{{ statusLine }}</p>
     <div class="chat-layout">
       <ChatConversationRail
         v-if="!narrow && !railCollapsed"
@@ -621,7 +623,11 @@ defineExpose({ focusPrompt })
 
 <style scoped>
 .chat-page { height: 100%; }
-.chat-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chat-heading { align-items: flex-start; gap: 8px 24px; }
+.chat-heading h1 { flex: none; line-height: 1.5; }
+.chat-head-info { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-top: 2px; }
+.chat-head-info .page-note { margin: 0; }
+.chat-head-actions { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .head-button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost, var(--fill-2)); color: var(--control-ink, var(--ink)); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .head-button:hover { background: var(--frost-hover, var(--fill-3)); }
 .chat-status { margin: 0; font-size: 12px; color: var(--muted); }
