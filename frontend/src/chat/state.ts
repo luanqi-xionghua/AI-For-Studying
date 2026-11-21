@@ -53,6 +53,7 @@ export type ChatState = {
   send(id: string, text: string, options: SendOptions): Promise<void>
   regenerate(id: string, options: SendOptions): Promise<void>
   stop(id: string): void
+  rename(id: string, title: string): Promise<void>
   remove(id: string): Promise<void>
   busy(): boolean
   flush(): Promise<void>
@@ -268,6 +269,25 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       }
     }
   }
+  /**
+   * 重命名：≤28 字、压空白；空串恢复首问自动标题并清掉 customTitle。
+   * 列表里其它会话可能还没载入，先 open() 再改名。
+   * 不改 updatedAt，所以不会改变排序；正在回答时也允许（标题以 live 为准，流式保存会带上新标题）。
+   */
+  async function rename(id: string, title: string): Promise<void> {
+    const live = state.conversations.get(id) ?? await open(id)
+    if (!live || !live.messages.length) return
+    const value = title.replace(/\s+/g, ' ').trim().slice(0, CHAT_LIMITS.title)
+    if (value) {
+      live.title = value
+      live.customTitle = true
+    } else {
+      const first = live.messages.find(message => message.role === 'user')
+      live.title = first ? chatTitle(first.content) : ''
+      delete live.customTitle
+    }
+    await saveNow(live)
+  }
   async function remove(id: string): Promise<void> {
     const live = state.conversations.get(id)
     live?.request?.controller.abort()
@@ -292,6 +312,7 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     send: (id, text, options) => dispatch(id, text, options, false),
     regenerate: (id, options) => dispatch(id, '', options, true),
     stop: id => { state.conversations.get(id)?.request?.controller.abort() },
+    rename,
     remove,
     busy: () => busyCount() > 0,
     async flush() {

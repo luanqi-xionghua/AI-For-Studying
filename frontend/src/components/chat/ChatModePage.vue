@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { chat } from '../../chat'
 import { loadChatChoice, resolveChatChoice, saveChatChoice, type ResolvedChatChoice } from '../../chat/choice.ts'
 import { wireMessages } from '../../chat/history.ts'
+import { loadRailPreference, railRows, saveRailPreference, type ChatRailRow } from '../../chat/rail.ts'
 import type { ChatModelChoice } from '../../chat/types.ts'
 import { loadAiSettings, NO_PRESET_MESSAGE } from '../../ai/settings.mjs'
 import { estimateTokens } from '../../ai/workspace'
@@ -10,9 +11,10 @@ import { hasMemoryContent } from '../../memory/merge.ts'
 import type { MemoryScope } from '../../memory/types.ts'
 import { relativeTime } from '../../memory/prompts.ts'
 import MemoryScopePicker from './MemoryScopePicker.vue'
-import ChatHistoryPanel from './ChatHistoryPanel.vue'
+import ChatConversationRail from './ChatConversationRail.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import ChatComposer from './ChatComposer.vue'
+import AppIcon from '../ui/AppIcon.vue'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
 
 const props = defineProps<{
@@ -22,14 +24,22 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ settings: []; memory: []; notify: [text: string]; 'scope-applied': [] }>()
 
+const RAIL_BREAKPOINT = 860
 const settings = ref<any>(loadAiSettings())
 const choice = ref<ChatModelChoice>(loadChatChoice())
 const resolved = computed<ResolvedChatChoice | null>(() => resolveChatChoice(settings.value, choice.value))
 const memoryModule = shallowRef<any>(undefined)
 const memoryState = shallowRef<any>(undefined)
 const composer = ref<{ focus?: () => void }>()
+const rail = ref<{ focusSearch?: () => void; focusActive?: () => void }>()
 const confirmRemove = ref<{ id: string; title: string } | null>(null)
 const appliedInitial = ref(false)
+const pageRoot = ref<HTMLElement>()
+const railToggle = ref<HTMLButtonElement>()
+const railCollapsed = ref(loadRailPreference().collapsed)
+const narrow = ref(false)
+const drawerOpen = ref(false)
+let observer: ResizeObserver | undefined
 
 const conversation = computed(() => {
   const id = chat.state.activeId
@@ -38,6 +48,18 @@ const conversation = computed(() => {
 const busyIds = computed(() => new Set([...chat.state.conversations.values()].filter(item => item.request).map(item => item.id)))
 const currentBusy = computed(() => Boolean(conversation.value?.request))
 const noPreset = computed(() => !resolved.value)
+const railHidden = computed(() => narrow.value || railCollapsed.value)
+const rows = computed<ChatRailRow[]>(() => {
+  const live = conversation.value
+  return railRows(chat.state.list, chat.state.activeId, live ? {
+    id: live.id,
+    title: live.title,
+    createdAt: live.createdAt,
+    updatedAt: live.updatedAt,
+    scope: live.scope,
+    messageCount: live.messages.length,
+  } : null)
+})
 const effectiveScope = computed<MemoryScope>(() => {
   const scope = conversation.value?.scope || { kind: 'global' }
   if (scope.kind === 'doc' && !props.documents.some(doc => doc.id === scope.docId)) return { kind: 'none' }
@@ -68,6 +90,29 @@ const statusText = computed(() => {
 
 function reloadSettings() { settings.value = loadAiSettings() }
 watch(() => props.settingsVersion, reloadSettings)
+watch(railCollapsed, value => saveRailPreference({ version: 1, collapsed: value }))
+
+function syncNarrow(width: number) {
+  const next = width > 0 && width < RAIL_BREAKPOINT
+  narrow.value = next
+  if (!next) drawerOpen.value = false
+}
+function toggleRail() {
+  if (narrow.value) {
+    drawerOpen.value = true
+    void nextTick(() => rail.value?.focusSearch?.())
+    return
+  }
+  railCollapsed.value = false
+}
+function collapseRail() {
+  railCollapsed.value = true
+  void nextTick(() => railToggle.value?.focus())
+}
+function closeDrawer() {
+  drawerOpen.value = false
+  void nextTick(() => railToggle.value?.focus())
+}
 
 async function injectionFor(scope: MemoryScope) {
   if (!memoryModule.value) memoryModule.value = await import('../../memory')
@@ -87,6 +132,9 @@ function connectionOptions() {
 function focus() { void composer.value?.focus?.() }
 
 onMounted(async () => {
+  observer = new ResizeObserver(entries => syncNarrow(entries[0]?.contentRect.width ?? 0))
+  if (pageRoot.value) observer.observe(pageRoot.value)
+  syncNarrow(pageRoot.value?.clientWidth ?? 0)
   await chat.load()
   const current = chat.current()
   if (!current.loaded) await chat.open(current.id)
@@ -94,6 +142,7 @@ onMounted(async () => {
   if (!appliedInitial.value && props.initialScope) applyInitialScope()
   focus()
 })
+onBeforeUnmount(() => { observer?.disconnect(); observer = undefined })
 function applyInitialScope() {
   if (!props.initialScope) return
   appliedInitial.value = true
@@ -118,7 +167,14 @@ function stop() { if (conversation.value) chat.stop(conversation.value.id) }
 function updateDraft(value: string) { if (conversation.value) conversation.value.draft = value }
 function useExample(text: string) { updateDraft(text); focus() }
 function applyChoice(next: ChatModelChoice) { saveChatChoice(next); choice.value = next }
-function newConversation() { chat.newConversation({ kind: 'global' }); focus() }
+function newConversation() {
+  const current = conversation.value
+  // 当前会话还是空的、也没挂附件：只聚焦输入框，不制造一堆空会话。
+  if (current && current.messages.length === 0 && !(current.attachments?.length)) { focus(); return }
+  chat.newConversation({ kind: 'global' })
+  if (narrow.value) drawerOpen.value = false
+  focus()
+}
 function applyScope(scope: MemoryScope) {
   const current = chat.current()
   if (!current) return
@@ -128,16 +184,24 @@ function applyScope(scope: MemoryScope) {
 async function selectConversation(id: string) {
   await chat.open(id)
   chat.state.activeId = id
+  if (narrow.value) drawerOpen.value = false
   focus()
 }
+function renameConversation(id: string, title: string) { void chat.rename(id, title) }
 function requestRemove(id: string) {
   const entry = chat.state.list.find(item => item.id === id)
-  confirmRemove.value = { id, title: entry?.title || '新对话' }
+  const live = chat.state.conversations.get(id)
+  confirmRemove.value = { id, title: entry?.title || live?.title || '新对话' }
 }
 async function removeConversation() {
   const item = confirmRemove.value
   confirmRemove.value = null
-  if (item) await chat.remove(item.id)
+  if (!item) return
+  await chat.remove(item.id)
+  const current = chat.current()
+  if (!current.loaded) await chat.open(current.id)
+  await nextTick()
+  rail.value?.focusActive?.()
 }
 async function copy(text: string) {
   if (!text) return
@@ -148,36 +212,64 @@ defineExpose({ focusPrompt })
 </script>
 
 <template>
-  <section class="page-view chat-page" aria-label="对话模式">
+  <section ref="pageRoot" class="page-view chat-page" aria-label="对话模式">
     <header class="page-heading">
       <h1>对话模式</h1>
-      <div class="chat-head-actions">
-        <ChatHistoryPanel :list="chat.state.list" :active-id="chat.state.activeId" :busy-ids="busyIds" @select="selectConversation" @remove="requestRemove" @create="newConversation" />
+      <div v-if="railHidden" class="chat-head-actions">
+        <button ref="railToggle" type="button" class="head-button" aria-label="对话列表" :aria-expanded="narrow && drawerOpen" data-tip="对话列表" @click="toggleRail"><AppIcon name="list" :size="14" />对话列表</button>
+        <button type="button" class="head-button" aria-label="新对话" data-tip="新对话" @click="newConversation"><AppIcon name="plus" :size="14" />新对话</button>
       </div>
     </header>
     <p class="page-note">不打开文档，直接和模型聊。可以带上学习记忆，让回答更贴合你的情况。</p>
     <p class="chat-status" role="status">{{ statusText }}</p>
-    <div class="chat-body">
-      <ChatMessageList :conversation="conversation" :busy="Boolean(currentBusy)" :no-preset="noPreset" @copy="copy" @regenerate="regenerate" @example="useExample" @settings="emit('settings')" />
-      <ChatComposer
-        ref="composer"
-        :model-value="conversation?.draft || ''"
-        :busy="Boolean(currentBusy)"
-        :disabled="noPreset"
-        :settings="settings"
-        :choice="choice"
-        :resolved="resolved"
-        :context-used="contextUsed"
-        @update:model-value="updateDraft"
-        @send="send"
-        @stop="stop"
-        @choice="applyChoice"
-        @settings="emit('settings')"
-      >
-        <template #scope>
-          <MemoryScopePicker up :scope="effectiveScope" :documents="props.documents" :memory-ids="memoryIds" :global-has-content="globalHasContent" :disabled="Boolean(currentBusy)" @update:scope="applyScope" @manage="emit('memory')" />
-        </template>
-      </ChatComposer>
+    <div class="chat-layout">
+      <ChatConversationRail
+        v-if="!narrow && !railCollapsed"
+        ref="rail"
+        :rows="rows"
+        :active-id="chat.state.activeId"
+        :busy-ids="busyIds"
+        @select="selectConversation"
+        @create="newConversation"
+        @remove="requestRemove"
+        @rename="renameConversation"
+        @collapse="collapseRail"
+      />
+      <div class="chat-main" :inert="(narrow && drawerOpen) || undefined">
+        <ChatMessageList :conversation="conversation" :busy="Boolean(currentBusy)" :no-preset="noPreset" @copy="copy" @regenerate="regenerate" @example="useExample" @settings="emit('settings')" />
+        <ChatComposer
+          ref="composer"
+          :model-value="conversation?.draft || ''"
+          :busy="Boolean(currentBusy)"
+          :disabled="noPreset"
+          :settings="settings"
+          :choice="choice"
+          :resolved="resolved"
+          :context-used="contextUsed"
+          @update:model-value="updateDraft"
+          @send="send"
+          @stop="stop"
+          @choice="applyChoice"
+          @settings="emit('settings')"
+        >
+          <template #scope>
+            <MemoryScopePicker up :scope="effectiveScope" :documents="props.documents" :memory-ids="memoryIds" :global-has-content="globalHasContent" :disabled="Boolean(currentBusy)" @update:scope="applyScope" @manage="emit('memory')" />
+          </template>
+        </ChatComposer>
+      </div>
+      <ChatConversationRail
+        v-if="narrow && drawerOpen"
+        ref="rail"
+        drawer
+        :rows="rows"
+        :active-id="chat.state.activeId"
+        :busy-ids="busyIds"
+        @select="selectConversation"
+        @create="newConversation"
+        @remove="requestRemove"
+        @rename="renameConversation"
+        @close="closeDrawer"
+      />
     </div>
     <ConfirmDialog v-if="confirmRemove" title="删除这段对话？" :message="`「${confirmRemove.title}」会被永久删除。已经写入学习记忆的内容不受影响。`" confirm-label="删除对话" danger @confirm="removeConversation" @cancel="confirmRemove = null" />
   </section>
@@ -186,6 +278,9 @@ defineExpose({ focusPrompt })
 <style scoped>
 .chat-page { height: 100%; }
 .chat-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.head-button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost, var(--fill-2)); color: var(--control-ink, var(--ink)); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.head-button:hover { background: var(--frost-hover, var(--fill-3)); }
 .chat-status { margin: 0; font-size: 12px; color: var(--muted); }
-.chat-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.chat-layout { flex: 1; min-height: 0; display: flex; gap: 12px; position: relative; }
+.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 </style>

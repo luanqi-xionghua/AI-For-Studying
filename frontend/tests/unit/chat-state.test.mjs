@@ -393,3 +393,100 @@ test('chat state: regenerating a turn that carried images still writes nothing',
   assert.equal(user.attach.images, 1)
   assert.equal(user.memory.skipped, 'attachments')
 })
+
+test('chat state: renaming saves the title, marks it custom and never changes the order', async () => {
+  const { chat, store } = make()
+  await chat.load()
+  const first = chat.newConversation()
+  await chat.send(first.id, '第一问', optionsFor())
+  const second = chat.newConversation()
+  await chat.send(second.id, '第二问', optionsFor())
+  const order = chat.state.list.map(item => item.id)
+  const updatedAt = second.updatedAt
+  await chat.rename(second.id, '  我的   标题  ')
+  assert.equal(second.title, '我的 标题')
+  assert.equal(second.customTitle, true)
+  assert.equal(second.updatedAt, updatedAt)
+  assert.deepEqual(chat.state.list.map(item => item.id), order)
+  const saved = JSON.parse(store.conversations.get(second.id))
+  assert.equal(saved.title, '我的 标题')
+  assert.equal(saved.customTitle, true)
+})
+
+test('chat state: clearing the title restores the automatic one and drops customTitle', async () => {
+  const { chat, store } = make()
+  await chat.load()
+  const conversation = chat.newConversation()
+  await chat.send(conversation.id, '首问自动标题', optionsFor())
+  await chat.rename(conversation.id, '自定义标题')
+  assert.equal(conversation.title, '自定义标题')
+  await chat.rename(conversation.id, '   ')
+  assert.equal(conversation.title, '首问自动标题')
+  assert.equal(conversation.customTitle, undefined)
+  const saved = JSON.parse(store.conversations.get(conversation.id))
+  assert.equal(saved.title, '首问自动标题')
+  assert.equal('customTitle' in saved, false)
+})
+
+test('chat state: rename length is capped and renaming an empty conversation is ignored', async () => {
+  const { chat, store } = make()
+  await chat.load()
+  const empty = chat.newConversation()
+  await chat.rename(empty.id, '空会话')
+  assert.equal(empty.title, '')
+  assert.equal(store.conversations.has(empty.id), false)
+  const conversation = chat.newConversation()
+  await chat.send(conversation.id, '问题', optionsFor())
+  await chat.rename(conversation.id, '字'.repeat(40))
+  assert.equal(conversation.title.length, 28)
+})
+
+test('chat state: renaming a conversation that is not loaded yet loads it first', async () => {
+  const store = fakeStore({ version: 1, activeId: 'active', list: [
+    { id: 'active', title: '当前', createdAt: 2, updatedAt: 2, scope: { kind: 'global' }, count: 2 },
+    { id: 'stored', title: '另一个', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, count: 2 },
+  ] })
+  store.conversations.set('stored', JSON.stringify({ version: 1, id: 'stored', title: '另一个', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, messages: [
+    { id: 'm1', role: 'user', content: '旧问题' }, { id: 'm2', role: 'assistant', content: '旧回答' },
+  ] }))
+  let seq = 0
+  const chat = createChatState({
+    store,
+    streamChat: async () => {},
+    recordUsage: () => {},
+    estimateTokens: () => 0,
+    emit: () => {},
+    now: () => ++seq,
+    uuid: () => `id-${++seq}`,
+    reportFailure: () => {},
+  })
+  active.push(chat)
+  await chat.load()
+  await chat.rename('stored', '列表里改的名字')
+  assert.equal(JSON.parse(store.conversations.get('stored')).title, '列表里改的名字')
+  assert.equal(chat.state.list.find(item => item.id === 'stored').title, '列表里改的名字')
+  assert.equal(chat.state.activeId, 'active')
+})
+
+test('chat state: renaming while the answer is streaming keeps the new title when the stream saves', async () => {
+  let release
+  const stream = {
+    calls: [],
+    handler: options => {
+      stream.calls.push(options)
+      options.onDelta('部分')
+      return new Promise(resolve => { release = () => { options.onDelta('完成'); resolve() } })
+    },
+  }
+  const { chat, store } = make({ stream })
+  await chat.load()
+  const conversation = chat.newConversation()
+  const pending = chat.send(conversation.id, '问题', optionsFor())
+  await waitFor(() => conversation.messages[1]?.content === '部分', 'stream started')
+  await chat.rename(conversation.id, '回答中改的标题')
+  assert.equal(conversation.title, '回答中改的标题')
+  release()
+  await pending
+  assert.equal(conversation.title, '回答中改的标题')
+  assert.equal(JSON.parse(store.conversations.get(conversation.id)).title, '回答中改的标题')
+})
