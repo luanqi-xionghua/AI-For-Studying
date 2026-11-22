@@ -49,7 +49,7 @@ export const EXAM_SYSTEM = `你是「阅迁星穹」的模拟测试出题人。�
 
 export const EXAM_TOOL_RULES = `[出题任务的取证要求（优先于上面「够回答就直接回答」的说明）]
 - 附带的「当前文档信息与附近内容」只够用来定位，不够用来出题：每道题都要先 pdf_search、再 pdf_read，读到原文再出。
-- 工具次数有限：可以在一次 pdf_search 里用空格分隔多个知识点的关键词，再按命中逐段 pdf_read；次数用完时，只用已经读到的段落出题。
+- 工具次数有限：最多检索 4 次（一次 pdf_search 里可以用空格分隔多个知识点的关键词，再按命中逐段 pdf_read）。第 4 次检索结果返回后必须立刻输出完整 JSON，不要再调用工具；次数用完时，只用已经读到的段落出题。
 - 检索过程中不要写任何正文，全部读完后一次性输出 JSON。`
 
 export const PLAN_TOOL_RULES = `[出卷规划的取证要求]
@@ -98,10 +98,10 @@ export function examDocLimits(base: unknown, vision: boolean, phase: 'plan' | 'b
     ? { ...clean, calls: 6, pages: 6, characters: 20_000, rounds: 3, images: 0 }
     : {
         ...clean,
-        calls: Math.max(clean.calls, 18),
+        calls: Math.max(clean.calls, 24),
         pages: Math.max(clean.pages, 15),
         characters: Math.max(clean.characters, 40_000),
-        rounds: Math.max(clean.rounds, 5),
+        rounds: Math.max(clean.rounds, 8),
         images: vision ? Math.min(clean.images, 2) : 0,
       }
   const normalized = normalizeLimits(limits)
@@ -315,6 +315,7 @@ export function createExamCalls(deps: ExamAiDeps) {
     const options = {
       provider: input.connection.provider, baseUrl: input.connection.baseUrl, protocol: input.connection.protocol,
       model: input.connection.model, effort: input.connection.effort, signal: timeout.signal,
+      maxTokens: 8192,
       systemPrefix: input.grounded ? EXAM_SYSTEM : DEGRADED_SYSTEM,
       extraInstructions: `${input.memory || ''}${input.memory ? '\n' : ''}${input.grounded ? PLAN_TOOL_RULES : ''}`,
       onDelta: (delta: string) => {
@@ -385,6 +386,7 @@ export function createExamCalls(deps: ExamAiDeps) {
     const options = {
       provider: input.connection.provider, baseUrl: input.connection.baseUrl, protocol: input.connection.protocol,
       model: input.connection.model, effort: input.connection.effort, signal: timeout.signal,
+      maxTokens: 8192,
       systemPrefix: input.meta.grounded ? EXAM_SYSTEM : DEGRADED_SYSTEM,
       extraInstructions: `${input.memory || ''}${input.memory ? '\n' : ''}${input.meta.grounded ? EXAM_TOOL_RULES : ''}`,
       onDelta: (delta: string) => {
@@ -394,6 +396,7 @@ export function createExamCalls(deps: ExamAiDeps) {
       onUsage: (value: any) => { reported = value },
       onProgress: (value: string) => hooks.onProgress(value),
     }
+    let raw: Record<string, unknown> = { questions: [] }
     try {
       if (input.source?.context) {
         const context = input.meta.grounded
@@ -409,8 +412,10 @@ export function createExamCalls(deps: ExamAiDeps) {
           limits, input.connection.vision, onEvidence, timeout.signal,
         )
         await deps.streamDocumentChat({ ...options, messages, limits }, session.document, session.seed)
+        raw = parseModelJson(text, 'questions')
       } else {
         await deps.streamChat({ ...options, messages })
+        raw = parseModelJson(text, 'questions')
       }
     } catch (error) {
       if (tooLong) return { ok: false, errors: ['模型输出过长，已停止。'], reason: '模型输出过长，已停止。' }
@@ -424,12 +429,6 @@ export function createExamCalls(deps: ExamAiDeps) {
     }
     if (tooLong) return { ok: false, errors: ['模型输出过长，已停止。'], reason: '模型输出过长，已停止。' }
 
-    let raw: Record<string, unknown>
-    try {
-      raw = parseModelJson(text, 'questions')
-    } catch (error) {
-      return { ok: false, errors: [messageOf(error)], reason: messageOf(error) }
-    }
     const result = validateBatch(raw, input.slots, {
       examId: input.examId,
       docId: input.doc.id,

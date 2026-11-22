@@ -66,7 +66,7 @@ export async function run(job, emit, tool, signal) {
       signal.throwIfAborted()
       const active = round < rounds && calls > 0 ? tools.filter(t=>t.name!=='pdf_view'||views>0) : []
       const a = new BlockAssembler()
-      for await (const chunk of ctx.llm.stream({ ...source, messages, system:job.system, signal, ...(level?{reasoningEffort:level}:{}), ...(active.length?{tools:active}:{}), ...(job.kind==='ping'?{maxTokens:64}:{}) })) {
+      for await (const chunk of ctx.llm.stream({ ...source, messages, system:job.system, signal, ...(level?{reasoningEffort:level}:{}), ...(active.length?{tools:active}:{}), ...(job.maxTokens ? {maxTokens: job.maxTokens} : (job.kind==='ping'?{maxTokens:64}:{})) })) {
         a.push(chunk)
         if (chunk.type==='text-delta'||chunk.type==='reasoning-delta') emit({type:chunk.type,text:chunk.text})
         if (chunk.type==='usage' && chunk.usage.totalTokens > 0) emit({type:'usage',usage:{input:chunk.usage.inputTokens+(chunk.usage.cacheReadTokens||0)+(chunk.usage.cacheWriteTokens||0),output:chunk.usage.outputTokens}})

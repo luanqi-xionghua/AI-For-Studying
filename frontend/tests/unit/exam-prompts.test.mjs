@@ -201,7 +201,7 @@ test('exam prompts: 降级模式走 streamChat 且不建会话', async () => {
 
 test('exam prompts: 文档工具预算', () => {
   assert.equal(examDocLimits({ calls: 60 }, true, 'batch').calls, 60)
-  assert.equal(examDocLimits({ calls: 3 }, true, 'batch').calls, 18)
+  assert.equal(examDocLimits({ calls: 3 }, true, 'batch').calls, 24)
   assert.equal(examDocLimits({ calls: 3 }, false, 'batch').images, 0)
   assert.equal(examDocLimits(null, true, 'batch').images, 2)
   assert.equal(examDocLimits(null, true, 'plan').images, 0)

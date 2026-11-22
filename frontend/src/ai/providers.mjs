@@ -56,6 +56,6 @@ export function harnessRequest(options,kind='chat') {
   return {kind, provider:options.provider, protocol:protocolOf(options.provider, options.protocol),
     baseUrl:options.baseUrl, model:options.model, effort:options.effort || '', vision:getModel(options.provider,options.model)?.vision !== false,
     messages:options.messages || [], system:(typeof options.systemPrefix === 'string' ? options.systemPrefix : READER_SYSTEM)+(options.extraInstructions || ''),
-    ...(options.tools ? {tools:options.tools,limits:options.limits} : {}), ...(options.apiKey ? {apiKey:options.apiKey} : {})};
+    ...(options.tools ? {tools:options.tools,limits:options.limits} : {}), ...(options.apiKey ? {apiKey:options.apiKey} : {}), ...(options.maxTokens ? {maxTokens:options.maxTokens} : {})};
 }
 export function streamChat(options) { return runHarness(harnessRequest(options),options); }
