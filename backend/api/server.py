@@ -5,11 +5,13 @@ import inspect
 import mimetypes
 import secrets
 import socket
+import time
 from pathlib import Path
 
 from aiohttp import ClientSession, DummyCookieJar, WSMsgType, web
 
 from ..runtime.harness import Harness
+from ..services.exams import ExamError, ExamExports, encode_markdown, suggested_filename
 from ..services.library import Library
 from ..services.materials import Materials
 from ..services.tempdocs import TempDocs
@@ -22,6 +24,7 @@ UPDATE = "update_status update_check update_download update_cancel update_instal
 TEMP = {"temp_doc_pick", "temp_doc_prepare", "temp_doc_read", "temp_doc_release"}
 MATERIAL = {"material_status", "material_sync", "material_cancel",
             "material_search", "material_open", "material_clear"}
+EXAM = {"exam_export"}
 GUI = [
     "select_files",
     "select_backup_destination",
@@ -35,6 +38,7 @@ class DesktopService:
     def __init__(self, root, dist, gui):
         self.lib = Library(root)
         self.temp = TempDocs(root)
+        self.exams = ExamExports(self.lib)
         self.creds = Credentials(root)
         self.dist = Path(dist).resolve()
         self.gui = gui
@@ -153,6 +157,20 @@ class DesktopService:
             paths = [paths]
         return await asyncio.to_thread(self.temp.add, list(paths), limit)
 
+    async def exam_export(self, args):
+        """弹出原生「另存为」并写入，再把 md 加入文档库；路径不出后端。"""
+        if set(args) - {"markdown", "title"}:
+            raise ExamError("EXAM_ARGS")
+        title = args.get("title")
+        if not isinstance(title, str) or len(title) > 200:
+            raise ExamError("EXAM_ARGS")
+        encode_markdown(args.get("markdown"))
+        name = suggested_filename(title, time.strftime("%Y-%m-%d"))
+        path = await self.gui("select_exam_export", {"name": name})
+        if not path:
+            return {"cancelled": True}
+        return await asyncio.to_thread(self.exams.export, path, args["markdown"])
+
     async def events(self, req):
         ws = web.WebSocketResponse(max_msg_size=1024, heartbeat=30)
         await ws.prepare(req)
@@ -191,6 +209,8 @@ class DesktopService:
                 value = await self.gui(cmd, args)
             elif cmd == "temp_doc_pick":
                 value = await self.temp_pick(args)
+            elif cmd == "exam_export":
+                value = await self.exam_export(args)
             else:
                 owner = (
                     self.lib

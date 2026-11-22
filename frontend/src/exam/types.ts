@@ -156,19 +156,8 @@ export type ExamIndex = {
 }
 
 /** 交卷后交给学习记忆的事件：只有数字与标签，永远不含题干 / 选项 / 答案原文。 */
-export type QuizResultEvent = {
-  type: 'quiz-result'
-  docId: string
-  title: string
-  examId: string
-  total: number
-  max: number
-  byType: Record<ExamType, number>
-  weak: { tag: string; lost: number }[]
-  selfAssessed: true
-  note: string
-  at: number
-}
+import type { QuizResultEvent } from '../memory/events.ts'
+export type { QuizResultEvent }
 
 export const EXAM_LIMITS = Object.freeze({
   questions: 20,

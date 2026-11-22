@@ -296,3 +296,14 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 - 展示：`state.search.rewritten` 非空时，页面在搜索框下方显示「已按「…」检索」。
 - 接口开关：页面上的「AI 排序」改名为「AI 辅助」，一处开关同时管改写与重排。
 - 测试：`materials-rerank.test.mjs` 增 5 项（解析、空输出、截断、调用参数、超时中止）；`materials-state.test.mjs` 增 4 项（改写生效、失败回落、改写无结果回落、无预设不改写）。
+
+## 模拟测试（1.2.3）
+
+- **模块**：`frontend/src/exam/` 状态机与数据层；`frontend/src/ai/exam.ts` 提示词与调用；`frontend/src/components/exam/` 四个组件；`backend/services/exams.py` 导出服务。
+- **后端改动范围**：新增 `services/exams.py`；`api/server.py` 加 import、`EXAM` 常量、`self.exams`、`exam_export()` 与 `api()` 分支；`core/desktop.py` 加 `select_exam_export` 分支。`library.py` / `word.py` / `tempdocs.py` / `materials*.py` / `updates.py` / `runtime/*` / `harness/*` / `main.py` / `requirements.txt` 未改，SQLite schema 与 `user_version` 未变。
+- **存储键**：`exam.v1.*`；`kaizhi.exam.choice.v1`（localStorage）。备份 / 恢复沿用现有机制，试卷在 `settings` 表里随书库一起走。
+- **测试基线**：前端 **578 项**（1.2.2 为 484），后端 **88 项**（73 + 15）。
+- **已知限制**：
+  1. 真实模型走查（方案 §13.3 前三行）尚未完成：开发副本没有 API Key，只验证到「打开原书 → 读到证据 → 模型请求停在缺少 Key」。发版前应在一台有 Key 的机器上各出一套。
+  2. `memory-engine` 的 `quiz-result` 分支没有单独的引擎用例，覆盖靠 `memory-quiz`（normalize / merge / prompts 纯函数）。
+  3. 导出用的是后端原生「另存为」，人工走查（只读目录、U 盘、同名）留给发版前；HTTP 层与文件层已有 `test_exams.py` 覆盖。

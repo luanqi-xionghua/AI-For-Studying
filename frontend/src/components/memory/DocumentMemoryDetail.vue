@@ -30,7 +30,7 @@ const configured = computed(() => Boolean(props.state?.config?.configured))
 const runningHere = computed(() => props.state?.running?.kind === 'doc' && props.state?.running?.docId === props.document?.id)
 const docId = computed(() => props.document?.id || '')
 const title = computed(() => props.document ? documentTitle(props.document.title) : '')
-const evidenceLabel: Record<string, string> = { onboarding: '导入', assistant: '阅读助手', chat: '对话模式', reading: '阅读进度', manual: '手动编辑' }
+const evidenceLabel: Record<string, string> = { onboarding: '导入', assistant: '阅读助手', chat: '对话模式', reading: '阅读进度', manual: '手动编辑', quiz: '模拟测试' }
 const status = computed(() => {
   const memory = props.memory
   if (!memory) return '未初始化'

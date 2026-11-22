@@ -4,6 +4,7 @@
  */
 import { LIMITS, type DocumentMemory, type GlobalMemory, type MemoryProfile, type MemoryPurpose, type MemoryScope, type OnboardingAnswers, type SelfLevel } from './types.ts'
 import type { ChatMemoryTag } from '../chat/types.ts'
+import type { QuizResultEvent } from './events.ts'
 import { cleanLine, cleanList, cleanText, normalizeKey } from './normalize.ts'
 
 export const DOC_LEVEL_LABELS: Record<SelfLevel, string> = { 1: '第一次接触', 2: '略有了解', 3: '比较熟悉', 4: '已经掌握' }
@@ -30,6 +31,7 @@ export const DOCUMENT_SUMMARY_SYSTEM = `你是「阅迁星穹」的学习记忆�
 8. suppressed 里的条目是用户删除过的，不要再写进任何字段。
 9. onboarding 是用户导入文档时的自评，含学习目标（goal）与学习偏好（preference）；目标与偏好应体现在 summary 的建议里；它与后来的提问表现矛盾时，以提问表现为准，并在 summary 里说明变化。
 10. reading 是阅读进度与提问次数，只用来判断学习阶段，不要逐项复述数字。
+11. new_turns 里 from 为「模拟测试结果（用户自评）」的条目不是提问，而是用户做完一套模拟测试后自己判分的结果：question 是总分与各题型得分，answer_excerpt 是失分较多的知识点。用它更新 weaknesses、level 和 summary 里的下一步建议；写进记忆时必须标明是自评（例如「模拟测试自评 142/200」），不要写成客观正确率或考试成绩；不要写进 questions。
 
 输出字段（全部必填，键名不可增减）：
 {"summary":"","profile":{"goals":[],"level":"","interests":[],"strengths":[],"weaknesses":[],"misconceptions":[],"preferences":[]},"questions":[]}
@@ -53,6 +55,7 @@ export const GLOBAL_SUMMARY_SYSTEM = `你是「阅迁星穹」的全局学习记
 5. 只在一本书里出现过一次的细节不要上升为全局结论；有两处以上材料支持，或用户明确表达过的，才写进 goals 和 preferences。
 6. 保留 memory 中仍然成立的内容，与新材料合并去重。removed_documents 里的书已被移除：只由它们支持的内容，如果没有其他材料支持就删掉。
 7. locked 列出的字段是用户手动写的，系统不会采用你对这些字段的改写，其余字段须与之保持一致；pinned 里的条目原样放在对应数组的最前面；suppressed 里的条目不要再出现。
+8. new_turns 里 from 为「模拟测试结果（用户自评）」的条目是用户自己判分的测验结果，不是提问。只有多次测验或多本书都显示同一薄弱面时，才写进全局的 weaknesses；提到分数时必须标明是自评。
 
 输出字段（全部必填，键名不可增减）：
 {"summary":"","profile":{"goals":[],"level":"","interests":[],"strengths":[],"weaknesses":[],"preferences":[]},"themes":[]}
@@ -125,8 +128,25 @@ export function onboardingSummary(answers: OnboardingAnswers): { summary: string
   }
 }
 
-function pendingTurns(pending: DocumentMemory['pending'], fromOf: (event: DocumentMemory['pending'][number]) => string) {
-  return pending.slice(-12).map(event => ({
+/** 模拟测试结果 → 待总结项与证据文字（第 11.3 节）。只写分数与薄弱点，不写题干。 */
+export function quizResultText(event: QuizResultEvent): { question: string; answer: string; evidence: string } {
+  const parts: string[] = []
+  if (event.byType.single.max > 0) parts.push(`单选 ${event.byType.single.score}/${event.byType.single.max}`)
+  if (event.byType.multiple.max > 0) parts.push(`多选 ${event.byType.multiple.score}/${event.byType.multiple.max}`)
+  if (event.byType.essay.max > 0) parts.push(`大题自评 ${event.byType.essay.score}/${event.byType.essay.max}`)
+  const question = cleanText(
+    `模拟测试结果（用户自评）：《${event.title}》自评 ${event.total}/${event.max}；${parts.join('，')}`,
+    LIMITS.pendingQuestion,
+  )
+  const weak = event.weak.slice(0, 5).map(item => `${item.tag}（-${item.lost}）`).join('、')
+  const base = weak ? `失分较多的知识点：${weak}` : '没有明显的薄弱点'
+  const answer = cleanText(event.note ? `${base}；${event.note}` : base, LIMITS.pendingAnswer)
+  const top = event.weak.slice(0, 2).map(item => item.tag).join('、')
+  const evidence = cleanText(`模拟测试自评 ${event.total}/${event.max}${top ? `，薄弱：${top}` : ''}`, LIMITS.evidenceText)
+  return { question, answer, evidence }
+}
+
+function pendingTurns(pending: DocumentMemory['pending'], fromOf: (event: DocumentMemory['pending'][number]) => string) {  return pending.slice(-12).map(event => ({
     from: fromOf(event),
     at: formatMinute(event.at),
     question: cleanText(event.question, 300),
@@ -165,7 +185,7 @@ export function buildDocumentInput(memory: DocumentMemory, _now: number): { text
     locked: Object.keys(memory.manual.locked),
     pinned: memory.manual.pinned,
     suppressed: memory.manual.suppressed,
-    new_turns: pendingTurns(memory.pending, event => event.kind === 'chat-turn' ? '对话模式' : '阅读助手'),
+    new_turns: pendingTurns(memory.pending, event => event.kind === 'chat-turn' ? '对话模式' : event.kind === 'quiz-result' ? '模拟测试结果（用户自评）' : '阅读助手'),
   }
   let text = JSON.stringify(input, null, 2)
   while (text.length > INPUT_CHAR_CAP && (input.new_turns as unknown[]).length > 1) {
@@ -217,7 +237,7 @@ export function buildGlobalInput(global: GlobalMemory, docs: DocumentMemory[], _
     pinned: global.manual.pinned,
     suppressed: global.manual.suppressed,
     new_turns: global.pending.slice(-12).map(event => ({
-      from: '对话模式',
+      from: event.kind === 'chat-turn' ? '对话模式' : event.kind === 'quiz-result' ? '模拟测试结果（用户自评）' : '阅读助手',
       at: formatMinute(event.at),
       question: cleanText(event.question, 300),
       answer_excerpt: cleanText(event.answer, 160),
@@ -334,7 +354,7 @@ export function validateGlobalSummary(raw: Record<string, unknown>): GlobalSumma
 
 const USAGE_LINE = '使用要求：结合记忆调整回答的深度、例子与提醒；不要逐字复述记忆或暴露隐私；记忆与用户当前说法冲突时，以当前说法为准。'
 /** 每个入口的「使用要求」一句；记忆正文与截断规则共用。 */
-const PURPOSE_USAGE: Record<MemoryPurpose, string> = {
+export const PURPOSE_USAGE: Record<MemoryPurpose, string> = {
   chat: USAGE_LINE,
   assistant: USAGE_LINE,
   translate: '使用要求：上面的学习记忆只作术语与难度参考，翻译任务本身不变；不要解释、复述或提及记忆内容。',

@@ -15,6 +15,8 @@ import { EXAM_LIMITS, STATUS_LABELS, TEMPLATES, friendlyExamError } from './type
 import { buildSlots, displayNumbers, mixPreview, resolveMix, topicCap } from './slots.ts'
 import { fingerprintOf, primaryCountsOf } from './validate.ts'
 import { completedCount, liveScore, pendingSummary, scoreExam } from './scoring.ts'
+import { buildExamMarkdown } from './markdown.ts'
+import { friendlyExamExportError } from './types.ts'
 import { loadExamChoice, resolveExamChoice, saveExamChoice } from './choice.ts'
 import type { ChatModelChoice } from '../chat/types.ts'
 
@@ -242,13 +244,13 @@ export function createExamState(deps: ExamDeps) {
       total: result.total,
       max: result.max,
       byType: {
-        single: result.byType.single.score,
-        multiple: result.byType.multiple.score,
-        essay: result.byType.essay.score,
+        single: { score: result.byType.single.score, max: result.byType.single.max },
+        multiple: { score: result.byType.multiple.score, max: result.byType.multiple.max },
+        essay: { score: result.byType.essay.score, max: result.byType.essay.max },
       },
-      weak: result.weak.map(item => ({ tag: item.tag, lost: item.lost })),
+      weak: result.weak.map(item => ({ tag: item.tag, lost: item.lost })).slice(0, 5),
       selfAssessed: true,
-      note: notes.join('；'),
+      note: notes.join('；').slice(0, 60),
       at: deps.now(),
     }
   }
@@ -500,8 +502,33 @@ export function createExamState(deps: ExamDeps) {
     await patchEntry(entry.id, {})
   }
 
-  async function leave(): Promise<void> {
-    stopClock()
+  async function exportMarkdown(): Promise<void> {
+    const entry = state.current
+    if (!entry || state.exporting || !entry.questions.length) return
+    state.exporting = true
+    state.exportError = ''
+    try {
+      const markdown = buildExamMarkdown(entry.meta, entry.questions, entry.answers, deps.now())
+      if (new TextEncoder().encode(markdown).length > EXAM_LIMITS.exportBytes) {
+        state.exportError = '试卷内容超过 16 MB，无法导出。'
+        return
+      }
+      const outcome = await deps.exportMarkdown(markdown, entry.meta.docTitle)
+      if (outcome.cancelled) return
+      entry.answers.exported = { name: outcome.name, docId: outcome.document.id, at: deps.now() }
+      entry.answers.updatedAt = deps.now()
+      cancelAnswerTimer()
+      await saveAnswers()
+      await patchEntry(entry.id, {})
+      deps.notify(`已导出「${outcome.name}」并加入文档库。`)
+    } catch (error) {
+      state.exportError = friendlyExamExportError(error)
+    } finally {
+      state.exporting = false
+    }
+  }
+
+  async function leave(): Promise<void> {    stopClock()
     cancelAnswerTimer()
     if (state.current && state.view === 'taking') saveAnswers()
     if (state.view === 'result') await finalize()
@@ -995,6 +1022,7 @@ export function createExamState(deps: ExamDeps) {
     maxScore, pending, docMissing, recent,
     init, setDocuments, selectDocument, setRequirement, setTemplate, setChoice, refreshSettings, setVisible,
     open, choose, reveal, selfScore, submit, setMemoryWant, finalize, again, remove, leave, flush, freeze, unfreeze,
+    exportMarkdown,
     start, stop, acceptDegrade, rejectDegrade, continueGeneration, retryBatch, switchTemplate, acceptPartial,
     finalizeRecord, buildEvent,
   }

@@ -592,3 +592,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -T
 - [ ] 知道数据目录、SQLite 键与 localStorage 键（第 8 节）
 - [ ] 改动 `MarkdownAnswer` / `AiPane` 样式时两处同步
 - [ ] 打包前先关掉正在运行的阅迁星穹，避免 `dist` 被占用
+
+## 模拟测试（1.2.3）
+
+- **前端**：`frontend/src/exam/`（types / slots / validate / scoring / storage / choice / activity / markdown / client / state / index）、`frontend/src/ai/exam.ts`（提示词与 1+4 次调用）、`frontend/src/components/exam/`（ExamPage / ExamSetupPanel / ExamQuestionCard / ExamResultPanel）。
+- **后端**：`backend/services/exams.py`（文件名、校验、原子写入、加入文档库）；`backend/api/server.py` 的 `exam_export` 分支与 `self.exams`；`backend/core/desktop.py` 的 `select_exam_export` 原生对话框。路径不出后端，`select_exam_export` 不在 `server.GUI` 里。
+- **存储键**：`exam.v1.index`、`exam.v1.<examId>.meta`、`exam.v1.<examId>.a`、`exam.v1.<examId>.q.<slot>`（单值 ≤ 900 KiB，最多 20 套）；模型选择在 `localStorage['kaizhi.exam.choice.v1']`。不新建表，`library.sqlite3` 的 schema 与 `user_version`（1）不变。
+- **记忆**：`LearningEvent` 新增 `quiz-result`，证据 kind 新增 `quiz`；`applyQuizResult` / `applyGlobalQuiz` 以 `exam:<examId>` 与 `qz-…` 幂等；两份总结提示词要求写明「自评」。
+- **测试**：`exam-slots` / `exam-validate` / `exam-scoring` / `exam-storage` / `exam-state` / `exam-prompts` / `exam-markdown` / `exam-surfaces` / `memory-quiz`，以及 `backend/tests/test_exams.py`。

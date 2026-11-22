@@ -28,7 +28,7 @@ const meta = computed(() => current.value?.meta)
 const submitted = computed(() => Boolean(answers.value?.submittedAt))
 const setupPanel = ref<InstanceType<typeof ExamSetupPanel>>()
 const reviewOpen = ref(false)
-const confirm = ref<null | { kind: 'submit' | 'remove' | 'switch'; id?: string; template?: 'A' | 'B' | 'C'; title: string; message: string; confirmLabel: string; danger?: boolean }>(null)
+const confirm = ref<null | { kind: 'submit' | 'remove' | 'switch' | 'export'; id?: string; template?: 'A' | 'B' | 'C'; title: string; message: string; confirmLabel: string; danger?: boolean }>(null)
 
 onMounted(async () => {
   setExamNotify(text => emit('notify', text))
@@ -99,6 +99,20 @@ async function confirmAction(): Promise<void> {
   if (action.kind === 'submit') await exam.submit()
   else if (action.kind === 'remove' && action.id) await exam.remove(action.id)
   else if (action.kind === 'switch' && action.id && action.template) await exam.switchTemplate(action.id, action.template)
+  else if (action.kind === 'export') await exam.exportMarkdown()
+}
+function askExport(): void {
+  const pending = exam.pending.value
+  if (pending.unanswered || pending.unscored) {
+    confirm.value = {
+      kind: 'export',
+      title: '仍然导出？',
+      message: `还有 ${pending.unanswered} 题未作答、${pending.unscored} 道大题未自评。仍然导出的话，这些题会标为「未作答」。`,
+      confirmLabel: '仍然导出',
+    }
+    return
+  }
+  void exam.exportMarkdown()
 }
 function askSwitch(template: 'A' | 'B' | 'C'): void {
   const entry = current.value
@@ -222,7 +236,9 @@ defineExpose({ focusSearch })
       <template v-else-if="view === 'result'">
         <ExamResultPanel v-if="answers?.result && meta" :result="answers.result" :meta="meta" :memory="answers.memory"
                          :finalized="answers.finalizedAt > 0" :doc-missing="exam.docMissing.value"
-                         @memory="exam.setMemoryWant($event)" @again="exam.again()" @review="reviewOpen = !reviewOpen" />
+                         :exporting="state.exporting" :export-error="state.exportError" :exported="answers.exported"
+                         @memory="exam.setMemoryWant($event)" @again="exam.again()" @review="reviewOpen = !reviewOpen"
+                         @export="askExport" @open-document="emit('open-document', $event)" />
         <ol v-if="reviewOpen" class="exam-questions">
           <ExamQuestionCard v-for="question in questions" :key="question.slot" :question="question" :number="numberFor(question.slot)"
                             :answer="itemFor(question.slot)" mode="review" :submitted="true" :locked="true" />

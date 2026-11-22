@@ -532,3 +532,24 @@ test('state: 单批重试只跑那一批', async () => {
   assert.equal(h.generationCalls.batch.filter(input => input.batch === 0).length, 1)
   assert.equal(h.api.state.current.questions.length, 20)
 })
+test('state: 导出成功写 exported 并提示，取消不提示，失败给成品文案', async () => {
+  const h = makeHarness()
+  await h.api.init()
+  await seedExam(h.store)
+  await h.api.open(EXAM_ID)
+  await h.api.submit()
+
+  h.deps.exportMarkdown = async () => ({ document: { id: 'doc-export' }, name: '试卷.md', bytes: 10 })
+  await h.api.exportMarkdown()
+  assert.equal(h.api.state.current.answers.exported.docId, 'doc-export')
+  assert.ok(h.notifications.some(text => text.includes('已导出')))
+
+  h.notifications.length = 0
+  h.deps.exportMarkdown = async () => ({ cancelled: true })
+  await h.api.exportMarkdown()
+  assert.equal(h.notifications.length, 0)
+
+  h.deps.exportMarkdown = async () => { throw new Error('EXAM_DENIED：写不进去') }
+  await h.api.exportMarkdown()
+  assert.equal(h.api.state.exportError, '没有写入权限：文件可能正被其他程序打开，或位于只读位置。')
+})

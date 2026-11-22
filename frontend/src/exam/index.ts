@@ -9,6 +9,7 @@ import { joinStorageGate } from '../shared/storage-gate.ts'
 import { setExamBusy } from './activity.ts'
 import { createExamState } from './state.ts'
 import { createExamStore } from './storage.ts'
+import { examClient } from './client.ts'
 
 let notifyHandler: (text: string) => void = () => {}
 
@@ -43,8 +44,8 @@ export const exam = createExamState({
     ),
   // P2 会补记忆注入的用途枚举；这里先按同一条管道接上（'exam' 在 P2-01 加进 MemoryPurpose）。
   memory: async doc => (await import('../ai/memory-context.ts')).memoryInjection(doc, 'exam' as never),
-  emit: event => emitLearningEvent(event as never),
-  exportMarkdown: async () => ({ cancelled: true }),
+  emit: event => emitLearningEvent(event),
+  exportMarkdown: (markdown, title) => examClient.exportMarkdown(markdown, title),
   settings: () => loadAiSettings(),
   choiceStorage: typeof localStorage === 'undefined' ? null : localStorage,
   notify: text => notifyHandler(text),

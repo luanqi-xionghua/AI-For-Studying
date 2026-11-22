@@ -6,9 +6,9 @@ import {
   type OnboardingAnswers, type ProfileListField,
 } from './types.ts'
 import { cleanLine, cleanList, cleanText, cleanTime, emptyDocumentMemory, normalizeKey, normalizeOnboarding } from './normalize.ts'
-import { DOC_LEVEL_LABELS, FIELD_LEVEL_LABELS, onboardingSummary } from './prompts.ts'
+import { DOC_LEVEL_LABELS, FIELD_LEVEL_LABELS, onboardingSummary, quizResultText } from './prompts.ts'
 import { nextRetryAt, type DocMeta } from './scheduler.ts'
-import type { LearningEvent } from './events.ts'
+import type { LearningEvent, QuizResultEvent } from './events.ts'
 
 const randomId = (): string => Math.random().toString(36).slice(2, 14) || 'id'
 const FIELD_LABELS: Record<string, string> = {
@@ -154,8 +154,88 @@ export function applyGlobalTurn(global: GlobalMemory, event: Extract<LearningEve
   }
 }
 
-/** 导入自评：新建记忆 / 只补自评 / 不覆盖已有自评（幂等）。 */
-export function applyOnboarding(
+/** 模拟测试结果并入文档记忆：同一套只写一次；还没被总结时替换内容（第 11.3 节）。 */
+export function applyQuizResult(
+  memory: DocumentMemory,
+  event: QuizResultEvent,
+  now: number,
+): { memory: DocumentMemory; changed: boolean } {
+  const at = cleanTime(event.at) || now
+  const turnId = `exam:${event.examId}`
+  const evidenceId = `qz-${event.examId.replaceAll('-', '').slice(0, 21)}`
+  const text = quizResultText(event)
+  if (memory.pending.some(item => item.turnId === turnId)) {
+    return {
+      memory: {
+        ...memory,
+        pending: memory.pending.map(item => (item.turnId === turnId
+          ? { ...item, question: text.question, answer: text.answer, at }
+          : item)),
+        updatedAt: now,
+        revision: memory.revision + 1,
+      },
+      changed: true,
+    }
+  }
+  if (memory.evidence.some(item => item.id === evidenceId)) return { memory, changed: false }
+  const entry: MemoryEvent = { id: randomId(), kind: 'quiz-result', at, question: text.question, answer: text.answer, turnId }
+  const evidence: MemoryEvidence = { id: evidenceId, kind: 'quiz', at, text: text.evidence, ref: '模拟测试' }
+  return {
+    memory: {
+      ...memory,
+      reading: bumpActiveDay(memory, at),
+      pending: pushCapped(memory.pending, entry, LIMITS.pending),
+      evidence: pushCapped(memory.evidence, evidence, LIMITS.evidence),
+      dirty: true,
+      dirtyAt: now,
+      updatedAt: now,
+      revision: memory.revision + 1,
+    },
+    changed: true,
+  }
+}
+
+/** 模拟测试结果并入全局记忆：同样的三分支，证据 ref 带书名。 */
+export function applyGlobalQuiz(
+  global: GlobalMemory,
+  event: QuizResultEvent,
+  now: number,
+): { memory: GlobalMemory; changed: boolean } {
+  const at = cleanTime(event.at) || now
+  const turnId = `exam:${event.examId}`
+  const evidenceId = `qz-${event.examId.replaceAll('-', '').slice(0, 21)}`
+  const text = quizResultText(event)
+  if (global.pending.some(item => item.turnId === turnId)) {
+    return {
+      memory: {
+        ...global,
+        pending: global.pending.map(item => (item.turnId === turnId
+          ? { ...item, question: text.question, answer: text.answer, at }
+          : item)),
+        updatedAt: now,
+        revision: global.revision + 1,
+      },
+      changed: true,
+    }
+  }
+  if (global.evidence.some(item => item.id === evidenceId)) return { memory: global, changed: false }
+  const entry: MemoryEvent = { id: randomId(), kind: 'quiz-result', at, question: text.question, answer: text.answer, turnId }
+  const evidence: MemoryEvidence = {
+    id: evidenceId, kind: 'quiz', at, text: text.evidence, ref: cleanText(`模拟测试 · 《${event.title}》`, LIMITS.evidenceRef),
+  }
+  return {
+    memory: {
+      ...global,
+      pending: pushCapped(global.pending, entry, LIMITS.pending),
+      evidence: pushCapped(global.evidence, evidence, LIMITS.evidence),
+      updatedAt: now,
+      revision: global.revision + 1,
+    },
+    changed: true,
+  }
+}
+
+/** 导入自评：新建记忆 / 只补自评 / 不覆盖已有自评（幂等）。 */export function applyOnboarding(
   memory: DocumentMemory | null,
   event: Extract<LearningEvent, { type: 'onboarding' }>,
   now: number,

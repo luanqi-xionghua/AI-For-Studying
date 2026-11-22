@@ -40,7 +40,7 @@ const badge = computed(() => {
   if (memory?.summarizedAt) return '已是最新'
   return '尚未总结'
 })
-const evidenceLabel: Record<string, string> = { onboarding: '导入', assistant: '阅读助手', chat: '对话模式', reading: '阅读进度', manual: '手动编辑' }
+const evidenceLabel: Record<string, string> = { onboarding: '导入', assistant: '阅读助手', chat: '对话模式', reading: '阅读进度', manual: '手动编辑', quiz: '模拟测试' }
 </script>
 
 <template>

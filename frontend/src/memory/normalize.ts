@@ -107,7 +107,7 @@ export function normalizeProfile(raw: unknown): MemoryProfile {
   }
 }
 
-const EVIDENCE_KINDS = ['onboarding', 'assistant', 'chat', 'reading', 'manual'] as const
+const EVIDENCE_KINDS = ['onboarding', 'assistant', 'chat', 'reading', 'manual', 'quiz'] as const
 export function normalizeEvidence(raw: unknown): MemoryEvidence[] {
   if (!Array.isArray(raw)) return []
   const list: MemoryEvidence[] = []
@@ -135,7 +135,7 @@ export function normalizePending(raw: unknown): MemoryEvent[] {
   const list: MemoryEvent[] = []
   for (const item of raw) {
     if (!isDict(item)) continue
-    const kind = item.kind === 'chat-turn' ? 'chat-turn' : item.kind === 'assistant-turn' ? 'assistant-turn' : undefined
+    const kind = item.kind === 'chat-turn' || item.kind === 'assistant-turn' || item.kind === 'quiz-result' ? item.kind : undefined
     if (!kind) continue
     const question = cleanText(item.question, LIMITS.pendingQuestion)
     if (!question) continue

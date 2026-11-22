@@ -77,7 +77,7 @@ export type MemoryProfile = {
 /** 证据：记忆页里可追溯的一条来源。 */
 export type MemoryEvidence = {
   id: string
-  kind: 'onboarding' | 'assistant' | 'chat' | 'reading' | 'manual'
+  kind: 'onboarding' | 'assistant' | 'chat' | 'reading' | 'manual' | 'quiz'
   at: number
   text: string
   ref?: string
@@ -86,7 +86,7 @@ export type MemoryEvidence = {
 /** 待总结的一轮问答。只有问答进这个队列；自评、阅读行为是规则直接写入的。 */
 export type MemoryEvent = {
   id: string
-  kind: 'assistant-turn' | 'chat-turn'
+  kind: 'assistant-turn' | 'chat-turn' | 'quiz-result'
   at: number
   question: string
   answer: string

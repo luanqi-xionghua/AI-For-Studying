@@ -3,6 +3,7 @@
 import { computed } from 'vue'
 import type { ExamMeta, ExamResult } from '../../exam/types.ts'
 import { formatElapsed, typeRowLabel } from '../../exam/scoring.ts'
+import { relativeTime } from '../../memory/prompts.ts'
 import { TYPE_LABELS } from '../../exam/types.ts'
 
 const props = defineProps<{
@@ -11,8 +12,13 @@ const props = defineProps<{
   memory: { want: boolean; sentAt: number; skipped: '' | 'unchecked' | 'doc-removed' }
   finalized: boolean
   docMissing: boolean
+  exporting: boolean
+  exportError: string
+  exported: { name: string; docId: string; at: number } | null
 }>()
-const emit = defineEmits<{ memory: [on: boolean]; again: []; review: [] }>()
+const emit = defineEmits<{
+  memory: [on: boolean]; again: []; review: []; export: []; 'open-document': [id: string]
+}>()
 
 const rows = computed(() => (['single', 'multiple', 'essay'] as const).map(type => ({
   type, label: typeRowLabel(type), ...props.result.byType[type],
@@ -20,7 +26,9 @@ const rows = computed(() => (['single', 'multiple', 'essay'] as const).map(type 
 const memoryLocked = computed(() => props.finalized || props.docMissing)
 const memoryNote = computed(() => {
   if (props.docMissing) return '原书已从文档库移除，这次结果不会写入学习记忆。'
-  if (props.memory.sentAt) return '已记入学习记忆。如需修改，请到「记忆管理」。'
+  if (props.memory.sentAt) {
+    return `已记入《${props.meta.docTitle}》的学习记忆和全局记忆（${relativeTime(props.memory.sentAt, Date.now())}）。如需修改，请到「记忆管理」。`
+  }
   if (props.memory.skipped === 'unchecked') return '这次结果没有记入学习记忆。'
   return '只写入总分、各题型得分和薄弱知识点，不写题目和答案原文，并标明是自评。离开结果页时写入，在那之前可以取消。'
 })
@@ -65,6 +73,15 @@ const memoryNote = computed(() => {
     </label>
     <p class="exam-meta-line">{{ memoryNote }}</p>
 
+    <div class="exam-export">
+      <button type="button" class="exam-secondary" :disabled="exporting" @click="emit('export')">
+        {{ exporting ? '正在导出…' : '导出并加入文档库' }}
+      </button>
+      <button v-if="exported" type="button" class="exam-link" @click="emit('open-document', exported.docId)">在文档库打开</button>
+      <p v-if="exported" class="exam-meta-line">已导出「{{ exported.name }}」并加入文档库。</p>
+      <p v-if="exportError" class="exam-error" role="alert">{{ exportError }}</p>
+    </div>
+
     <div class="exam-result-actions">
       <button type="button" class="exam-primary" @click="emit('again')">再来一套</button>
       <button type="button" class="exam-secondary" @click="emit('review')">回看全部题目</button>
@@ -88,6 +105,9 @@ const memoryNote = computed(() => {
 .exam-weak ul { margin: 0; padding-inline-start: 18px; color: var(--secondary); font-size: 13px; line-height: 1.8; }
 .exam-memory { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink); cursor: pointer; }
 .exam-memory.disabled { opacity: .6; cursor: default; }
+.exam-export { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.exam-link { border: 0; background: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; }
+.exam-error { flex-basis: 100%; margin: 0; color: var(--danger); font-size: 12.5px; }
 .exam-result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .exam-primary, .exam-secondary { padding: 8px 16px; border-radius: var(--r-control); font: 600 13px/1 inherit; cursor: pointer; }
 .exam-primary { border: 0; background: var(--accent); color: #fff; }

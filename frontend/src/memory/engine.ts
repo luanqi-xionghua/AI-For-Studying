@@ -9,7 +9,7 @@ import {
 import { emptyDocumentMemory, emptyGlobalMemory } from './normalize.ts'
 import { onLearningEvent, type LearningEvent } from './events.ts'
 import {
-  applyEvent, applyGlobalTurn, applyManualEdit, applyOnboarding, hasMemoryContent, markFailure,
+  applyEvent, applyGlobalQuiz, applyGlobalTurn, applyManualEdit, applyOnboarding, applyQuizResult, hasMemoryContent, markFailure,
   mergeDocumentSummary, mergeGlobalSummary, removeEvidence, removeListItem, toDocMeta, toIndexEntry,
   unlockField, type MemoryPatch,
 } from './merge.ts'
@@ -274,6 +274,29 @@ export function createMemoryEngine(deps: MemoryEngineDeps): MemoryEngine {
           } catch (error) {
             state.error = messageOf(error)
           }
+        }
+        break
+      }
+      case 'quiz-result': {
+        // 模拟测试结果：文档与全局各写一条，两个目标各自 try，互不影响。
+        const at = deps.now()
+        try {
+          const current = await ensure(event.docId, true, event.title)
+          if (current) {
+            const next = applyQuizResult(current, event, at)
+            if (next.changed) await commitDoc(next.memory, false)
+          }
+        } catch (error) {
+          state.error = messageOf(error)
+        }
+        try {
+          const global = await getGlobal()
+          if (!globalLoadFailed) {
+            const next = applyGlobalQuiz(global, event, at)
+            if (next.changed) await commitGlobal(next.memory, false)
+          }
+        } catch (error) {
+          state.error = messageOf(error)
         }
         break
       }

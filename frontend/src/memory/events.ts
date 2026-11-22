@@ -8,6 +8,13 @@ export type LearningEvent =
   | { type: 'reading'; docId: string; title: string; page: number; pageCount: number; progress: number; at: number }
   | { type: 'onboarding'; docId: string; title: string; answers: OnboardingAnswers; importId: string; at: number }
   | { type: 'document-removed'; docId: string; title: string; at: number }
+  | {
+      type: 'quiz-result'; docId: string; title: string; examId: string; total: number; max: number
+      byType: { single: { score: number; max: number }; multiple: { score: number; max: number }; essay: { score: number; max: number } }
+      weak: { tag: string; lost: number }[]; selfAssessed: true; note?: string; at: number
+    }
+
+export type QuizResultEvent = Extract<LearningEvent, { type: 'quiz-result' }>
 
 type Listener = (event: LearningEvent) => void
 const listeners = new Set<Listener>()

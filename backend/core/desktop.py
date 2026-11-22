@@ -98,6 +98,14 @@ class Gui(QObject):
                     str(Path.home() / "Documents"),
                     "SQLite 文档库备份 (*.sqlite3)",
                 )[0]
+            elif cmd == "select_exam_export":
+                name = str(args.get("name") or "模拟测试.md")[:120]
+                value = QFileDialog.getSaveFileName(
+                    self.view,
+                    "导出模拟测试",
+                    str(Path.home() / "Documents" / name),
+                    "Markdown 文档 (*.md)",
+                )[0]
             elif cmd == "set_fullscreen":
                 if args["value"]:
                     self.view.showFullScreen()
