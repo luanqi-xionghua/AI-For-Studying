@@ -51,6 +51,7 @@ export function createExamState(deps: ExamDeps) {
       evidence: 0,
       error: '',
       failedBatches: [] as number[],
+      onlyBatch: -1,
       degradeOffer: null as null | { reason: string },
       stopped: false,
     },
@@ -66,6 +67,8 @@ export function createExamState(deps: ExamDeps) {
   let answerTimer: unknown = null
   let generationController: AbortController | null = null
   let generationTask: Promise<void> | null = null
+  /** 正在生成的那套卷：允许用户在出题中打开另一套试卷，写入仍落在这里。 */
+  let generating: { id: string; meta: ExamMeta; questions: ExamQuestion[] } | null = null
   let generationEpoch = 0
   let generationToken = 0
 
@@ -563,6 +566,7 @@ export function createExamState(deps: ExamDeps) {
     state.generation.stopped = false
     state.generation.error = ''
     state.generation.failedBatches = []
+    state.generation.onlyBatch = -1
     state.generation.degradeOffer = null
     state.generation.phase = 'plan'
     state.generation.done = 0
@@ -641,6 +645,14 @@ export function createExamState(deps: ExamDeps) {
     state.generation.running = true
     deps.setBusy(true)
     state.generation.error = ''
+    // 出题期间的「本卷题」跟随 generation 自己，不跟随 state.current：
+    // 用户可以在出题中打开另一套试卷，写入仍要落在正在生成的那一套上（第 8.7 节）。
+    if (state.current?.id === examId) {
+      generating = { id: examId, meta, questions: state.current.questions }
+    } else {
+      const loaded = await deps.store.loadExam(examId)
+      generating = { id: examId, meta, questions: loaded.questions }
+    }
     let source: { context: unknown; close(): Promise<void> | void } | null = null
     try {
       if (meta.grounded) {
@@ -679,12 +691,14 @@ export function createExamState(deps: ExamDeps) {
       }
 
       const slots = meta.slots
+      const only = state.generation.onlyBatch
       const batchOrder = generationToken === token
-        ? [0, 1, 2, 3].filter(index => meta.batches[index].status === 'pending' || meta.batches[index].status === 'failed' || meta.batches[index].status === 'stopped')
+        ? [0, 1, 2, 3].filter(index => (only < 0 || index === only)
+            && (meta.batches[index].status === 'pending' || meta.batches[index].status === 'failed' || meta.batches[index].status === 'stopped'))
         : []
       for (const batchIndex of batchOrder) {
         if (controller.signal.aborted) break
-        const questions = state.current?.questions || []
+        const questions = generating?.questions || []
         let previousErrors: string[] = []
         let succeeded = false
         for (let attempt = 1; attempt <= EXAM_LIMITS.attempts; attempt++) {
@@ -720,19 +734,22 @@ export function createExamState(deps: ExamDeps) {
           state.generation.failedBatches = [...new Set([...state.generation.failedBatches, batchIndex])]
         }
         await deps.store.saveMeta(meta)
-        state.generation.done = state.current?.questions.length || 0
+        state.generation.done = generating?.questions.length || 0
       }
 
       state.generation.phase = 'idle'
       state.generation.stopped = controller.signal.aborted
       if (!controller.signal.aborted) {
         const settled = meta.batches.every(batch => batch.status === 'ok' || batch.status === 'failed')
-        const count = state.current?.questions.length || 0
+        const count = generating?.questions.length || 0
         if (settled && count > 0) {
           await patchEntry(examId, { status: 'taking', count, max: count * EXAM_LIMITS.points, answered: 0 })
-          state.view = 'taking'
-          state.current!.answers.startedAt ||= deps.now()
-          syncClock()
+          // 用户可能已经切到别的试卷/别的整页：只在本页正是这一套时才切换视图。
+          if (state.current?.id === examId && state.generation.examId === examId) {
+            state.view = 'taking'
+            state.current.answers.startedAt ||= deps.now()
+            syncClock()
+          }
           deps.notify(`《${meta.docTitle}》的模拟测试已出好，共 ${count} 题。`)
         } else if (!count) {
           state.generation.error = state.generation.error || friendlyExamError('all-failed', { message: meta.batches.map(batch => batch.error).filter(Boolean)[0] || '没有生成任何题目' })
@@ -752,6 +769,8 @@ export function createExamState(deps: ExamDeps) {
       if (state.generation.examId === examId && state.view === 'generating' && state.generation.error) state.view = 'generating'
       await deps.store.saveMeta(meta).catch(() => {})
       state.list = (await deps.store.loadIndex()).index.list
+      if (generating?.id === examId) generating = null
+      state.generation.onlyBatch = -1
     }
   }
 
@@ -797,12 +816,12 @@ export function createExamState(deps: ExamDeps) {
     token: number,
     memory: string,
   ): Promise<BatchOutcome | null> {
-    const questions = state.current?.questions || []
+    const questions = generating?.questions || []
     const slots = meta.slots.filter(slot => slot.batch === batchIndex)
     const present = questions.map(question => question.slot)
     const numbers = displayNumbers(meta.slots, present)
     const cap = topicCap(meta.topics.length)
-    const previous = questions.slice(-EXAM_LIMITS.perBatch).map(question => question.stem.slice(0, 40))
+    const previous = questions.slice(0, 15).map(question => question.stem.slice(0, 40))
     const counts = primaryCountsOf(questions)
     const fingerprints = questions.map(question => fingerprintOf(question.stem))
     const limited = withTimeout(signal, EXAM_LIMITS.batchTimeoutMs)
@@ -859,23 +878,23 @@ export function createExamState(deps: ExamDeps) {
   }
 
   async function persistBatch(meta: ExamMeta, questions: ExamQuestion[]): Promise<boolean> {
-    const currentEntry = state.current
-    if (!currentEntry) return false
+    const batchIndex = questions[0]?.batch ?? 0
+    const owner = generating && generating.id === meta.id ? generating : null
     try {
       for (const question of questions) await deps.store.saveQuestion(question)
-      currentEntry.questions = [...currentEntry.questions, ...questions].sort((a, b) => a.slot - b.slot)
-      meta.batches[questions[0]?.batch ?? 0] = {
-        ...meta.batches[questions[0]?.batch ?? 0], status: 'ok', finishedAt: deps.now(), error: '',
-      }
+      const merged = owner
+        ? [...owner.questions, ...questions].sort((a, b) => a.slot - b.slot)
+        : questions
+      if (owner) owner.questions = merged
+      if (state.current?.id === meta.id) state.current.questions = merged
+      meta.batches[batchIndex] = { ...meta.batches[batchIndex], status: 'ok', finishedAt: deps.now(), error: '' }
       meta.updatedAt = deps.now()
       await deps.store.saveMeta(meta)
-      await patchEntry(meta.id, { count: currentEntry.questions.length, max: currentEntry.questions.length * EXAM_LIMITS.points })
-      state.generation.done = currentEntry.questions.length
+      await patchEntry(meta.id, { count: merged.length, max: merged.length * EXAM_LIMITS.points })
+      state.generation.done = merged.length
       return true
     } catch (error) {
-      meta.batches[questions[0]?.batch ?? 0] = {
-        ...meta.batches[questions[0]?.batch ?? 0], status: 'failed', error: '保存失败',
-      }
+      meta.batches[batchIndex] = { ...meta.batches[batchIndex], status: 'failed', error: '保存失败' }
       deps.reportFailure(`exam:${meta.id}:batch`, '模拟测试', error, () => persistBatch(meta, questions).then(() => undefined))
       return false
     }
@@ -898,6 +917,7 @@ export function createExamState(deps: ExamDeps) {
     meta.degradedReason = offer.reason.slice(0, 120)
     await deps.store.saveMeta(meta)
     state.generation.running = false
+    state.generation.onlyBatch = -1
     await trackGeneration(meta.id)
   }
 
@@ -919,6 +939,7 @@ export function createExamState(deps: ExamDeps) {
     const entry = state.current
     if (!entry || entry.answers.submittedAt) return
     state.view = 'generating'
+    state.generation.onlyBatch = -1
     await trackGeneration(id)
   }
 
@@ -932,6 +953,7 @@ export function createExamState(deps: ExamDeps) {
     entry.meta.batches[batchIndex] = { ...batch, status: 'pending', error: '', attempts: 0 }
     await deps.store.saveMeta(entry.meta)
     state.view = 'generating'
+    state.generation.onlyBatch = batchIndex
     await trackGeneration(id)
   }
 
@@ -955,6 +977,7 @@ export function createExamState(deps: ExamDeps) {
     await deps.store.saveMeta(entry.meta)
     await patchEntry(id, { count: 0, max: 0, status: 'draft', template: entry.meta.template })
     state.view = 'generating'
+    state.generation.onlyBatch = -1
     await trackGeneration(id)
   }
 

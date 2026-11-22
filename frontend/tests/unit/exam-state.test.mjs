@@ -492,3 +492,43 @@ test('state: freeze 会中止正在进行的出题', async () => {
   assert.equal(h.api.state.generation.running, false)
   assert.equal(h.store.frozen(), true)
 })
+test('state: 出题中打开另一套试卷，结果仍写回正在生成的那一套', async () => {
+  const h = makeHarness({
+    batch: async (input, signal) => {
+      if (input.batch === 1) await tick(30)
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+  })
+  await h.api.init()
+  await seedExam(h.store)
+  h.api.selectDocument(DOC_ID)
+  const running = h.api.start()
+  await waitFor(() => h.generationCalls.batch.some(input => input.batch === 1))
+  await h.api.open(EXAM_ID)
+  assert.equal(h.api.state.current.id, EXAM_ID)
+  await running
+  const generated = await h.store.loadExam(`${EXAM_ID}-new`)
+  assert.equal(generated.questions.length, 20)
+  assert.equal(h.api.state.current.id, EXAM_ID)
+  assert.equal(h.api.state.current.questions.length, 20)
+})
+
+test('state: 单批重试只跑那一批', async () => {
+  let failing = true
+  const h = makeHarness({
+    batch: async input => {
+      if (input.batch === 2 && failing) return { ok: false, errors: ['slot 10：选项必须是 A–D 四个且互不相同。'], reason: 'bad' }
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  const id = `${EXAM_ID}-new`
+  assert.equal(h.api.state.current.questions.length, 15)
+  failing = false
+  await h.api.retryBatch(id, 2)
+  assert.equal(h.generationCalls.batch.filter(input => input.batch === 2).length, 3)
+  assert.equal(h.generationCalls.batch.filter(input => input.batch === 0).length, 1)
+  assert.equal(h.api.state.current.questions.length, 20)
+})

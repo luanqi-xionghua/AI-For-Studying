@@ -138,8 +138,8 @@ defineExpose({ focusSearch })
             <span class="exam-recent-meta">{{ dateText(row.entry.createdAt) }} · {{ row.statusText }}</span>
           </div>
           <div class="exam-recent-actions">
-            <button v-if="row.entry.status === 'draft' && row.entry.count" type="button" @click="emit('continue', row.entry.id)">继续出题</button>
-            <button v-if="row.entry.status === 'draft'" type="button" @click="emit('open', row.entry.id)">开始作答</button>
+            <button v-if="row.entry.status === 'draft'" type="button" @click="emit('continue', row.entry.id)">继续出题</button>
+            <button v-if="row.entry.status === 'draft' && row.entry.count" type="button" @click="emit('open', row.entry.id)">开始作答</button>
             <button v-if="row.entry.status === 'taking'" type="button" @click="emit('open', row.entry.id)">继续作答</button>
             <button v-if="row.entry.status === 'done'" type="button" @click="emit('open', row.entry.id)">查看结果</button>
             <button type="button" class="danger" @click="emit('remove', row.entry.id)">删除</button>

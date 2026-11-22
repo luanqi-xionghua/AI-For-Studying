@@ -86,9 +86,10 @@ function jump(slot: number): void {
 function askSubmit(): void {
   confirm.value = { kind: 'submit', title: '确认交卷？', message: exam.pending.value.message, confirmLabel: '交卷' }
 }
-function askRemove(id: string, count: number): void {
+function askRemove(id: string): void {
+  const entry = state.list.find(item => item.id === id)
   confirm.value = {
-    kind: 'remove', id, title: '放弃这套试卷？', message: `已生成的 ${count} 题会被删除。`, confirmLabel: '放弃', danger: true,
+    kind: 'remove', id, title: '放弃这套试卷？', message: `已生成的 ${entry?.count ?? 0} 题会被删除。`, confirmLabel: '放弃', danger: true,
   }
 }
 async function confirmAction(): Promise<void> {
@@ -145,7 +146,7 @@ defineExpose({ focusSearch })
       <ExamSetupPanel v-else-if="view === 'setup'" ref="setupPanel" :exam="exam" :documents="documents"
                       @settings="emit('settings')" @import="emit('import')"
                       @open="exam.open($event)" @continue="exam.continueGeneration($event)"
-                      @remove="askRemove($event, 20)" />
+                      @remove="askRemove($event)" />
 
       <section v-else-if="view === 'generating'" class="exam-progress page-card">
         <h2>正在出题</h2>
@@ -189,7 +190,11 @@ defineExpose({ focusSearch })
           <template v-if="!state.generation.running && questions.length">
             <button type="button" class="exam-primary" @click="exam.acceptPartial()">开始作答</button>
             <button type="button" class="exam-secondary" @click="current && exam.continueGeneration(current.id)">继续出题</button>
-            <button type="button" class="exam-secondary" @click="current && askRemove(current.id, questions.length)">放弃这套</button>
+            <button type="button" class="exam-secondary" @click="current && askRemove(current.id)">放弃这套</button>
+          </template>
+          <template v-else-if="!state.generation.running && current && !state.generation.error">
+            <button type="button" class="exam-primary" @click="exam.continueGeneration(current.id)">继续出题</button>
+            <button type="button" class="exam-secondary" @click="askRemove(current.id)">放弃这套</button>
           </template>
         </div>
       </section>
