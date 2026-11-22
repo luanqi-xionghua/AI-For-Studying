@@ -16,12 +16,23 @@ export type ChatStorage = {
 
 export type ChatStore = {
   loadIndex(): Promise<ChatModeIndex>
-  loadConversation(id: string): Promise<ChatModeConversation | null>
+  /**
+   * 读一条会话。三种结果必须分开：
+   * - `undefined`：这个键根本没有（从未保存过的空会话），调用方应当当成新会话；
+   * - `null`：有值但解析或校验失败（真的坏了）；
+   * - 对象：正常。
+   */
+  loadConversation(id: string): Promise<ChatModeConversation | null | undefined>
   saveConversation(conversation: ChatModeConversation, activeId: string): Promise<void>
   deleteConversation(id: string, activeId: string): Promise<void>
   flush(): Promise<void>
   freeze(): void
   unfreeze(): void
+}
+
+/** 只保留清单里真实存在的 activeId：清单为空时留空，绝不留下指向不存在会话的 id。 */
+function pickActive(candidate: string, list: ChatModeIndexEntry[]): string {
+  return list.some(item => item.id === candidate) ? candidate : (list[0]?.id || '')
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -388,7 +399,7 @@ export function createChatStore(storage: ChatStorage): ChatStore {
     async loadIndex() { return readIndex() },
     async loadConversation(id) {
       const raw = await storage.getSetting(conversationKey(id))
-      if (!raw) return null
+      if (!raw) return undefined
       return normalizeChatConversation(parseJsonSafe(raw), id)
     },
     async saveConversation(conversation, activeId) {
@@ -406,7 +417,7 @@ export function createChatStore(storage: ChatStorage): ChatStore {
         list.sort((a, b) => b.updatedAt - a.updatedAt)
         dropped.push(...list.slice(CHAT_LIMITS.conversations))
         list = list.slice(0, CHAT_LIMITS.conversations)
-        return { version: CHATMODE_VERSION, activeId, list }
+        return { version: CHATMODE_VERSION, activeId: pickActive(activeId, list), list }
       })
       for (const item of dropped) await enqueue(conversationKey(item.id), () => storage.deleteSetting(conversationKey(item.id)))
     },
@@ -414,7 +425,7 @@ export function createChatStore(storage: ChatStorage): ChatStore {
       await enqueue(conversationKey(id), () => storage.deleteSetting(conversationKey(id)))
       await mutateIndex(index => {
         const list = index.list.filter(item => item.id !== id)
-        return { version: CHATMODE_VERSION, activeId: activeId === id ? (list[0]?.id || '') : activeId, list }
+        return { version: CHATMODE_VERSION, activeId: pickActive(activeId === id ? '' : activeId, list), list }
       })
     },
     async flush() { await Promise.allSettled([...chains.values()]) },

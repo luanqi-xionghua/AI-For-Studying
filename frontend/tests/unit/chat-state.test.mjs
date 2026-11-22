@@ -326,6 +326,65 @@ test('chat state: a brand new conversation is loaded, not damaged', async () => 
   assert.equal(live.error, '')
 })
 
+test('chat state: an activeId missing from the list never becomes a damaged conversation', async () => {
+  // 新建后从未保存的空会话留下的悬空 activeId：重启时不能把它当成损坏记录。
+  const store = {
+    async loadIndex() { return { version: 1, activeId: 'ghost', list: [] } },
+    async loadConversation() { return undefined },
+    async saveConversation() {}, async deleteConversation() {},
+    async flush() {}, freeze() {}, unfreeze() {},
+  }
+  let seq = 0
+  const chat = createChatState({
+    store,
+    streamChat: async () => {},
+    recordUsage: () => {},
+    estimateTokens: () => 0,
+    emit: () => {},
+    now: () => ++seq,
+    uuid: () => `id-${++seq}`,
+    reportFailure: () => {},
+  })
+  active.push(chat)
+  await chat.load()
+  assert.notEqual(chat.state.activeId, 'ghost')
+  const live = chat.current()
+  assert.equal(live.loaded, true)
+  assert.equal(live.damaged, false)
+  assert.equal(live.error, '')
+})
+
+test('chat state: a listed conversation with no stored row is still damaged', async () => {
+  // 清单说有 2 条消息、但会话键没了：这是真的丢数据，仍要提示损坏。
+  const store = {
+    async loadIndex() {
+      return {
+        version: 1, activeId: 'gone',
+        list: [{ id: 'gone', title: '旧对话', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, count: 2 }],
+      }
+    },
+    async loadConversation() { return undefined },
+    async saveConversation() {}, async deleteConversation() {},
+    async flush() {}, freeze() {}, unfreeze() {},
+  }
+  let seq = 0
+  const chat = createChatState({
+    store,
+    streamChat: async () => {},
+    recordUsage: () => {},
+    estimateTokens: () => 0,
+    emit: () => {},
+    now: () => ++seq,
+    uuid: () => `id-${++seq}`,
+    reportFailure: () => {},
+  })
+  active.push(chat)
+  await chat.load()
+  const live = await chat.open('gone')
+  assert.equal(live.damaged, true)
+  assert.match(live.error, /损坏/)
+})
+
 test('chat state: a stored conversation loads when opened', async () => {
   const store = fakeStore({ version: 1, activeId: 'saved', list: [{ id: 'saved', title: '旧对话', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, count: 2 }] })
   store.conversations.set('saved', JSON.stringify({ version: 1, id: 'saved', title: '旧对话', createdAt: 1, updatedAt: 1, scope: { kind: 'global' }, messages: [{ id: 'm1', role: 'user', content: '问' }, { id: 'm2', role: 'assistant', content: '答' }] }))

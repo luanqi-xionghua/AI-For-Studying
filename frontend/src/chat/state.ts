@@ -136,8 +136,23 @@ export function createChatState(deps: ChatStateDeps): ChatState {
       const entry = state.list.find(item => item.id === id)
       live = register({ ...emptyConversation(id, entry?.scope ?? { kind: 'global' }), title: entry?.title || '', createdAt: entry?.createdAt || deps.now(), updatedAt: entry?.updatedAt || deps.now() }, false)
     }
-    let conversation: ChatModeConversation | null = null
-    try { conversation = await deps.store.loadConversation(id) } catch (error) { deps.reportFailure('chatmode:' + id, '对话模式记录', error, () => saveNow(live!)) }
+    let conversation: ChatModeConversation | null | undefined = null
+    try {
+      conversation = await deps.store.loadConversation(id)
+    } catch (error) {
+      conversation = null
+      deps.reportFailure('chatmode:' + id, '对话模式记录', error, () => saveNow(live!))
+    }
+    // 键根本不存在、清单里也没有它：新建后从未保存过的空会话，当成新会话，不算损坏。
+    if (conversation === undefined) {
+      if (!state.list.some(item => item.id === id)) {
+        live.loaded = true
+        live.damaged = false
+        live.error = ''
+        return live
+      }
+      conversation = null
+    }
     if (!conversation) {
       live.loaded = true
       live.damaged = true
@@ -167,7 +182,9 @@ export function createChatState(deps: ChatStateDeps): ChatState {
     if (state.ready) return
     const index = await deps.store.loadIndex()
     state.list = sortedList(index.list)
-    state.activeId = index.activeId || state.list[0]?.id || ''
+    // 清单里没有的 activeId（例如新建后从未保存的空会话）恢复不了，会打开一条不存在的记录。
+    const listed = state.list.some(item => item.id === index.activeId)
+    state.activeId = listed ? index.activeId : (state.list[0]?.id || '')
     state.ready = true
     ensureActive()
   }
