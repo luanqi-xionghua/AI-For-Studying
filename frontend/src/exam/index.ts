@@ -11,11 +11,16 @@ import { createExamState } from './state.ts'
 import { createExamStore } from './storage.ts'
 import { examClient } from './client.ts'
 
-let notifyHandler: (text: string) => void = () => {}
+import { createNotifyRelay } from './notify.ts'
 
-/** 页面挂载时把 App 的 notify 接进来（出完后提示、分数等由状态机发出）。 */
-export function setExamNotify(handler: (text: string) => void): void {
-  notifyHandler = handler
+const relay = createNotifyRelay()
+
+/**
+ * 页面挂载时把 App 的 notify 接进来（出完后提示、分数等由状态机发出）；卸载时传 null 断开，
+ * 断开期间的提示留到下次挂载补发（见 notify.ts）。
+ */
+export function setExamNotify(handler: ((text: string) => void) | null): void {
+  relay.set(handler)
 }
 
 const store = createExamStore(  {
@@ -48,7 +53,7 @@ export const exam = createExamState({
   exportMarkdown: (markdown, title) => examClient.exportMarkdown(markdown, title),
   settings: () => loadAiSettings(),
   choiceStorage: typeof localStorage === 'undefined' ? null : localStorage,
-  notify: text => notifyHandler(text),
+  notify: text => relay.notify(text),
   reportFailure: reportSaveFailure,
   clearFailure: clearSaveFailure,
   setBusy: setExamBusy,

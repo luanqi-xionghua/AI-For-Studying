@@ -14,6 +14,8 @@ const props = defineProps<{
   mode: 'taking' | 'review'
   submitted: boolean
   locked: boolean
+  /** 结果页（交卷后、离开结果页前）允许给大题自评；作答页由 interactive 决定。 */
+  scorable?: boolean
 }>()
 const emit = defineEmits<{
   choose: [key: string]
@@ -28,6 +30,7 @@ const correctKeys = computed(() => (Array.isArray(props.question.answer) ? props
 const revealed = computed(() => item.value.revealed)
 const essay = computed(() => props.question.type === 'essay')
 const interactive = computed(() => props.mode === 'taking' && !props.locked && !props.submitted)
+const canScore = computed(() => interactive.value || Boolean(props.scorable))
 
 const answerText = computed(() => correctKeys.value.join('、'))
 const verdict = computed(() => {
@@ -60,6 +63,20 @@ function stateOf(key: string): 'selected' | 'right' | 'wrong' | '' {
   }
   return picked ? 'selected' : ''
 }
+/** 点选项：只读时不响应；点到选项里的链接或代码「复制」按钮时不当作选择。 */
+function pick(key: string, event: Event): void {
+  if (!interactive.value) return
+  const target = event.target as Element | null
+  if (target?.closest?.('a, [data-copy]')) return
+  emit('choose', key)
+}
+/** role="button" 的键盘行为：Enter / 空格选择（与原生按钮一致）。 */
+function optionKey(key: string, event: KeyboardEvent): void {
+  if (event.target !== event.currentTarget) return
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  pick(key, event)
+}
 const verdictTone = computed(() => {
   if (!props.submitted) return ''
   const result = scoreQuestion(props.question, item.value, true)
@@ -86,14 +103,15 @@ const verdictTone = computed(() => {
 
     <MarkdownAnswer class="exam-stem" :content="question.stem" />
 
+    <!-- 选项里是 Markdown / 公式（块级内容，可能含链接和代码复制按钮），不能放进 <button>：用 role="button" 的 div。 -->
     <div v-if="!essay" class="exam-options">
-      <button v-for="option in question.options" :key="option.key" type="button"
-              class="exam-option" :class="stateOf(option.key)"
-              :disabled="!interactive" :aria-pressed="chosen.has(option.key)"
-              @click="emit('choose', option.key)">
+      <div v-for="option in question.options" :key="option.key" role="button"
+           class="exam-option" :class="stateOf(option.key)"
+           :tabindex="interactive ? 0 : -1" :aria-disabled="!interactive" :aria-pressed="chosen.has(option.key)"
+           @click="pick(option.key, $event)" @keydown="optionKey(option.key, $event)">
         <span class="exam-key">{{ option.key }}</span>
         <MarkdownAnswer class="exam-option-text" :content="option.text" />
-      </button>
+      </div>
     </div>
     <p v-if="!interactive && !essay" class="exam-lock">
       {{ locked ? '已查看答案，本题作答已锁定。' : '结果页只读。' }}
@@ -107,13 +125,13 @@ const verdictTone = computed(() => {
       <template v-if="essay">
         <p class="exam-rubric-title">评分要点</p>
         <ol class="exam-rubric">
-          <li v-for="(point, index) in question.rubric" :key="index">{{ index + 1 }}. {{ point.point }}（{{ point.score }} 分）</li>
+          <li v-for="(point, index) in question.rubric" :key="index">{{ point.point }}（{{ point.score }} 分）</li>
         </ol>
         <div class="exam-self" role="radiogroup" aria-label="大题自评得分，0 到 10 分">
           <button v-for="value in 11" :key="value - 1" type="button" role="radio"
                   :aria-checked="item.selfScore === value - 1"
                   :class="{ selected: item.selfScore === value - 1 }"
-                  :disabled="!interactive" @click="emit('score', value - 1)">{{ value - 1 }}</button>
+                  :disabled="!canScore" @click="emit('score', value - 1)">{{ value - 1 }}</button>
         </div>
         <p class="exam-self-value">{{ typeof item.selfScore === 'number' ? `${item.selfScore} / 10` : '还没有自评' }}</p>
       </template>
@@ -138,8 +156,9 @@ const verdictTone = computed(() => {
 .exam-stem { font-size: 14.5px; line-height: 1.75; color: var(--ink); }
 .exam-options { display: flex; flex-direction: column; gap: 8px; }
 .exam-option { display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost, var(--fill-2)); color: var(--control-ink, var(--ink)); text-align: start; font: inherit; font-size: 13.5px; line-height: 1.65; cursor: pointer; }
-.exam-option:hover:not(:disabled) { background: var(--frost-hover, var(--fill-2)); }
-.exam-option:disabled { cursor: default; opacity: 1; }
+.exam-option:hover:not([aria-disabled='true']) { background: var(--frost-hover, var(--fill-2)); }
+.exam-option[aria-disabled='true'] { cursor: default; }
+.exam-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .exam-option.selected { border-color: var(--accent); background: var(--accent-ring, var(--fill-3)); }
 .exam-option.right { border-color: var(--success); }
 .exam-option.wrong { border-color: var(--danger); background: var(--danger-soft); }

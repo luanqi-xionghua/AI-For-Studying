@@ -18,6 +18,7 @@ import { completedCount, liveScore, pendingSummary, scoreExam } from './scoring.
 import { buildExamMarkdown } from './markdown.ts'
 import { friendlyExamExportError } from './types.ts'
 import { loadExamChoice, resolveExamChoice, saveExamChoice } from './choice.ts'
+import { failedBatchesOf } from './progress.ts'
 import type { ChatModelChoice } from '../chat/types.ts'
 
 type SetupTemplate = 'auto' | 'A' | 'B' | 'C'
@@ -187,7 +188,8 @@ export function createExamState(deps: ExamDeps) {
       onProgress: text => { state.generation.note = text },
       onEvidence: total => { state.generation.evidence = total },
       onUsage: usage => {
-        const meta = state.current?.meta
+        // 记在正在生成的那一套上：出题中可以打开另一套试卷（第 8.7 节）。
+        const meta = generating?.meta || (state.current?.id === state.generation.examId ? state.current.meta : null)
         if (!meta) return
         meta.generation.calls += 1
         meta.generation.input += usage.input
@@ -396,9 +398,24 @@ export function createExamState(deps: ExamDeps) {
     else if (loaded.questions.length) state.view = 'taking'
     else if (entry && entry.status === 'draft') state.view = 'generating'
     else state.view = 'setup'
+    // 刷新 / 重开后，出题进度区的「失败批次」「已停止」「已生成 n/m」从存下来的 meta 恢复；
+    // 正在给某一套出题时不动（那是正在进行的那一套的实时状态）。
+    if (!state.generation.running) restoreGeneration(loaded.meta, loaded.questions.length)
     if (state.view === 'taking') syncClock()
     await patchEntry(id, { updatedAt: deps.now() })
     await deps.store.mutateIndex(index => ({ ...index, activeId: id }))
+  }
+
+  function restoreGeneration(meta: ExamMeta, count: number): void {
+    state.generation.examId = meta.id
+    state.generation.phase = 'idle'
+    state.generation.error = ''
+    state.generation.note = ''
+    state.generation.degradeOffer = null
+    state.generation.failedBatches = failedBatchesOf(meta)
+    state.generation.stopped = meta.batches.some(batch => batch.status === 'stopped')
+    state.generation.done = count
+    state.generation.total = meta.slots.length || EXAM_LIMITS.questions
   }
 
   function choose(slot: number, key: string): void {
@@ -673,6 +690,11 @@ export function createExamState(deps: ExamDeps) {
     state.generation.running = true
     deps.setBusy(true)
     state.generation.error = ''
+    state.generation.stopped = false
+    // 这一轮会重试的批次先从「失败」里拿掉；只重试某一批时，其他失败批次照旧显示重试按钮。
+    state.generation.failedBatches = state.generation.onlyBatch < 0
+      ? []
+      : failedBatchesOf(meta).filter(index => index !== state.generation.onlyBatch)
     // 出题期间的「本卷题」跟随 generation 自己，不跟随 state.current：
     // 用户可以在出题中打开另一套试卷，写入仍要落在正在生成的那一套上（第 8.7 节）。
     if (state.current?.id === examId) {
@@ -760,6 +782,8 @@ export function createExamState(deps: ExamDeps) {
             error: (previousErrors[0] || '生成失败').slice(0, 120),
           }
           state.generation.failedBatches = [...new Set([...state.generation.failedBatches, batchIndex])]
+        } else {
+          state.generation.failedBatches = state.generation.failedBatches.filter(index => index !== batchIndex)
         }
         await deps.store.saveMeta(meta)
         state.generation.done = generating?.questions.length || 0
@@ -771,7 +795,9 @@ export function createExamState(deps: ExamDeps) {
         const settled = meta.batches.every(batch => batch.status === 'ok' || batch.status === 'failed')
         const count = generating?.questions.length || 0
         if (settled && count > 0) {
-          await patchEntry(examId, { status: 'taking', count, max: count * EXAM_LIMITS.points, answered: 0 })
+          // 单批重试成功时这套卷可能已经作答过一部分：answered 按实际作答数写，不清零。
+          const answered = state.current?.id === examId ? completedCount(state.current.questions, state.current.answers) : 0
+          await patchEntry(examId, { status: 'taking', count, max: count * EXAM_LIMITS.points, answered })
           // 用户可能已经切到别的试卷/别的整页：只在本页正是这一套时才切换视图。
           if (state.current?.id === examId && state.generation.examId === examId) {
             state.view = 'taking'
@@ -793,6 +819,8 @@ export function createExamState(deps: ExamDeps) {
       if (token === generationToken) {
         state.generation.running = false
         state.generation.stopping = false
+        // 以存下来的 meta 为准，和刷新后 open() 恢复出来的一致。
+        if (state.generation.examId === examId) state.generation.failedBatches = failedBatchesOf(meta)
       }
       if (state.generation.examId === examId && state.view === 'generating' && state.generation.error) state.view = 'generating'
       await deps.store.saveMeta(meta).catch(() => {})
@@ -973,14 +1001,18 @@ export function createExamState(deps: ExamDeps) {
 
   async function retryBatch(id: string, batchIndex: number): Promise<void> {
     if (state.generation.running) return
+    // 从作答页点重试时，先把还在防抖里的作答写下去：open() 会从存储重读作答。
+    if (state.current?.id === id) await flush()
     await open(id)
     const entry = state.current
-    if (!entry) return
+    // 已交卷的卷不再改题（与 continueGeneration 一致）。
+    if (!entry || entry.answers.submittedAt) return
     const batch = entry.meta.batches[batchIndex]
     if (!batch) return
     entry.meta.batches[batchIndex] = { ...batch, status: 'pending', error: '', attempts: 0 }
     await deps.store.saveMeta(entry.meta)
     state.view = 'generating'
+    syncClock()
     state.generation.onlyBatch = batchIndex
     await trackGeneration(id)
   }

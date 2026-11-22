@@ -307,3 +307,17 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
   1. 真实模型走查（方案 §13.3 前三行）尚未完成：开发副本没有 API Key，只验证到「打开原书 → 读到证据 → 模型请求停在缺少 Key」。发版前应在一台有 Key 的机器上各出一套。
   2. `memory-engine` 的 `quiz-result` 分支没有单独的引擎用例，覆盖靠 `memory-quiz`（normalize / merge / prompts 纯函数）。
   3. 导出用的是后端原生「另存为」，人工走查（只读目录、U 盘、同名）留给发版前；HTTP 层与文件层已有 `test_exams.py` 覆盖。
+
+### 1.2.6（2026-11-22）
+
+- **真实模型出题**：deepseek-flash 思考「中」（实际回退为 high）0/20 的根因与修复见 `docs/bug-report-1.2.6.md` A 节。应用外对照 16 次请求 + 开发副本真机整卷 30 次请求（按工具轮计）；真机 20/20（第 2 批靠收尾调用救回），交卷、结果页、导出 md、写记忆都走过。
+- **bug-report 摘要**（共 16 条：11 条代码修复、均带单测，1 条文档修正，其余为补测试 / 确认 / 待观察）：
+  - 严重：A 出题 0/20——最后一轮思考吃掉输出上限、工具轮用尽后模型把工具调用标记当正文 → `examMaxTokens` + 收尾调用。
+  - 高：N1 交卷后不能展开答案、不能给大题自评（大题永远 0 分）；C2 失败批次刷新后丢失，且部分成功时单批重试按钮本来就不可达。
+  - 中：C1 失败后残留「正在准备出题…」；C4 选项 Markdown 放在 `<button>` 里。
+  - 低：C3 导出确认文案；C5 卸载后提示丢失；N2 用量从未回报；N3 / N4 重试与停止的状态残留；N5 评分要点「1. 1.」。
+  - 未修 / 待观察：C6 记忆 pending「替换」分支重复写一次（内容幂等，影响可忽略）；C7 只读目录导出未走查；N7 自动化中各出现一次、无法复现的提示与跳页。
+- **改动范围**：`frontend/src/ai/exam.ts`、`frontend/src/exam/{state,scoring,index,progress,notify}.ts`、`frontend/src/components/exam/{ExamPage,ExamSetupPanel,ExamQuestionCard}.vue`、`frontend/src/components/assistant/ModelPicker.vue`（新增 `confirmPlacement`，默认值保持原行为）。后端只改 `backend/__init__.py` 的版本号；harness、document-chat、providers、complete、schema 均未改，未新增依赖。
+- **测试基线**：前端 **612 项**（新增 33 项：`exam-prompts` 12、`exam-state` 7、`exam-progress` 4、`exam-surfaces` 5、`exam-scoring` 1、`memory-quiz-engine` 4），后端 **88 项**。
+- **调试**：`localStorage.setItem('kaizhi.exam.debug.v1', '1')` 打开出题调试记录，用 CDP `Runtime.consoleAPICalled` 读 `[exam-debug]` 行；用完删掉这个键。
+- **已知限制**：deepseek-v4-pro 思考「低 / 高」没有做整卷实测，单批可能逼近 240 秒超时；N7 待观察。

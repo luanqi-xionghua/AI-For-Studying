@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   completedCount, formatElapsed, liveScore, pendingSummary, scoreExam, scoreQuestion, weakPoints, blankItem,
+  exportPendingMessage,
 } from '../../src/exam/scoring.ts'
 import { answeredAnswers, emptyAnswers, questions as sampleQuestions } from './fixtures/exam-sample.mjs'
 
@@ -113,4 +114,13 @@ test('scoring: 交卷确认文案三种与全答完', () => {
   const oneLeft = pendingSummary(list, answersOf({ 0: { choice: ['A'] }, 1: { choice: ['B'] }, 3: { selfScore: 6 } }))
   assert.equal(oneLeft.message, '还有 1 题没作答，提交后按 0 分计。')
   assert.deepEqual(oneLeft, { unanswered: 1, unscored: 0, message: '还有 1 题没作答，提交后按 0 分计。' })
+})
+
+test('scoring: 「仍然导出？」只写存在的那一类；两类都有时与 9.3 一字不差', () => {
+  assert.equal(exportPendingMessage({ unanswered: 3, unscored: 1 }), '还有 3 题未作答、1 道大题未自评。仍然导出的话，这些题会标为「未作答」。')
+  assert.equal(exportPendingMessage({ unanswered: 2, unscored: 0 }), '还有 2 题未作答。仍然导出的话，这些题会标为「未作答」。')
+  assert.equal(exportPendingMessage({ unanswered: 0, unscored: 4 }), '还有 4 道大题未自评。仍然导出的话，这些题会标为「未自评」。')
+  assert.equal(exportPendingMessage({ unanswered: 0, unscored: 0 }), '')
+  assert.doesNotMatch(exportPendingMessage({ unanswered: 2, unscored: 0 }), /0 道大题/)
+  assert.doesNotMatch(exportPendingMessage({ unanswered: 0, unscored: 4 }), /0 题未作答/)
 })

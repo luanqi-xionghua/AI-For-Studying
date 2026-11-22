@@ -150,6 +150,20 @@ export function pendingSummary(
   return { unanswered, unscored, message: '全部题目都已作答，交卷后会生成成绩。' }
 }
 
+/**
+ * 「仍然导出？」的说明（第 9.3 节）。两类都有时与 9.3 一字不差；只有一类时只写这一类，
+ * 并按导出文件里的实际写法说明会标成什么（单选 / 多选「未作答」，大题「未自评」）。
+ */
+export function exportPendingMessage(pending: { unanswered: number; unscored: number }): string {
+  const { unanswered, unscored } = pending
+  if (unanswered && unscored) {
+    return `还有 ${unanswered} 题未作答、${unscored} 道大题未自评。仍然导出的话，这些题会标为「未作答」。`
+  }
+  if (unanswered) return `还有 ${unanswered} 题未作答。仍然导出的话，这些题会标为「未作答」。`
+  if (unscored) return `还有 ${unscored} 道大题未自评。仍然导出的话，这些题会标为「未自评」。`
+  return ''
+}
+
 /** 「用时」的口径：不到 1 分钟 / N 分钟 / H 小时 M 分钟。 */
 export function formatElapsed(ms: number): string {
   const total = Math.max(0, Math.round(ms || 0))

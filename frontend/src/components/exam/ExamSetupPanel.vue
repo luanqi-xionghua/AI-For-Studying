@@ -29,6 +29,14 @@ const settings = computed(() => {
 })
 const resolved = props.exam.resolved
 const models = computed(() => (resolved.value ? composerModels(resolved.value.provider, resolved.value.model) : []))
+const modelButton = ref<HTMLButtonElement>()
+/** 抽屉右下角「确定」：有已选模型才可点；选择在点模型时已保存，确定只负责收起抽屉。 */
+const canConfirm = computed(() => Boolean(resolved.value?.model) && models.value.length > 0)
+function confirmPicker() {
+  if (!canConfirm.value) return
+  pickerOpen.value = false
+  modelButton.value?.focus()
+}
 const chips = computed(() => (settings.value?.presets || []).map((preset: any) => ({
   id: preset.id, name: presetTitle(preset), detail: presetDetail(preset),
 })))
@@ -85,7 +93,7 @@ defineExpose({ focusSearch })
     <section class="exam-section page-card">
       <h2>2. 选模型</h2>
       <div class="exam-model">
-        <button type="button" class="exam-model-button" :aria-expanded="pickerOpen"
+        <button ref="modelButton" type="button" class="exam-model-button" :aria-expanded="pickerOpen"
                 data-tip="模型与思考强度（只影响模拟测试）" @click="pickerOpen = !pickerOpen">
           <AppIcon name="spark" :size="14" />
           <template v-if="resolved">{{ resolved.preset.name }} · {{ resolved.model }}<em v-if="resolved.effort">（{{ resolved.effort }}）</em></template>
@@ -98,7 +106,8 @@ defineExpose({ focusSearch })
       <div v-if="pickerOpen" class="exam-picker">
         <ModelPicker :model="resolved?.model || ''" :effort="resolved?.effort || ''" :models="models"
                      :presets="chips" :preset="resolved?.preset.id"
-                     @preset="choosePreset" @model="chooseModel" @effort="chooseEffort"
+                     show-confirm confirm-placement="footer" :confirm-disabled="!canConfirm"
+                     @preset="choosePreset" @model="chooseModel" @effort="chooseEffort" @confirm="confirmPicker"
                      @manage="pickerOpen = false; emit('settings')" @close="pickerOpen = false" />
       </div>
     </section>

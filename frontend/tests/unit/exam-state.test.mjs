@@ -5,6 +5,7 @@ import { createExamStore } from '../../src/exam/storage.ts'
 import { EXAM_CHOICE_KEY } from '../../src/exam/choice.ts'
 import { EXAM_KEYS } from '../../src/exam/types.ts'
 import { scoreExam } from '../../src/exam/scoring.ts'
+import { generationPhaseText } from '../../src/exam/progress.ts'
 import { DOC_ID, EXAM_ID, NOW, emptyAnswers, meta as sampleMeta, questions, topics as sampleTopics } from './fixtures/exam-sample.mjs'
 
 const PLAN = { subject: 'stem', reason: '公式与计算为主', topics: sampleTopics, mix: null, note: '' }
@@ -547,4 +548,156 @@ test('state: 导出成功写 exported 并提示，取消不提示，失败给成
   h.deps.exportMarkdown = async () => { throw new Error('EXAM_DENIED：写不进去') }
   await h.api.exportMarkdown()
   assert.equal(h.api.state.exportError, '没有写入权限：文件可能正被其他程序打开，或位于只读位置。')
+})
+
+// ---------------------------------------------------------------- 1.2.6：失败批次恢复、阶段文案、单批重试、用量归属
+
+test('state 1.2.6: 刷新后从 meta 恢复失败批次与进度；作答页单批重试成功后清掉并保留作答', async () => {
+  let failing = true
+  const batch = async input => {
+    if (input.batch === 3 && failing) return { ok: false, errors: ['模型返回的不是有效的 JSON。'], reason: 'bad' }
+    return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+  }
+  const h = makeHarness({ batch })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  const id = `${EXAM_ID}-new`
+  // 部分成功（15/20）直接进作答页；失败批次要在作答页也能重试。
+  assert.equal(h.api.view.value, 'taking')
+  assert.deepEqual(h.api.state.generation.failedBatches, [3])
+  const first = h.api.state.current.questions.find(question => question.type === 'single')
+  h.api.choose(first.slot, 'A')
+  await h.api.flush()
+
+  // 「刷新」：同一份存储重新建状态机；init 会自动打开作答中的这一套。
+  const fresh = makeHarness({ batch, seed: Object.fromEntries(h.storage.data) })
+  await fresh.api.init()
+  assert.equal(fresh.api.view.value, 'taking')
+  assert.equal(fresh.api.state.current.id, id)
+  assert.deepEqual(fresh.api.state.generation.failedBatches, [3])
+  assert.equal(fresh.api.state.generation.examId, id)
+  assert.equal(fresh.api.state.generation.done, 15)
+  assert.equal(fresh.api.state.generation.total, 20)
+  assert.equal(generationPhaseText(fresh.api.state.generation), '出题未完成：第 4 批生成失败，已生成 15/20。')
+
+  failing = false
+  await fresh.api.retryBatch(id, 3)
+  assert.deepEqual(fresh.generationCalls.batch.map(input => input.batch), [3])
+  assert.deepEqual(fresh.api.state.generation.failedBatches, [])
+  assert.equal(fresh.api.view.value, 'taking')
+  assert.equal(fresh.api.state.current.questions.length, 20)
+  assert.deepEqual(fresh.api.state.current.answers.items[String(first.slot)].choice, ['A'])
+  const entry = (await fresh.store.loadIndex()).index.list.find(item => item.id === id)
+  assert.equal(entry.count, 20)
+  assert.equal(entry.answered, 1)
+})
+
+test('state 1.2.6: 单批重试只清掉重试成功的那一批，另一批失败的仍保留按钮', async () => {
+  let fixed = new Set()
+  const h = makeHarness({
+    batch: async input => {
+      if ((input.batch === 1 || input.batch === 2) && !fixed.has(input.batch)) return { ok: false, errors: ['坏'], reason: 'bad' }
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  assert.deepEqual(h.api.state.generation.failedBatches, [1, 2])
+  fixed = new Set([2])
+  await h.api.retryBatch(`${EXAM_ID}-new`, 2)
+  assert.deepEqual(h.api.state.generation.failedBatches, [1])
+  assert.equal(h.api.state.current.questions.length, 15)
+})
+
+test('state 1.2.6: 已交卷的卷不能单批重试', async () => {
+  const h = makeHarness()
+  await h.api.init()
+  const meta = { ...FULL_META, batches: FULL_META.batches.map(batch => (batch.index === 2 ? { ...batch, status: 'failed' } : batch)) }
+  await seedExam(h.store, { status: 'done', submitted: true, meta })
+  await h.api.retryBatch(EXAM_ID, 2)
+  assert.equal(h.generationCalls.batch.length, 0)
+  assert.equal(h.api.view.value, 'result')
+  assert.equal((await h.store.loadMeta(EXAM_ID)).batches[2].status, 'failed')
+})
+
+test('state 1.2.6: 4 批全部失败 → 阶段文案是「出题失败。」，四个批次都可单独重试', async () => {
+  const h = makeHarness({ batch: async () => ({ ok: false, errors: ['模型返回的不是有效的 JSON。'], reason: 'bad' }) })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  assert.equal(h.api.view.value, 'generating')
+  assert.equal(h.api.state.generation.running, false)
+  assert.ok(h.api.state.generation.error)
+  assert.deepEqual(h.api.state.generation.failedBatches, [0, 1, 2, 3])
+  assert.equal(generationPhaseText(h.api.state.generation), '出题失败。')
+  assert.equal(h.generationCalls.batch.length, 8)
+})
+
+test('state 1.2.6: 停止后继续出题，「已停止」标记在新一轮开始时清掉', async () => {
+  let block = true
+  const seen = []
+  const h = makeHarness({
+    batch: async (input, signal) => {
+      seen.push({ batch: input.batch, stopped: h.api.state.generation.stopped })
+      if (input.batch === 0 || !block) return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+      return new Promise(resolve => {
+        signal.addEventListener('abort', () => resolve({ ok: false, errors: [], reason: '已停止。', aborted: true }), { once: true })
+      })
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  const running = h.api.start()
+  await waitFor(() => h.api.state.generation.batch === 1 && h.api.state.generation.running)
+  await h.api.stop()
+  await running
+  assert.equal(h.api.state.generation.stopped, true)
+  block = false
+  await h.api.continueGeneration(`${EXAM_ID}-new`)
+  assert.equal(seen.at(-1).stopped, false)
+  assert.equal(h.api.state.generation.stopped, false)
+  assert.equal(h.api.state.current.questions.length, 20)
+})
+
+test('state 1.2.6: 出题用量记在正在生成的那一套上', async () => {
+  const usage = { input: 100, output: 10, reasoning: 0, estimated: false }
+  const h = makeHarness({
+    plan: async (input, signal, hooks) => {
+      hooks.onUsage({ ...usage, input: 50, output: 5 })
+      return { ok: true, plan: PLAN, pages: 412, evidenceCount: 12 }
+    },
+    batch: async (input, signal, hooks) => {
+      hooks.onUsage(usage)
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  const meta = await h.store.loadMeta(`${EXAM_ID}-new`)
+  assert.deepEqual(
+    { calls: meta.generation.calls, input: meta.generation.input, output: meta.generation.output },
+    { calls: 5, input: 450, output: 45 },
+  )
+})
+
+test('state 1.2.6: 交卷后在结果页展开大题并自评，总分随之更新；离开结果页后不能再改', async () => {
+  const h = makeHarness()
+  await h.api.init()
+  await seedExam(h.store)
+  await h.api.open(EXAM_ID)
+  await h.api.submit()
+  assert.equal(h.api.view.value, 'result')
+  const essay = h.api.state.current.questions.find(question => question.type === 'essay')
+  const before = h.api.state.current.answers.result.total
+  h.api.reveal(essay.slot)
+  assert.equal(h.api.state.current.answers.items[String(essay.slot)].revealed, true)
+  h.api.selfScore(essay.slot, 7)
+  assert.equal(h.api.state.current.answers.result.total, before + 7)
+  assert.equal(h.api.state.current.answers.result.unscored, h.api.state.current.questions.filter(q => q.type === 'essay').length - 1)
+  await h.api.finalize()
+  h.api.selfScore(essay.slot, 10)
+  assert.equal(h.api.state.current.answers.items[String(essay.slot)].selfScore, 7)
 })

@@ -7,6 +7,8 @@ import ExamQuestionCard from './ExamQuestionCard.vue'
 import ExamResultPanel from './ExamResultPanel.vue'
 import { exam, setExamNotify } from '../../exam/index.ts'
 import { SUBJECT_LABELS, TEMPLATE_LABELS } from '../../exam/types.ts'
+import { generationPhaseText } from '../../exam/progress.ts'
+import { exportPendingMessage } from '../../exam/scoring.ts'
 import type { ExamAnswerItem, ExamQuestion } from '../../exam/types.ts'
 
 type DocItem = { id: string; title: string; kind: 'pdf' | 'markdown' | 'word'; size?: number; pageCount: number; sourceMissing: boolean }
@@ -37,7 +39,10 @@ onMounted(async () => {
 })
 watch(() => props.documents, list => exam.setDocuments(list as DocItem[]), { deep: true })
 watch(() => props.settingsVersion, () => exam.refreshSettings())
-onBeforeUnmount(() => { void exam.leave() })
+onBeforeUnmount(() => {
+  setExamNotify(null)
+  void exam.leave()
+})
 
 const statusLine = computed(() => {
   if (view.value === 'generating') return `正在为《${meta.value?.docTitle || '这本书'}》出题 · 已生成 ${state.generation.done}/${state.generation.total}`
@@ -56,16 +61,16 @@ const banner = computed<null | { tone: string; text: string }>(() => {
 
 const phaseText = computed(() => {
   const generation = state.generation
-  if (generation.phase === 'plan') return '正在规划试卷：读目录和前几页，判断学科类型与知识点…'
-  if (generation.phase === 'batch') {
-    const slots = meta.value?.slots.filter(slot => slot.batch === generation.batch) || []
-    const numbers = slots.map(slot => exam.displayNo.value[slot.slot]).filter(Boolean)
-    if (numbers.length) return `正在出第 ${generation.batch + 1} 批（第 ${Math.min(...numbers)}–${Math.max(...numbers)} 题）… 已生成 ${generation.done}/${generation.total}`
-    return `正在出第 ${generation.batch + 1} 批…`
-  }
-  return generation.stopped ? '已停止出题。' : '正在准备出题…'
+  const slots = meta.value?.slots.filter(slot => slot.batch === generation.batch) || []
+  return generationPhaseText(generation, slots.map(slot => exam.displayNo.value[slot.slot]))
 })
 
+/** 作答页的单批重试：部分成功会直接进作答页，刷新后失败批次从 meta 恢复（exam/state.ts restoreGeneration）。 */
+const retryable = computed(() => {
+  const generation = state.generation
+  if (submitted.value || generation.running || !current.value || generation.examId !== current.value.id) return []
+  return generation.failedBatches
+})
 function numberFor(slot: number): number {
   return exam.displayNo.value[slot] ?? slot + 1
 }
@@ -104,12 +109,7 @@ async function confirmAction(): Promise<void> {
 function askExport(): void {
   const pending = exam.pending.value
   if (pending.unanswered || pending.unscored) {
-    confirm.value = {
-      kind: 'export',
-      title: '仍然导出？',
-      message: `还有 ${pending.unanswered} 题未作答、${pending.unscored} 道大题未自评。仍然导出的话，这些题会标为「未作答」。`,
-      confirmLabel: '仍然导出',
-    }
+    confirm.value = { kind: 'export', title: '仍然导出？', message: exportPendingMessage(pending), confirmLabel: '仍然导出' }
     return
   }
   void exam.exportMarkdown()
@@ -216,6 +216,11 @@ defineExpose({ focusSearch })
       <template v-else-if="view === 'taking'">
         <div class="exam-scorebar" role="status"><template v-if="submitted">已得 {{ exam.live.value }} / {{ exam.maxScore.value }} · </template>已完成 {{ exam.completed.value }} / {{ questions.length }}</div>
         <p v-if="questions.length < 20" class="exam-meta-line">本卷共 {{ questions.length }} 题，满分按 {{ exam.maxScore.value }} 分计。</p>
+        <div v-if="retryable.length" class="exam-actions" role="group" aria-label="重新生成失败的批次">
+          <span class="exam-meta-line">第 {{ retryable.map(index => index + 1).join('、') }} 批生成失败：可以先作答，重新生成不影响已作答的题。</span>
+          <button v-for="failed in retryable" :key="failed" type="button" class="exam-secondary"
+                  @click="current && exam.retryBatch(current.id, failed)">重新生成第 {{ failed + 1 }} 批</button>
+        </div>
         <nav class="exam-nav" aria-label="题目导航">
           <button v-for="question in questions" :key="question.slot" type="button" :class="{ done: isDone(question.slot) }" @click="jump(question.slot)">{{ numberFor(question.slot) }}</button>
         </nav>
@@ -240,8 +245,12 @@ defineExpose({ focusSearch })
                          @memory="exam.setMemoryWant($event)" @again="exam.again()" @review="reviewOpen = !reviewOpen"
                          @export="askExport" @open-document="emit('open-document', $event)" />
         <ol v-if="reviewOpen" class="exam-questions">
+          <!-- 交卷后在结果页展开答案、给大题自评（离开结果页后只读，见 state.selfScore）。 -->
           <ExamQuestionCard v-for="question in questions" :key="question.slot" :question="question" :number="numberFor(question.slot)"
-                            :answer="itemFor(question.slot)" mode="review" :submitted="true" :locked="true" />
+                            :answer="itemFor(question.slot)" mode="review" :submitted="true" :locked="true"
+                            :scorable="!answers?.finalizedAt && !current?.readOnly"
+                            @reveal="exam.reveal(question.slot)" @score="exam.selfScore(question.slot, $event)"
+                            @open-source="meta && emit('open-document', meta.docId)" />
         </ol>
       </template>
 
