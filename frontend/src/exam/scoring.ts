@@ -24,7 +24,8 @@ export function scoreQuestion(
   const chosen = Array.isArray(item?.choice) ? item.choice : []
   if (question.type === 'single') {
     const correct = Array.isArray(question.answer) ? question.answer[0] : ''
-    return { judged: chosen.length > 0, score: chosen[0] === correct ? EXAM_LIMITS.points : 0 }
+    // 交卷前不判对错（2026-11 产品要求）：单选也等到提交后再判。
+    return { judged: Boolean(submitted), score: chosen[0] === correct ? EXAM_LIMITS.points : 0 }
   }
   if (question.type === 'multiple') {
     const correct = new Set(Array.isArray(question.answer) ? question.answer : [])
@@ -33,7 +34,7 @@ export function scoreQuestion(
     if (picked.size === 0) score = 0
     else if ([...picked].some(key => !correct.has(key))) score = 0
     else score = picked.size === correct.size ? EXAM_LIMITS.points : 5
-    return { judged: Boolean(submitted || item?.revealed), score }
+    return { judged: Boolean(submitted), score }
   }
   const self = item?.selfScore
   const judged = typeof self === 'number' && Number.isFinite(self)
@@ -43,7 +44,7 @@ export function scoreQuestion(
 /** 顶部「已得 X / 满分」：只算已经能判的题。 */
 export function liveScore(questions: ExamQuestion[], answers: ExamAnswers): number {
   return questions.reduce((total, question) => {
-    const { judged, score } = scoreQuestion(question, answerItem(answers, question.slot), false)
+    const { judged, score } = scoreQuestion(question, answerItem(answers, question.slot), Boolean(answers?.submittedAt))
     return judged ? total + score : total
   }, 0)
 }

@@ -32,9 +32,16 @@ export function cleanLine(value: unknown, max: number): string {
   return cleanControl(TEXT(value)).replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
+/** 模型常用 \(…\) / \[…\] 写公式；统一成 $…$ / $$…$$，让 MarkdownAnswer 的 KaTeX 能渲染。 */
+function mathDelimiters(value: string): string {
+  return value
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, body: string) => `$$${body}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, body: string) => `$${body}$`)
+}
+
 /** 正文：保留换行，去首尾空白后截断。 */
 export function cleanBody(value: unknown, max: number): string {
-  return cleanControl(TEXT(value)).trim().slice(0, max)
+  return mathDelimiters(cleanControl(TEXT(value)).trim()).slice(0, max)
 }
 
 export function textLength(value: string): number {

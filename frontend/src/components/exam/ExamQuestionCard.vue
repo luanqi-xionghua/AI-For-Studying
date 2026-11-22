@@ -54,12 +54,20 @@ const quote = computed(() => props.question.source.quotes?.[0]?.text || '')
 function stateOf(key: string): 'selected' | 'right' | 'wrong' | '' {
   const picked = chosen.value.has(key)
   const right = correctKeys.value.includes(key)
-  if (revealed.value || props.submitted) {
+  if (props.submitted) {
     if (right) return 'right'
     if (picked) return 'wrong'
   }
   return picked ? 'selected' : ''
 }
+const verdictTone = computed(() => {
+  if (!props.submitted) return ''
+  const result = scoreQuestion(props.question, item.value, true)
+  if (props.question.type === 'essay') return typeof item.value.selfScore === 'number' ? 'right' : 'wrong'
+  if (result.score === EXAM_LIMITS.points) return 'right'
+  if (result.score > 0) return 'warn'
+  return 'wrong'
+})
 </script>
 
 <template>
@@ -70,12 +78,10 @@ function stateOf(key: string): 'selected' | 'right' | 'wrong' | '' {
       <span class="exam-tags">
         <span v-for="tag in question.knowledge" :key="tag" class="exam-tag">{{ tag }}</span>
       </span>
-      <button type="button" class="exam-arrow" :class="{ open: revealed }"
-              :aria-label="revealed ? '收起参考答案' : '展开参考答案'"
-              :data-tip="revealed ? undefined : (essay ? '查看答案与评分要点' : '查看答案与解析（查看后作答锁定）')"
-              @click="emit('reveal')">
-        <AppIcon name="down" :size="14" />
-      </button>
+      <button type="button" class="exam-arrow"
+              :aria-label="revealed ? '收起答案' : '显示答案'"
+              :data-tip="revealed ? undefined : '交卷后查看答案'"
+              @click="emit('reveal')">{{ revealed ? '收起答案' : '显示答案' }}</button>
     </header>
 
     <MarkdownAnswer class="exam-stem" :content="question.stem" />
@@ -86,7 +92,7 @@ function stateOf(key: string): 'selected' | 'right' | 'wrong' | '' {
               :disabled="!interactive" :aria-pressed="chosen.has(option.key)"
               @click="emit('choose', option.key)">
         <span class="exam-key">{{ option.key }}</span>
-        <span class="exam-option-text">{{ option.text }}</span>
+        <MarkdownAnswer class="exam-option-text" :content="option.text" />
       </button>
     </div>
     <p v-if="!interactive && !essay" class="exam-lock">
@@ -116,7 +122,7 @@ function stateOf(key: string): 'selected' | 'right' | 'wrong' | '' {
       <button v-if="props.question.grounded" type="button" class="exam-source-button" @click="emit('open-source')">打开原书</button>
     </div>
 
-    <footer class="exam-verdict">{{ verdict }}</footer>
+    <footer v-if="submitted || essay" class="exam-verdict" :class="verdictTone">{{ verdict }}</footer>
   </li>
 </template>
 
@@ -127,8 +133,7 @@ function stateOf(key: string): 'selected' | 'right' | 'wrong' | '' {
 .exam-meta { color: var(--muted); font-size: 12.5px; }
 .exam-tags { display: inline-flex; gap: 6px; margin-inline-start: 4px; }
 .exam-tag { padding: 1px 8px; border-radius: var(--r-full); background: var(--fill-2); color: var(--secondary); font-size: 11.5px; }
-.exam-arrow { margin-inline-start: auto; display: inline-grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost); color: var(--secondary); cursor: pointer; transition: transform .18s ease; }
-.exam-arrow.open { transform: rotate(180deg); }
+.exam-arrow { margin-inline-start: auto; display: inline-grid; place-items: center; height: 28px; padding: 0 10px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost); color: var(--secondary); font: 12px/1 inherit; cursor: pointer; transition: background .18s ease; }
 .exam-arrow:hover { background: var(--frost-hover, var(--fill-2)); }
 .exam-stem { font-size: 14.5px; line-height: 1.75; color: var(--ink); }
 .exam-options { display: flex; flex-direction: column; gap: 8px; }
@@ -154,4 +159,7 @@ function stateOf(key: string): 'selected' | 'right' | 'wrong' | '' {
 .exam-quote { font-style: italic; }
 .exam-source-button { align-self: flex-start; padding: 4px 10px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: var(--frost); color: var(--secondary); font-size: 12px; cursor: pointer; }
 .exam-verdict { color: var(--muted); font-size: 12.5px; }
+.exam-verdict.right { color: var(--success); font-weight: 600; }
+.exam-verdict.wrong { color: var(--danger); font-weight: 600; }
+.exam-verdict.warn { color: var(--warning); font-weight: 600; }
 </style>

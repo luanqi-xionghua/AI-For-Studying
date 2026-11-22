@@ -21,10 +21,10 @@ function answersOf(map) {
   return base
 }
 
-test('scoring: 单选选中即判', () => {
+test('scoring: 单选交卷后才判对错', () => {
   const q = question(0, 'single', ['B'])
-  assert.deepEqual(scoreQuestion(q, { ...blankItem(), choice: ['B'] }, false), { judged: true, score: 10 })
-  assert.deepEqual(scoreQuestion(q, { ...blankItem(), choice: ['A'] }, false), { judged: true, score: 0 })
+  assert.deepEqual(scoreQuestion(q, { ...blankItem(), choice: ['B'] }, false), { judged: false, score: 10 })
+  assert.deepEqual(scoreQuestion(q, { ...blankItem(), choice: ['A'] }, false), { judged: false, score: 0 })
   assert.deepEqual(scoreQuestion(q, blankItem(), false), { judged: false, score: 0 })
 })
 
@@ -34,7 +34,7 @@ test('scoring: 多选全对 10 / 漏选 5 / 错选 0 / 未选 0，交卷或展�
   assert.deepEqual(scoreQuestion(q, { ...blankItem(), choice: ['A'] }, false), { judged: false, score: 5 })
   assert.deepEqual(scoreQuestion(q, { ...blankItem(), choice: ['A', 'B'] }, false), { judged: false, score: 0 })
   assert.deepEqual(scoreQuestion(q, blankItem(), false), { judged: false, score: 0 })
-  assert.equal(scoreQuestion(q, { ...blankItem(), choice: ['A'], revealed: true }, false).judged, true)
+  assert.equal(scoreQuestion(q, { ...blankItem(), choice: ['A'], revealed: true }, false).judged, false)
   assert.equal(scoreQuestion(q, blankItem(), true).judged, true)
 })
 
@@ -47,7 +47,7 @@ test('scoring: 大题自评，未自评按 0 且计入 unscored', () => {
 })
 
 test('scoring: 夹具 3 道单选答对 + 1 道大题 7 分 → liveScore 37', () => {
-  const answers = answeredAnswers()
+  const answers = { ...answeredAnswers(), submittedAt: 1 }
   assert.equal(liveScore(sampleQuestions, answers), 37)
   assert.equal(completedCount(sampleQuestions, answers), 4)
 })

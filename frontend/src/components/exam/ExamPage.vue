@@ -214,7 +214,7 @@ defineExpose({ focusSearch })
       </section>
 
       <template v-else-if="view === 'taking'">
-        <div class="exam-scorebar" role="status">已得 {{ exam.live.value }} / {{ exam.maxScore.value }} · 已完成 {{ exam.completed.value }} / {{ questions.length }}</div>
+        <div class="exam-scorebar" role="status"><template v-if="submitted">已得 {{ exam.live.value }} / {{ exam.maxScore.value }} · </template>已完成 {{ exam.completed.value }} / {{ questions.length }}</div>
         <p v-if="questions.length < 20" class="exam-meta-line">本卷共 {{ questions.length }} 题，满分按 {{ exam.maxScore.value }} 分计。</p>
         <nav class="exam-nav" aria-label="题目导航">
           <button v-for="question in questions" :key="question.slot" type="button" :class="{ done: isDone(question.slot) }" @click="jump(question.slot)">{{ numberFor(question.slot) }}</button>

@@ -428,6 +428,7 @@ export function createExamState(deps: ExamDeps) {
   function reveal(slot: number): void {
     const entry = state.current
     if (!entry) return
+    if (!entry.answers.submittedAt) { deps.notify('先交卷，再查看答案。'); return }
     const item = entry.answers.items[String(slot)] || (entry.answers.items[String(slot)] = {
       choice: [], revealed: false, revealedAt: 0, selfScore: null,
     })

@@ -179,15 +179,10 @@ test('state: 客观题展开后锁定；大题未展开不接受自评', async (
   assert.equal(h.api.view.value, 'taking')
 
   h.api.reveal(0)
+  assert.equal(h.api.state.current.answers.items['0']?.revealed ?? false, false)
+  assert.ok(h.notifications.some(text => text.includes('先交卷')))
   h.api.choose(0, 'A')
-  assert.deepEqual(h.api.state.current.answers.items['0'].choice, [])
-  assert.equal(h.api.state.current.answers.items['0'].revealed, true)
-
-  h.api.selfScore(14, 7)
-  assert.equal(h.api.state.current.answers.items['14'].selfScore, null)
-  h.api.reveal(14)
-  h.api.selfScore(14, 7)
-  assert.equal(h.api.state.current.answers.items['14'].selfScore, 7)
+  assert.deepEqual(h.api.state.current.answers.items['0'].choice, ['A'])
 })
 
 test('state: 400 ms 内三次作答只写一次 answers', async () => {
@@ -227,9 +222,9 @@ test('state: 结果页可以改大题自评，离开结果页后只读', async (
   await h.api.init()
   await seedExam(h.store)
   await h.api.open(EXAM_ID)
+  await h.api.submit()
   h.api.reveal(14)
   h.api.selfScore(14, 7)
-  await h.api.submit()
   assert.equal(h.api.state.current.answers.result.total, 7)
 
   h.api.selfScore(14, 9)
