@@ -1,5 +1,6 @@
 // 流形、神经网络之外的画面：生物、物理、群论、算法。每个画面自己管动画，画在同一张慢慢自转的草稿上。
 import type { Vec } from './manifolds.ts'
+import { advanceWalk, STEP, stepsAt, type WalkState } from './walk.ts'
 
 export type Project = (x: number, y: number, z: number) => [number, number, number]
 /** size：模型里 1 个单位在画布中心是多少像素；full：整块桌面（画面的常规区域之外也能画）。 */
@@ -304,14 +305,11 @@ function cayley(): Painter {
   points.forEach((_, i) => { let sum: Vec = [0, 0, 0], j = i; for (let k = 0; k < 5; k++) { sum = add(sum, points[j]!); j = next[j]! } const centre = mul(sum, .52 / Math.hypot(...sum)); if (!centres.some(other => Math.hypot(...sub(other, centre)) < .01)) centres.push(centre) })
   const inner: [number, number][] = []
   centres.forEach((p, i) => centres.forEach((q, j) => { if (j > i && Math.hypot(...sub(p, q)) < .56) inner.push([i, j]) }))
-  const walk = [0], word: string[] = []
+  const walk = [0], word: string[] = [], stroll: WalkState = { walk, word, done: 0 }
   return env => {
-    const c = env.context, STEP = 2800, steps = Math.floor(env.t / STEP)
-    while (walk.length - 1 < steps) {
-      const here = walk.at(-1)!, useFlip = word.at(-1) !== 'a' && Math.random() < .45
-      walk.push(useFlip ? flip[here]! : next[here]!); word.push(useFlip ? 'a' : 'b')
-      if (walk.length > 40) { walk.splice(0, 20); word.splice(0, 20) }
-    }
+    const c = env.context
+    // 用绝对步数推进；窗口隐藏/休眠后 env.t 跳变时只补最近 40 步（见 walk.ts）。
+    advanceWalk(stroll, stepsAt(env.t), next, flip)
     const core = new Layers(env.project)
     for (const [i, j] of inner) core.line(centres[i]!, centres[j]!)
     c.setLineDash([2, 5]); core.stroke(env, .08, .05, 1); c.setLineDash([])

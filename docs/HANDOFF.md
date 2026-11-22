@@ -321,3 +321,13 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 - **测试基线**：前端 **612 项**（新增 33 项：`exam-prompts` 12、`exam-state` 7、`exam-progress` 4、`exam-surfaces` 5、`exam-scoring` 1、`memory-quiz-engine` 4），后端 **88 项**。
 - **调试**：`localStorage.setItem('kaizhi.exam.debug.v1', '1')` 打开出题调试记录，用 CDP `Runtime.consoleAPICalled` 读 `[exam-debug]` 行；用完删掉这个键。
 - **已知限制**：deepseek-v4-pro 思考「低 / 高」没有做整卷实测，单批可能逼近 240 秒超时；N7 待观察。
+
+
+## 冻结根因与修复（1.2.7）
+
+- 现象：最小化/锁屏/休眠恢复后界面卡死；后端 HTTP 正常、Qt 主线程空闲、渲染进程 1.4 核满载。
+- 根因：`frontend/src/sketch/scenes.ts` 凯莱图 A₅ 画面把 `walk.length - 1` 当步数进度，但数组每超过 40 条被裁回 21 条；`steps = floor(env.t/2800)` 超过 40（播放约 115 秒，或恢复时时间跳变）后 while 永不退出。
+- 修复：新增 `frontend/src/sketch/walk.ts`，用绝对步数 `done` 推进；时间跳变时只补最近 40 步（与洛伦兹/生命游戏一致）；`scenes.ts` 改为调用 `advanceWalk`。
+- 证据与验证：`docs/bug-report-1.2.7.md`（旧版注入 +200s 跳变后 10 秒吃 11.73 秒 CPU，修复版 3ms 响应；旧算法 41 步模拟 10 万次未退出）。
+- 测试：前端 618 项（新增 `sketch-walk` 6 项），后端 88 项；vue-tsc、构建通过。
+- 同类排查：洛伦兹（`target - done > 40`）、生命游戏（`target - done > 2`）、画面切换（`env.t - since > STEP*3`）均已有跳变保护；其余循环有界。
