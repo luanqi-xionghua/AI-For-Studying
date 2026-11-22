@@ -347,7 +347,7 @@ export type PlanInput = {
 
 export type PlanOutcome =
   | { ok: true; plan: PlanData; pages: number; evidenceCount: number }
-  | { ok: false; code: 'password' | 'missing' | 'open' | 'scanned' | 'timeout' | 'format' | 'empty' | 'model' | 'aborted'; error: string }
+  | { ok: false; code: 'password' | 'missing' | 'open' | 'scanned' | 'timeout' | 'format' | 'output' | 'empty' | 'model' | 'aborted'; error: string }
 
 export type BatchInput = {
   examId: string

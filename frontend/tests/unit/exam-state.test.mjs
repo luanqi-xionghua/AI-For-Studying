@@ -5,7 +5,33 @@ import { createExamStore } from '../../src/exam/storage.ts'
 import { EXAM_CHOICE_KEY } from '../../src/exam/choice.ts'
 import { EXAM_KEYS } from '../../src/exam/types.ts'
 import { scoreExam } from '../../src/exam/scoring.ts'
-import { DOC_ID, EXAM_ID, NOW, emptyAnswers, meta as sampleMeta, questions } from './fixtures/exam-sample.mjs'
+import { DOC_ID, EXAM_ID, NOW, emptyAnswers, meta as sampleMeta, questions, topics as sampleTopics } from './fixtures/exam-sample.mjs'
+
+const PLAN = { subject: 'stem', reason: '公式与计算为主', topics: sampleTopics, mix: null, note: '' }
+
+function genQuestion(input, slot) {
+  return {
+    version: 1, examId: input.examId, id: `q${String(slot.slot).padStart(2, '0')}`,
+    slot: slot.slot, batch: slot.batch, type: slot.type, difficulty: slot.difficulty,
+    stem: `第 ${slot.slot} 题：关于「${slot.topic}」的题目内容。`,
+    options: slot.type === 'essay' ? [] : ['A', 'B', 'C', 'D'].map(key => ({ key, text: `选项 ${key}` })),
+    answer: slot.type === 'single' ? ['A'] : slot.type === 'multiple' ? ['A', 'C'] : '步骤一：定义。步骤二：计算。最终答案：1。',
+    rubric: slot.type === 'essay' ? [{ point: '一', score: 3 }, { point: '二', score: 4 }, { point: '三', score: 3 }] : [],
+    explanation: '解析：这是一段足够长的解析内容。',
+    knowledge: [slot.topic], answerStyle: slot.type === 'essay' ? 'stem' : '',
+    source: { docId: DOC_ID, kind: 'pdf', pages: [10], lines: [], evidenceIds: [], quotes: [] },
+    grounded: true, createdAt: NOW,
+  }
+}
+
+const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
+async function waitFor(check, timeout = 2000) {
+  const started = Date.now()
+  while (!check()) {
+    if (Date.now() - started > timeout) throw new Error('waitFor timeout')
+    await tick(5)
+  }
+}
 
 function memoryStorage() {
   const data = new Map()
@@ -68,11 +94,20 @@ function makeHarness(options = {}) {
     assistantPreset: 'p-1',
   }
   const documents = options.documents || [{ id: DOC_ID, title: sampleMeta.docTitle, kind: 'pdf', pageCount: 412, sourceMissing: false }]
+  const generationCalls = { plan: [], batch: [], busy: [] }
   const deps = {
     store,
-    plan: async () => ({ ok: false, code: 'model', error: 'not-used' }),
-    batch: async () => ({ ok: false, errors: ['not-used'], reason: 'not-used' }),
-    openSource: async () => ({ context: {}, close() {} }),
+    plan: async (input, signal, hooks) => {
+      generationCalls.plan.push(input)
+      if (options.plan) return options.plan(input, signal, hooks)
+      return { ok: true, plan: PLAN, pages: 412, evidenceCount: 12 }
+    },
+    batch: async (input, signal, hooks) => {
+      generationCalls.batch.push(input)
+      if (options.batch) return options.batch(input, signal, hooks)
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+    openSource: options.openSource || (async () => ({ context: {}, close() {} })),
     memory: async () => '',
     emit: event => emitted.push(event),
     exportMarkdown: async () => ({ cancelled: true }),
@@ -81,7 +116,7 @@ function makeHarness(options = {}) {
     notify: message => notifications.push(message),
     reportFailure: () => {},
     clearFailure: () => {},
-    setBusy: () => {},
+    setBusy: on => generationCalls.busy.push(on),
     now: () => clock,
     uuid: () => `${EXAM_ID}-new`,
     setTimer: (fn, ms) => { const id = Symbol(); timers.push({ id, fn, ms }); return id },
@@ -93,7 +128,7 @@ function makeHarness(options = {}) {
   const api = createExamState(deps)
   api.setDocuments(documents)
   return {
-    api, deps, store, storage, emitted, notifications, timers, choiceStorage,
+    api, deps, store, storage, emitted, notifications, timers, choiceStorage, generationCalls,
     setSettings: next => { settings = next; api.refreshSettings() },
     setDocuments: list => api.setDocuments(list),
     setClock: value => { clock = value },
@@ -294,4 +329,166 @@ test('state: setChoice 写入模拟测试自己的键，不影响对话模式', 
   assert.equal(parsed.preset, 'p-9')
   assert.equal(parsed.model, 'm')
   assert.equal(h.choiceStorage.data.has('kaizhi.chatmode.choice.v1'), false)
+})
+test('state: 规划 + 4 批成功 → 20 题、taking、进度与 busy 收尾', async () => {
+  const h = makeHarness()
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  h.api.setTemplate('A')
+  await h.api.start()
+  assert.equal(h.api.view.value, 'taking')
+  assert.equal(h.api.state.current.questions.length, 20)
+  assert.equal(h.api.state.generation.done, 20)
+  assert.equal(h.generationCalls.plan.length, 1)
+  assert.equal(h.generationCalls.batch.length, 4)
+  assert.deepEqual(h.generationCalls.busy, [true, false])
+  const meta = await h.store.loadMeta(`${EXAM_ID}-new`)
+  assert.equal(meta.batches.every(batch => batch.status === 'ok'), true)
+  assert.equal(meta.slots.length, 20)
+  const index = (await h.store.loadIndex()).index
+  assert.equal(index.list[0].status, 'taking')
+  assert.equal(index.list[0].count, 20)
+})
+
+test('state: 第 3 批两次失败 → 保留 15 题、满分 150、可重试该批', async () => {
+  const h = makeHarness({
+    batch: async input => {
+      if (input.batch === 2) return { ok: false, errors: ['slot 10：选项必须是 A–D 四个且互不相同。'], reason: 'bad' }
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  assert.equal(h.api.state.current.questions.length, 15)
+  assert.deepEqual(h.api.state.generation.failedBatches, [2])
+  assert.equal(h.api.maxScore.value, 150)
+  assert.equal(h.generationCalls.batch.filter(input => input.batch === 2).length, 2)
+  const meta = await h.store.loadMeta(`${EXAM_ID}-new`)
+  assert.equal(meta.batches[2].status, 'failed')
+  const index = (await h.store.loadIndex()).index
+  assert.equal(index.list[0].count, 15)
+  assert.equal(index.list[0].max, 150)
+})
+
+test('state: 第 2 批第 1 次失败、第 2 次成功，带上次错误重试', async () => {
+  const h = makeHarness({
+    batch: async input => {
+      if (input.batch === 1 && input.attempt === 1) return { ok: false, errors: ['slot 5：缺少解析。'], reason: 'bad' }
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  const retry = h.generationCalls.batch.find(input => input.batch === 1 && input.attempt === 2)
+  assert.deepEqual(retry.retryErrors, ['slot 5：缺少解析。'])
+  assert.equal(h.api.state.current.questions.length, 20)
+})
+
+test('state: 第 2 批进行中停止 → 该批 stopped，已生成 5 题保留', async () => {
+  const h = makeHarness({
+    batch: async (input, signal) => {
+      if (input.batch === 0) return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+      return new Promise(resolve => {
+        signal.addEventListener('abort', () => resolve({ ok: false, errors: [], reason: '已停止。', aborted: true }), { once: true })
+      })
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  const running = h.api.start()
+  await waitFor(() => h.api.state.generation.batch === 1 && h.api.state.generation.running)
+  await h.api.stop()
+  await running
+  assert.equal(h.api.state.generation.running, false)
+  assert.equal(h.api.state.generation.stopped, true)
+  assert.equal(h.api.state.current.questions.length, 5)
+  const meta = await h.store.loadMeta(`${EXAM_ID}-new`)
+  assert.deepEqual(meta.batches.map(batch => batch.status), ['ok', 'stopped', 'pending', 'pending'])
+})
+
+test('state: 连点两次开始出题只规划一次', async () => {
+  const h = makeHarness()
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await Promise.all([h.api.start(), h.api.start()])
+  assert.equal(h.generationCalls.plan.length, 1)
+})
+
+test('state: 停止后迟到的批结果不落库', async () => {
+  const h = makeHarness({
+    batch: async (input, signal) => {
+      if (input.batch === 0) return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+      await tick(40)
+      return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  const running = h.api.start()
+  await waitFor(() => h.api.state.generation.batch === 1 && h.api.state.generation.running)
+  await h.api.stop()
+  await running
+  assert.equal(h.api.state.current.questions.length, 5)
+  const meta = await h.store.loadMeta(`${EXAM_ID}-new`)
+  assert.equal(meta.batches[1].status, 'stopped')
+})
+
+test('state: 打开原文失败 → 降级选择卡；接受后改用无来源出题', async () => {
+  const passwordError = Object.assign(new Error('PasswordException: 需要密码'), { name: 'PasswordException' })
+  const h = makeHarness({ openSource: async () => { throw passwordError } })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  await h.api.start()
+  assert.ok(h.api.state.generation.degradeOffer)
+  assert.match(h.api.state.generation.degradeOffer.reason, /已加密/)
+  assert.equal(h.api.state.generation.running, false)
+  assert.equal(h.generationCalls.plan.length, 0)
+
+  await h.api.acceptDegrade()
+  assert.equal(h.api.state.current.meta.grounded, false)
+  assert.equal(h.generationCalls.plan.length, 1)
+  assert.equal(h.generationCalls.plan[0].grounded, false)
+  assert.equal(h.generationCalls.plan[0].source, null)
+  assert.equal(h.api.state.current.questions.length, 20)
+})
+
+test('state: 换模板重出复用规划、清空作答、按新模板重建槽位', async () => {
+  const h = makeHarness()
+  await h.api.init()
+  await seedExam(h.store)
+  await h.api.open(EXAM_ID)
+  h.api.reveal(0)
+  h.api.choose(0, 'A')
+  await tick(20)
+  const plannedBefore = h.generationCalls.plan.length
+  await h.api.switchTemplate(EXAM_ID, 'B')
+  assert.equal(h.generationCalls.plan.length, plannedBefore)
+  const meta = await h.store.loadMeta(EXAM_ID)
+  assert.equal(meta.template, 'B')
+  assert.equal(meta.mix.single, 12)
+  assert.equal(meta.mix.multiple, 3)
+  assert.equal(h.api.state.current.questions.length, 20)
+  assert.equal(h.api.state.current.answers.submittedAt, 0)
+  assert.equal(h.api.state.current.answers.items['0']?.choice.length ?? 0, 0)
+})
+
+test('state: freeze 会中止正在进行的出题', async () => {
+  const h = makeHarness({
+    batch: async (input, signal) => {
+      if (input.batch === 0) return { ok: true, questions: input.slots.map(slot => genQuestion(input, slot)) }
+      return new Promise(resolve => {
+        signal.addEventListener('abort', () => resolve({ ok: false, errors: [], reason: 'aborted', aborted: true }), { once: true })
+      })
+    },
+  })
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  const running = h.api.start()
+  await waitFor(() => h.api.state.generation.batch === 1 && h.api.state.generation.running)
+  h.api.freeze()
+  await running
+  assert.equal(h.api.state.generation.running, false)
+  assert.equal(h.store.frozen(), true)
 })

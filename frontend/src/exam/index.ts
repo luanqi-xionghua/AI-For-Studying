@@ -1,6 +1,7 @@
 /** 模拟测试的默认装配：把状态机接到 sdk 存储、模型调用、记忆与保存失败提示上。 */
 
 import { loadAiSettings } from '../ai/settings.mjs'
+import { getModel } from '../ai/providers.mjs'
 import { library } from '../sdk'
 import { emitLearningEvent } from '../memory/events.ts'
 import { clearSaveFailure, reportSaveFailure } from '../ui/save-errors.ts'
@@ -16,8 +17,7 @@ export function setExamNotify(handler: (text: string) => void): void {
   notifyHandler = handler
 }
 
-const store = createExamStore(
-  {
+const store = createExamStore(  {
     getSetting: key => library.getSetting(key),
     setSetting: (key, value) => library.setSetting(key, value),
     deleteSetting: key => library.deleteSetting(key),
@@ -25,10 +25,16 @@ const store = createExamStore(
   { reportFailure: reportSaveFailure },
 )
 
+/** 出题预算要知道模型认不认图；与阅读助手用同一个判断（未登记能力的模型按支持处理）。 */
+function withVision<T extends { connection: { provider: string; model: string; vision: boolean } }>(input: T): T {
+  const known = getModel(input.connection.provider, input.connection.model)
+  return { ...input, connection: { ...input.connection, vision: known?.vision !== false } }
+}
+
 export const exam = createExamState({
   store,
-  plan: async (input, signal, hooks) => (await import('../ai/exam.ts')).runPlanCall(input, signal, hooks),
-  batch: async (input, signal, hooks) => (await import('../ai/exam.ts')).runBatchCall(input, signal, hooks),
+  plan: async (input, signal, hooks) => (await import('../ai/exam.ts')).runPlanCall(withVision(input), signal, hooks),
+  batch: async (input, signal, hooks) => (await import('../ai/exam.ts')).runBatchCall(withVision(input), signal, hooks),
   openSource: async (doc, signal) =>
     (await import('../document/ai-context.mjs')).openAiContext(
       { id: doc.id, kind: doc.kind, title: doc.title, passwordId: doc.id },

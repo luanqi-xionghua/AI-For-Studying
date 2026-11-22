@@ -28,7 +28,7 @@ const meta = computed(() => current.value?.meta)
 const submitted = computed(() => Boolean(answers.value?.submittedAt))
 const setupPanel = ref<InstanceType<typeof ExamSetupPanel>>()
 const reviewOpen = ref(false)
-const confirm = ref<null | { kind: 'submit' | 'remove'; id?: string; title: string; message: string; confirmLabel: string; danger?: boolean }>(null)
+const confirm = ref<null | { kind: 'submit' | 'remove' | 'switch'; id?: string; template?: 'A' | 'B' | 'C'; title: string; message: string; confirmLabel: string; danger?: boolean }>(null)
 
 onMounted(async () => {
   setExamNotify(text => emit('notify', text))
@@ -97,6 +97,20 @@ async function confirmAction(): Promise<void> {
   if (!action) return
   if (action.kind === 'submit') await exam.submit()
   else if (action.kind === 'remove' && action.id) await exam.remove(action.id)
+  else if (action.kind === 'switch' && action.id && action.template) await exam.switchTemplate(action.id, action.template)
+}
+function askSwitch(template: 'A' | 'B' | 'C'): void {
+  const entry = current.value
+  if (!entry) return
+  if (exam.completed.value > 0) {
+    confirm.value = {
+      kind: 'switch', id: entry.id, template,
+      title: '换模板重出？', message: `会按${TEMPLATE_LABELS[template]}重新出全部题目，已作答的 ${exam.completed.value} 题会清空。`,
+      confirmLabel: '重新出题',
+    }
+    return
+  }
+  void exam.switchTemplate(entry.id, template)
 }
 function focusSearch(): void {
   if (view.value === 'setup') setupPanel.value?.focusSearch()
@@ -152,8 +166,22 @@ defineExpose({ focusSearch })
         </div>
 
         <p v-if="state.generation.error" class="exam-error" role="alert">{{ state.generation.error }}</p>
+        <div v-if="state.generation.error && !state.generation.running" class="exam-actions">
+          <button type="button" class="exam-primary" @click="current && exam.continueGeneration(current.id)">重试</button>
+          <button type="button" class="exam-secondary" @click="current && exam.remove(current.id)">返回</button>
+        </div>
         <p v-if="state.generation.stopped" class="exam-meta-line">已停止。已生成的 {{ questions.length }} 题已保存，可以先作答，或稍后继续出题。</p>
         <p v-for="failed in state.generation.failedBatches" :key="failed" class="exam-meta-line">第 {{ failed + 1 }} 批生成失败，已保留 {{ questions.length }} 题。</p>
+
+        <div v-if="!state.generation.running && state.generation.failedBatches.length" class="exam-actions">
+          <button v-for="failed in state.generation.failedBatches" :key="failed" type="button" class="exam-secondary"
+                  @click="current && exam.retryBatch(current.id, failed)">重新生成第 {{ failed + 1 }} 批</button>
+        </div>
+        <div v-if="!state.generation.running && meta && meta.topics.length" class="exam-actions">
+          <span class="exam-meta-line">换模板重出：</span>
+          <button v-for="template in (['A', 'B', 'C'] as const)" :key="template" type="button" class="exam-secondary"
+                  @click="askSwitch(template)">{{ TEMPLATE_LABELS[template] }}</button>
+        </div>
 
         <div class="exam-actions">
           <button v-if="state.generation.running && !state.generation.stopping" type="button" class="exam-secondary" @click="exam.stop()">停止出题</button>

@@ -340,6 +340,7 @@ const PURPOSE_USAGE: Record<MemoryPurpose, string> = {
   translate: '使用要求：上面的学习记忆只作术语与难度参考，翻译任务本身不变；不要解释、复述或提及记忆内容。',
   explain: '使用要求：结合记忆调整解释的深度与例子，但只解释用户选中的内容；不要复述记忆或暴露隐私。',
   predict: '使用要求：结合记忆猜读者接下来最可能问什么，只输出一句问题；不要复述记忆或暴露隐私。',
+  exam: '使用要求：按记忆里的薄弱点、易错点和学习目标调整考查重点与难度，可以多出几道针对薄弱点的题；不要把「最近关注」里的问题原样当成题干，不要在题目里提及记忆或用户的个人信息；记忆与文档内容冲突时，以文档为准。',
 }
 const PROFILE_LABELS: { field: 'goals' | 'interests' | 'strengths' | 'weaknesses' | 'misconceptions' | 'preferences'; label: string }[] = [
   { field: 'goals', label: '目标' },

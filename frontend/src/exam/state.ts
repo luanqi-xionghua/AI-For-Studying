@@ -640,6 +640,7 @@ export function createExamState(deps: ExamDeps) {
     }
     state.generation.running = true
     deps.setBusy(true)
+    state.generation.error = ''
     let source: { context: unknown; close(): Promise<void> | void } | null = null
     try {
       if (meta.grounded) {
@@ -693,7 +694,7 @@ export function createExamState(deps: ExamDeps) {
           state.generation.attempt = attempt
           meta.batches[batchIndex] = { ...meta.batches[batchIndex], status: 'running', attempts: attempt }
           await deps.store.saveMeta(meta)
-          const outcome = await runBatch(meta, doc, source, batchIndex, attempt as 1 | 2, previousErrors, controller.signal, token)
+          const outcome = await runBatch(meta, doc, source, batchIndex, attempt as 1 | 2, previousErrors, controller.signal, token, memory)
           if (!outcome) return
           // 停止出题之后迟到的结果不落库（第 8.7 节）。
           if (controller.signal.aborted) break
@@ -794,6 +795,7 @@ export function createExamState(deps: ExamDeps) {
     retryErrors: string[],
     signal: AbortSignal,
     token: number,
+    memory: string,
   ): Promise<BatchOutcome | null> {
     const questions = state.current?.questions || []
     const slots = meta.slots.filter(slot => slot.batch === batchIndex)
@@ -821,7 +823,7 @@ export function createExamState(deps: ExamDeps) {
         attempt,
         retryErrors,
         connection: connectionOf(),
-        memory: '',
+        memory,
         limits: null,
       }, limited.signal, generationHooks())
       if (token !== generationToken) return null

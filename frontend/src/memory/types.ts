@@ -223,4 +223,4 @@ export type MemoryScope =
  * 注入用途：记忆正文相同，只换最后一行「使用要求」。
  * chat 是对话模式；assistant 是阅读助手；translate / explain / predict 是旁路 AI 功能。
  */
-export type MemoryPurpose = 'chat' | 'assistant' | 'translate' | 'explain' | 'predict'
+export type MemoryPurpose = 'chat' | 'assistant' | 'translate' | 'explain' | 'predict' | 'exam'
