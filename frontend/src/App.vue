@@ -36,6 +36,7 @@ import { setActiveMemoryDocument } from './ai/memory-context'
 import { emitLearningEvent } from './memory/events'
 import type { MemoryScope } from './memory/types'
 import { chatBusy } from './chat'
+import { examBusy } from './exam/activity'
 const PdfReader = defineAsyncComponent(() => import('./components/reader/PdfReader.vue'))
 const MarkdownReader = defineAsyncComponent(() => import('./components/reader/MarkdownReader.vue'))
 const AiPane = defineAsyncComponent(() => import('./components/assistant/AiPane.vue'))
@@ -49,9 +50,11 @@ const ImportDialog = defineAsyncComponent(() => import('./components/library/Imp
 const ChatModePage = defineAsyncComponent(() => import('./components/chat/ChatModePage.vue'))
 const MemoryPage = defineAsyncComponent(() => import('./components/memory/MemoryPage.vue'))
 const MaterialsPage = defineAsyncComponent(() => import('./components/materials/MaterialsPage.vue'))
+const ExamPage = defineAsyncComponent(() => import('./components/exam/ExamPage.vue'))
 const chatPage = ref<{ focusPrompt?: () => void }>()
 const memoryPage = ref<{ focusSearch?: () => void }>()
 const materialsPage = ref<{ focusSearch?: () => void }>()
+const examPage = ref<{ focusSearch?: () => void }>()
 const props = defineProps<{ startupError?: string }>()
 const { preferences, effectiveAppearance, save: savePreferences } = useSettings()
 
@@ -507,10 +510,10 @@ function toggleLibrary() {
 }
 
 // ---- 整页视图：对话模式与记忆管理 --------------------------------------------
-type Page = 'library' | 'chat' | 'memory' | 'materials'
+type Page = 'library' | 'chat' | 'memory' | 'materials' | 'exam'
 const page = ref<Page>('library')
-const PAGE_TITLES: Record<Exclude<Page, 'library'>, string> = { chat: '对话模式', memory: '记忆管理', materials: '资料检索' }
-const PAGE_ICONS: Record<Exclude<Page, 'library'>, string> = { chat: 'chat-more', memory: 'branch', materials: 'discover' }
+const PAGE_TITLES: Record<Exclude<Page, 'library'>, string> = { chat: '对话模式', memory: '记忆管理', materials: '资料检索', exam: '模拟测试' }
+const PAGE_ICONS: Record<Exclude<Page, 'library'>, string> = { chat: 'chat-more', memory: 'branch', materials: 'discover', exam: 'exam' }
 const settingsVersion = ref(0)
 const chatScope = shallowRef<MemoryScope | null>(null)
 const memoryDocuments = computed(() => documents.value.map(doc => ({ id: doc.id, title: doc.name, kind: doc.kind })))
@@ -527,6 +530,7 @@ function showPage(next: Page) {
 function returnToReading() { const doc = lastActive.value || tabs.value.at(-1)?.doc; if (doc) void openDocument(doc) }
 function openChatWithScope(scope: MemoryScope) { chatScope.value = scope; showPage('chat') }
 function openDocumentById(id: string) { const doc = tabDoc(id) || documents.value.find(item => item.id === id); if (doc) void openDocument(doc) }
+function examImported(_doc: Doc) { void refresh() }
 
 // ---- 记忆引擎不进首屏包，第一次用到时才加载。 ---------------------------------
 let memoryApi: typeof import('./memory') | undefined
@@ -1185,6 +1189,7 @@ function appContextMenu(event: MouseEvent) {
     items.push({ label: '对话模式', icon: 'chat-more', disabled: page.value === 'chat', action: () => showPage('chat') })
     items.push({ label: '记忆管理', icon: 'branch', disabled: page.value === 'memory', action: () => showPage('memory') })
     items.push({ label: '资料检索', icon: 'discover', disabled: page.value === 'materials', action: () => showPage('materials') })
+    items.push({ label: '模拟测试', icon: 'exam', disabled: page.value === 'exam', action: () => showPage('exam') })
     items.push({ label: theme.value === 'dark' ? '切换浅色主题' : '切换深色主题', icon: theme.value === 'dark' ? 'sun' : 'moon', action: () => { void toggleTheme() } })
     items.push({ label: '设置', icon: 'settings', hint: shortcut('settings'), separator: true, action: () => openSettings() })
   }
@@ -1679,6 +1684,7 @@ function keydown(event: KeyboardEvent) {
       } else if (page.value === 'memory') memoryPage.value?.focusSearch?.()
       else if (page.value === 'chat') chatPage.value?.focusPrompt?.()
       else if (page.value === 'materials') materialsPage.value?.focusSearch?.()
+      else if (page.value === 'exam') examPage.value?.focusSearch?.()
       else search.value?.focus()
       break
     case 'search':
@@ -1793,7 +1799,7 @@ onMounted(async () => {
   void loadCovers()
   await refresh()
   // 记忆引擎：空闲时再启动，不挡文档库首屏。
-  const startMemory = () => withMemory(api => { void api.startMemoryEngine({ notify, foregroundBusy: () => taskSummary.running > 0 || chatBusy() }) })
+  const startMemory = () => withMemory(api => { void api.startMemoryEngine({ notify, foregroundBusy: () => taskSummary.running > 0 || chatBusy() || examBusy() }) })
   if ('requestIdleCallback' in window) (window as any).requestIdleCallback(startMemory, { timeout: 3000 }); else setTimeout(startMemory, 1500)
   // 打开应用时：库里有书就直接摆出来；只有空库且开着流形背景（暖色极简、铅笔草稿），才收起文档库、只留底板。
   // 以前不看库里有没有书，一律先收起，主页面只剩底板，第一次打开的人会以为书没了。
@@ -1833,6 +1839,7 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
         <button :class="{ selected: page === 'chat' }" :aria-current="page === 'chat' ? 'page' : undefined" data-tip="不打开文档，直接和模型对话，可以带上学习记忆" @click="showPage('chat')"><AppIcon name="chat-more" :size="18" />对话模式</button>
         <button :class="{ selected: page === 'memory' }" :aria-current="page === 'memory' ? 'page' : undefined" data-tip="查看和管理文档记忆与全局记忆" @click="showPage('memory')"><AppIcon name="branch" :size="18" />记忆管理</button>
         <button :class="{ selected: page === 'materials' }" :aria-current="page === 'materials' ? 'page' : undefined" data-tip="按课程和关键词查找公开的试卷、答案、笔记和课件" @click="showPage('materials')"><AppIcon name="discover" :size="18" />资料检索</button>
+        <button :class="{ selected: page === 'exam' }" :aria-current="page === 'exam' ? 'page' : undefined" data-tip="选一本书出 20 道带来源的自测题，交卷后看成绩与薄弱点" @click="showPage('exam')"><AppIcon name="exam" :size="18" />模拟测试</button>
       </nav>
       <div class="sidebar-spacer"></div>
       <div v-if="effectiveAppearance.style === 'sketch'" class="sidebar-doodle" aria-hidden="true"></div>
@@ -1918,6 +1925,9 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
       </Transition>
       <Transition name="view">
         <MaterialsPage v-if="page === 'materials' && !active" ref="materialsPage" key="materials" :settings-version="settingsVersion" @settings="openSettings('ai')" @open-document="openDocumentById" @notify="notify" />
+      </Transition>
+      <Transition name="view">
+        <ExamPage v-if="page === 'exam' && !active" ref="examPage" key="exam" :documents="chatDocuments" :settings-version="settingsVersion" @settings="openSettings('ai')" @import="openImport" @open-document="openDocumentById" @imported="examImported" @notify="notify" />
       </Transition>
       <Transition name="view">
       <div v-if="stageDoc" v-show="active" class="reading-workspace">

@@ -6,6 +6,7 @@ const paths: Record<string, string> = {
   translate: 'M4 5h9 M8.5 3v2 M11 5c-.8 3.6-3.2 6.4-6.5 8 M6.6 8.4c1.3 2 3 3.4 5 4.2 M12 21l4-9 4 9 M13.4 18h5.2',
   search: 'M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13z M16 16l5 5',
   discover: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M15.5 8.5l-2 5-5 2 2-5z',
+  exam: 'M5 3h10l4 4v14H5z M15 3v4h4 M8 10h8 M8 14h5 M8.5 18l1.5 1.5 3-3',
   plus: 'M12 5v14 M5 12h14',
   arrow: 'M14 6l-6 6 6 6',
   clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 7v5l3 2',
