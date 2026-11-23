@@ -231,6 +231,32 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(ws.close)
         return ws
 
+    async def test_reloaded_page_waits_for_the_old_channel_instead_of_being_refused(self):
+        # 1.2.8：页面被看护重新加载 / 整页刷新时，旧事件通道还在 clear()（取消 AI、释放临时文档），
+        # 新页面这时连进来以前会被 1008 拒绝，第一次 AI 请求就失败。
+        first = await self.channel()
+        real_clear = self.service.clear
+        cleared = []
+
+        async def slow_clear():
+            await asyncio.sleep(0.4)
+            await real_clear()
+            cleared.append(True)
+
+        self.service.clear = slow_clear
+        await first.close()
+        await asyncio.sleep(0.05)  # 旧通道已进入收尾
+        self.assertIsNotNone(self.service.clearing)
+        second = await self.channel()  # 内部断言收到 {"ready": true}
+        self.assertEqual(cleared, [True], "新通道在旧通道收尾完成后才接管")
+        self.assertIsNone(self.service.clearing)
+        third = await self.client.ws_connect(self.service.origin + "/events", origin=self.service.origin)
+        await third.send_str(self.service.token)
+        reply = await third.receive(timeout=3)
+        self.assertEqual(third.close_code, 1008, "同一时间仍只允许一个页面连接")
+        await third.close()
+        self.assertFalse(second.closed)
+
     async def test_harness_desktop_roundtrip(self):
         # Exercise the same authenticated HTTP and WebSocket calls the renderer uses.
         upstream = web.Application()

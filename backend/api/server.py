@@ -101,6 +101,7 @@ class DesktopService:
         self.log = AppLog(root, [self.token])
         self.ai = Harness(self.creds, self.emit)
         self.ws = None
+        self.clearing = None  # 旧事件通道收尾期间的 Future，新连接等它结束
         self.runner = None
         self.app = web.Application(
             client_max_size=18 * 1024**2, middlewares=[self.guard]
@@ -255,11 +256,17 @@ class DesktopService:
         await ws.prepare(req)
         try:
             first = await asyncio.wait_for(ws.receive(), 5)
-            if (
-                first.type != WSMsgType.TEXT
-                or not secrets.compare_digest(first.data, self.token)
-                or self.ws is not None
-            ):
+            if first.type != WSMsgType.TEXT or not secrets.compare_digest(first.data, self.token):
+                await ws.close(code=1008)
+                return ws
+            if self.clearing is not None:
+                # 上一个页面刚断开（渲染进程被看护重新加载、整页刷新），旧通道还在收尾：
+                # 等它做完再接管，而不是直接拒绝——否则新页面的第一次 AI 请求会失败。
+                try:
+                    await asyncio.wait_for(asyncio.shield(self.clearing), 10)
+                except asyncio.TimeoutError:
+                    pass
+            if self.ws is not None:
                 await ws.close(code=1008)
                 return ws
             self.ws = ws
@@ -268,8 +275,13 @@ class DesktopService:
                 break
         finally:
             if self.ws is ws:
-                await self.clear()
-                self.ws = None
+                self.clearing = asyncio.get_running_loop().create_future()
+                try:
+                    await self.clear()
+                finally:
+                    self.ws = None
+                    self.clearing.set_result(None)
+                    self.clearing = None
             await ws.close()
         return ws
 
