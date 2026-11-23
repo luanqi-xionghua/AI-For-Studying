@@ -25,6 +25,21 @@ TEMP = {"temp_doc_pick", "temp_doc_prepare", "temp_doc_read", "temp_doc_release"
 MATERIAL = {"material_status", "material_sync", "material_cancel",
             "material_search", "material_open", "material_clear"}
 EXAM = {"exam_export"}
+
+
+def static_cache_control(rel):
+    """Vite 的 /assets/ 文件名带内容哈希，可以长缓存；其余（index.html、vendor、图标）每次都要重新验证。
+
+    以前不发 Cache-Control，Chromium 会按 Last-Modified 启发式缓存 index.html（约为文件“年龄”的 10%），
+    覆盖安装后的头一次启动仍拿到旧版 index.html，再去请求新版里已经不存在的懒加载 chunk（404），
+    内容区就只剩外壳。no-cache 让它每次带 ETag 询问一次，没变时本机直接回 304。
+    """
+    parts = Path(rel).parts
+    if len(parts) > 1 and parts[0] == "assets":
+        return "public, max-age=31536000, immutable"
+    return "no-cache"
+
+
 GUI = [
     "select_files",
     "select_backup_destination",
@@ -113,6 +128,7 @@ class DesktopService:
         return web.FileResponse(
             file,
             headers={
+                "Cache-Control": static_cache_control(file.relative_to(self.dist)),
                 "Content-Type": content_type,
                 "X-Content-Type-Options": "nosniff",
                 "Referrer-Policy": "no-referrer",

@@ -278,6 +278,33 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("local-fixture-only", json.dumps(result))
         self.assertEqual(seen, ["Bearer local-fixture-only"])
 
+    async def test_static_cache_policy_revalidates_the_entry_page(self):
+        # 1.2.8 Bug 1：index.html 必须每次重新验证，否则覆盖安装后头一次启动会拿到旧版入口。
+        (self.root / "index.html").write_text("<!doctype html>", "utf-8")
+        (self.root / "assets").mkdir()
+        (self.root / "assets" / "index-AbC123.js").write_text("export {}", "utf-8")
+        (self.root / "favicon.svg").write_text("<svg/>", "utf-8")
+        async with self.client.get(self.service.origin + "/") as r:
+            self.assertEqual(r.status, 200)
+            self.assertEqual(r.headers["Cache-Control"], "no-cache")
+            etag = r.headers["ETag"]
+        async with self.client.get(
+            self.service.origin + "/", headers={"If-None-Match": etag}
+        ) as r:
+            self.assertEqual(r.status, 304, "没变时本机回 304，不重新传输")
+        async with self.client.get(self.service.origin + "/index.html") as r:
+            self.assertEqual(r.headers["Cache-Control"], "no-cache")
+        async with self.client.get(self.service.origin + "/favicon.svg") as r:
+            self.assertEqual(r.headers["Cache-Control"], "no-cache")
+        async with self.client.get(
+            self.service.origin + "/assets/index-AbC123.js"
+        ) as r:
+            self.assertEqual(r.status, 200)
+            self.assertIn("immutable", r.headers["Cache-Control"])
+            self.assertIn("max-age=31536000", r.headers["Cache-Control"])
+        async with self.client.get(self.service.origin + "/assets/missing-X.js") as r:
+            self.assertEqual(r.status, 404)
+
     async def test_permission_and_binary(self):
         for headers in (
             {},
