@@ -7,3 +7,4 @@ exit /b
 :setup
 echo Please create the Python virtual environment as described in README.md.
 pause
+:: cmd启动文件
