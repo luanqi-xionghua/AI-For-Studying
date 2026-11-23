@@ -34,7 +34,8 @@ export async function invoke<T=unknown>(cmd:string,args:Record<string,any>={}):P
   if(ch instanceof Channel){await events();channels.set(ch.id,ch); if(payload.channel) payload.channel=ch.id; else payload.onProgress=ch.id; if(cmd==='ai_start') requests.set(payload.id,ch.id)}
   try {
     const r=await fetch(`/api/${cmd}`,{method:'POST',headers:{'Content-Type':'application/json','X-Kaizhi-Token':token},body:JSON.stringify(payload),cache:'no-store',redirect:'error'})
-    if(!r.ok)throw new Error((await r.json()).error || `HTTP ${r.status}`)
+    // 403/404/413 等由 aiohttp 直接回纯文本：先按文本读，解析不了就报状态码，不把 JSON 语法错误抛给界面。
+    if(!r.ok){const body=await r.text();let message='';try{message=JSON.parse(body)?.error||''}catch{/* 纯文本 */}throw new Error(message||`本机服务返回 HTTP ${r.status}`)}
     if(r.headers.get('Content-Type')?.startsWith('application/octet-stream')) return await r.arrayBuffer() as T
     const value=await r.json()
     return value as T
