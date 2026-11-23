@@ -364,3 +364,30 @@ test('materials state: 没有预设时不做改写', async () => {
   assert.equal(rewrites, 0)
   state.dispose()
 })
+
+test('同步中轮询：偶尔一次失败先忍，连续 3 次失败才停，并收掉“正在同步”（1.2.8）', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  let calls = 0
+  const plan = ['syncing', 'fail', 'syncing', 'fail', 'fail', 'fail']
+  const h = makeHarness({
+    status: () => {
+      const step = plan[Math.min(calls++, plan.length - 1)]
+      if (step === 'fail') throw new Error('本机连接已关闭')
+      return readyStatus({ syncing: true })
+    },
+  })
+  await h.state.init()
+  assert.equal(h.state.state.sync.running, true, '重新打开页面时接上正在进行的同步')
+  const tick = async () => { t.mock.timers.tick(2000); for (let i = 0; i < 5; i++) await Promise.resolve() }
+  await tick() // fail 1
+  assert.equal(h.state.state.sync.running, true, '一次失败不放弃')
+  await tick() // syncing → 计数清零
+  await tick(); await tick() // fail, fail
+  assert.equal(h.state.state.sync.running, true)
+  await tick() // 连续第 3 次
+  assert.equal(h.state.state.sync.running, false, '连续失败后不再显示同步中')
+  assert.ok(h.state.state.statusError)
+  const after = calls
+  await tick()
+  assert.equal(calls, after, '已停止轮询')
+})

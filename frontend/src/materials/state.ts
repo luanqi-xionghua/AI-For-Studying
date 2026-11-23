@@ -235,9 +235,11 @@ export function createMaterialsState(deps: MaterialsDeps) {
 
   function startPolling() {
     if (poller !== null) return
+    let failures = 0
     poller = setInterval(async () => {
       try {
         const status = await deps.client.status()
+        failures = 0
         state.status = status
         if (!status.syncing) {
           stopPolling()
@@ -248,8 +250,14 @@ export function createMaterialsState(deps: MaterialsDeps) {
             void submit(state.search.submitted)
           }
         }
-      } catch {
+      } catch (error) {
+        // 偶尔一次取不到状态先忍着；连续 3 次（约 6 秒）才放弃。放弃时把“正在同步”一并收掉
+        // （1.2.8）：以前只停轮询、running 留在 true，页面永远显示同步中，同步与清空都点不了。
+        if (++failures < 3) return
         stopPolling()
+        state.sync.running = false
+        state.sync.committing = false
+        state.statusError = friendlyMaterialError(error)
       }
     }, 2000)
   }
