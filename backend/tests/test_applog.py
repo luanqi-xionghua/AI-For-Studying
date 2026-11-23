@@ -75,7 +75,7 @@ class ClientLogEndpointTests(unittest.IsolatedAsyncioTestCase):
             "kind": "chunk-load", "level": "error",
             "message": "Failed to fetch dynamically imported module: /assets/SettingsDialog-x.js",
             "page": f"{self.service.origin}/#desktop={self.service.token}",
-            "line": 12, "evil": {"nested": True},
+            "line": 12, "evil": {"nested": True}, "source": "http://127.0.0.1:1/assets/a.js",
         }
         async with self.client.post(self.service.origin + "/api/client_log", json=body, headers=headers) as r:
             self.assertEqual(r.status, 200)
@@ -88,6 +88,8 @@ class ClientLogEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"event": "chunk-load"', text)
         self.assertNotIn(self.service.token, text)
         self.assertNotIn("nested", text)
+        self.assertIn('"source": "/assets/a.js"', text.replace("http://127.0.0.1:1", ""))
+        self.assertNotIn("api-error", text, "页面字段名与 write() 形参重名时不能出错")
 
 
 if __name__ == "__main__":

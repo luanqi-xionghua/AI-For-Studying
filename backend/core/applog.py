@@ -73,7 +73,7 @@ class AppLog:
         if secret and secret not in self.secrets:
             self.secrets.append(secret)
 
-    def write(self, source, event, level="info", **fields):
+    def write(self, source, event, level="info", /, **fields):
         """source：qt / renderer / server；event：短事件名；fields 会逐个脱敏。返回是否写入。"""
         if self._handler is None:
             return False
