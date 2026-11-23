@@ -91,3 +91,9 @@ test('新装首开（空库 + 背景动画）也显示文档库空状态与加�
   // 空状态本身仍在：空库时渲染 library-empty（含加入文档的提示）。
   assert.match(app, /v-else-if="!visibleDocuments\.length" class="library-empty"/)
 })
+
+test('关窗前的保存钩子：补发 pagehide，再写完阅读位置与存储闸门（桌面壳最多等 1.5 秒）', () => {
+  assert.match(app, /\(window as any\)\.__kaizhiBeforeQuit = async \(\) => \{/)
+  assert.match(app, /window\.dispatchEvent\(new Event\('pagehide'\)\)/)
+  assert.match(app, /await Promise\.allSettled\(\[flushProgress\(\), flushStorage\(\)\]\)/)
+})

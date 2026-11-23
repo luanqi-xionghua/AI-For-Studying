@@ -385,6 +385,54 @@ class Watchdog(QObject):
         old.deleteLater()
 
 
+class QuitFlush(QObject):
+    """关窗前让页面把防抖中的保存写完（阅读位置 0.8 秒、对话 0.5 秒、笔迹、记忆 1.5 秒）。
+
+    第一次关窗先拦下，调用页面的 window.__kaizhiBeforeQuit()，完成或最多等 timeout_ms 后再真正关闭；
+    页面卡死时 runJavaScript 没有回音，靠 Qt 这边的计时器照样按时关窗，不会关不掉。
+    """
+
+    QUIT_JS = (
+        "(()=>{window.__kaizhiQuitDone=false;const f=window.__kaizhiBeforeQuit;"
+        "if(typeof f!=='function'){window.__kaizhiQuitDone=true;return}"
+        "Promise.resolve().then(f).catch(()=>{}).finally(()=>{window.__kaizhiQuitDone=true})})()"
+    )
+
+    def __init__(self, view, timeout_ms=1500, log=None):
+        super().__init__(view)
+        self.view, self.timeout_ms, self.log = view, timeout_ms, log
+        self.ready = False
+        self.started = 0.0
+        self.poll = QTimer(self)
+        self.poll.timeout.connect(self.check)
+        view.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.view and ev.type() == QEvent.Type.Close and not self.ready:
+            ev.ignore()
+            if not self.poll.isActive():
+                self.started = time.monotonic()
+                self.view.page().runJavaScript(self.QUIT_JS, 0, lambda _value: None)
+                self.poll.start(80)
+            return True
+        return False
+
+    def check(self):
+        if time.monotonic() - self.started >= self.timeout_ms / 1000:
+            if self.log is not None:
+                self.log.write("qt", "quit-flush-timeout", "warn", ms=self.timeout_ms)
+            self.finish()
+            return
+        self.view.page().runJavaScript("window.__kaizhiQuitDone === true", 0, lambda done: done and self.finish())
+
+    def finish(self):
+        if self.ready:
+            return
+        self.ready = True
+        self.poll.stop()
+        self.view.close()
+
+
 def running_instance(port, timeout=2.0):
     """这个端口上是不是另一个阅迁星穹：只读 GET /（不带 token、不调用接口），看标题。"""
     import http.client
@@ -526,6 +574,7 @@ def run(dist, data_dir=None, smoke=False):
         timer.start(400)
         QTimer.singleShot(40000, app.quit)
     watchdog = None if smoke else Watchdog(view, url, make_page, log, app)
+    quit_flush = None if smoke else QuitFlush(view, log=log)  # noqa: F841 —— 挂在 view 上，随窗口存活
     if watchdog is not None:
         app.aboutToQuit.connect(watchdog.stop)
     view.setUrl(QUrl(url))

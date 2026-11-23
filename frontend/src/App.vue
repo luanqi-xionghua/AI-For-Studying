@@ -2,6 +2,7 @@
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick, toRaw, triggerRef } from 'vue'
 import { lazy } from './ui/lazy'
 import { reportClientError } from './ui/error-log'
+import { flushStorage } from './shared/storage-gate'
 import { library, importDocument, selectDocumentFile } from './sdk'
 import { groups, members, groupFilter, currentGroup, loadGroups, createGroup, renameGroup, removeGroup, assignGroup } from './library/groups'
 import { readsAsPdf, documentTitle, formatLabel, kindIcon, kindName, DOCUMENT_PATTERN } from './library/kinds'
@@ -1790,6 +1791,12 @@ onMounted(async () => {
   document.addEventListener('mousedown', middleDown)
   document.addEventListener('auxclick', middleClick)
   window.addEventListener('kaizhi:open-ai-settings', openAiSettings)
+  // 关窗前由桌面壳调用（backend/core/desktop.py 的 QuitFlush，最多等 1.5 秒）：Qt 退出时页面收不到 pagehide，
+  // 防抖中的阅读位置、对话、记忆、笔迹会丢。这里补发 pagehide（笔迹、记忆监听它），再把阅读位置与存储闸门里的写入落库。
+  ;(window as any).__kaizhiBeforeQuit = async () => {
+    try { window.dispatchEvent(new Event('pagehide')) } catch { /* 个别监听出错不影响其余保存 */ }
+    await Promise.allSettled([flushProgress(), flushStorage()])
+  }
   document.addEventListener('wheel', wheel, { capture: true, passive: false })
   void listenForFileDrop()
   document.addEventListener('selectionchange', selectionChanged)
