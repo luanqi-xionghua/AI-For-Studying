@@ -4285,3 +4285,14 @@ kbd {
 
 /* 矮窗口：标签列表让出高度，保证侧栏底部的「对话模式 / 记忆管理」可见。 */
 @media (max-height: 780px) { .app-sidebar .tag-nav { max-height: 18vh; } }
+
+/* ---- 懒加载组件：加载态与失败兜底（ui/lazy.ts） ------------------------------ */
+.lazy-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; color: var(--muted); font-size: 13px; }
+.lazy-state p { margin: 0; max-width: 440px; line-height: 1.7; }
+.lazy-page { flex: 1; min-height: 160px; padding: 40px 24px; }
+.lazy-error strong { color: var(--ink); font-size: 15px; font-weight: 650; }
+.lazy-actions { display: flex; gap: 10px; margin-top: 6px; }
+.lazy-actions button { height: 34px; padding: 0 16px; border-radius: var(--r-control, 10px); font-size: 13px; cursor: pointer; }
+.lazy-backdrop { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; background: rgb(16 20 26 / .2); }
+.lazy-overlay { width: min(440px, calc(100vw - 48px)); padding: 28px 32px; border-radius: 16px; background: var(--surface); box-shadow: 0 24px 70px -24px rgb(0 0 0 / .4); }
+.lazy-state.lazy-overlay:not(.lazy-error) { position: fixed; left: 50%; top: 50%; translate: -50% -50%; z-index: 90; }

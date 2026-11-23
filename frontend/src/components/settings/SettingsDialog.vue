@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { lazy } from '../../ui/lazy'
 import AppIcon from '../ui/AppIcon.vue'
 import AssistantMark from '../assistant/AssistantMark.vue'
 import ManifoldDoodle from '../layout/ManifoldDoodle.vue'
@@ -14,8 +15,8 @@ import { flushStorage, freezeStorage, unfreezeStorage } from '../../shared/stora
 type Tab = 'appearance' | 'reading' | 'shortcuts' | 'ai' | 'updates' | 'library'
 const props = withDefaults(defineProps<{ initialTab?: Tab }>(), { initialTab: 'appearance' })
 const emit = defineEmits<{ close: []; saved: [value: AppPreferences]; 'ai-saved': [value: any] }>()
-const AiSettings = defineAsyncComponent(() => import('./AiSettings.vue'))
-const UpdateSettings = defineAsyncComponent(() => import('./UpdateSettings.vue'))
+const AiSettings = lazy(() => import('./AiSettings.vue'), { name: 'AI 设置' })
+const UpdateSettings = lazy(() => import('./UpdateSettings.vue'), { name: '更新设置' })
 const shared = useSettings()
 const draft = ref<AppPreferences>(normalizePreferences(shared.preferences.value))
 let baseline = JSON.stringify(draft.value)

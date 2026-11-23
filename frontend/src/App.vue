@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent, toRaw, triggerRef } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick, toRaw, triggerRef } from 'vue'
+import { lazy } from './ui/lazy'
+import { reportClientError } from './ui/error-log'
 import { library, importDocument, selectDocumentFile } from './sdk'
 import { groups, members, groupFilter, currentGroup, loadGroups, createGroup, renameGroup, removeGroup, assignGroup } from './library/groups'
 import { readsAsPdf, documentTitle, formatLabel, kindIcon, kindName, DOCUMENT_PATTERN } from './library/kinds'
@@ -37,20 +39,21 @@ import { emitLearningEvent } from './memory/events'
 import type { MemoryScope } from './memory/types'
 import { chatBusy } from './chat'
 import { examBusy } from './exam/activity'
-const PdfReader = defineAsyncComponent(() => import('./components/reader/PdfReader.vue'))
-const MarkdownReader = defineAsyncComponent(() => import('./components/reader/MarkdownReader.vue'))
-const AiPane = defineAsyncComponent(() => import('./components/assistant/AiPane.vue'))
-const SettingsDialog = defineAsyncComponent(() => import('./components/settings/SettingsDialog.vue'))
-const SplitPicker = defineAsyncComponent(() => import('./components/reader/SplitPicker.vue'))
-const UpdateCard = defineAsyncComponent(() => import('./components/settings/UpdateCard.vue'))
-const ContextMenu = defineAsyncComponent(() => import('./components/layout/ContextMenu.vue'))
-const ManifoldDoodle = defineAsyncComponent(() => import('./components/layout/ManifoldDoodle.vue'))
-const TranslatePane = defineAsyncComponent(() => import('./components/translate/TranslatePane.vue'))
-const ImportDialog = defineAsyncComponent(() => import('./components/library/ImportDialog.vue'))
-const ChatModePage = defineAsyncComponent(() => import('./components/chat/ChatModePage.vue'))
-const MemoryPage = defineAsyncComponent(() => import('./components/memory/MemoryPage.vue'))
-const MaterialsPage = defineAsyncComponent(() => import('./components/materials/MaterialsPage.vue'))
-const ExamPage = defineAsyncComponent(() => import('./components/exam/ExamPage.vue'))
+// 懒加载组件一律经 lazy()：加载态、自动重试、chunk 失败时刷新或给出错误卡片，并写本机日志（见 ui/lazy.ts）。
+const PdfReader = lazy(() => import('./components/reader/PdfReader.vue'), { name: 'PDF 阅读器' })
+const MarkdownReader = lazy(() => import('./components/reader/MarkdownReader.vue'), { name: '阅读器' })
+const AiPane = lazy(() => import('./components/assistant/AiPane.vue'), { name: '阅读助手' })
+const SettingsDialog = lazy(() => import('./components/settings/SettingsDialog.vue'), { name: '设置', variant: 'overlay', dismiss: () => { settingsOpen.value = false } })
+const SplitPicker = lazy(() => import('./components/reader/SplitPicker.vue'), { name: '并排选择', variant: 'quiet' })
+const UpdateCard = lazy(() => import('./components/settings/UpdateCard.vue'), { name: '更新提示', variant: 'quiet' })
+const ContextMenu = lazy(() => import('./components/layout/ContextMenu.vue'), { name: '右键菜单', variant: 'quiet' })
+const ManifoldDoodle = lazy(() => import('./components/layout/ManifoldDoodle.vue'), { name: '背景动画', variant: 'quiet' })
+const TranslatePane = lazy(() => import('./components/translate/TranslatePane.vue'), { name: '翻译助手' })
+const ImportDialog = lazy(() => import('./components/library/ImportDialog.vue'), { name: '加入文档窗口', variant: 'overlay', dismiss: () => { importOpen.value = false } })
+const ChatModePage = lazy(() => import('./components/chat/ChatModePage.vue'), { name: '对话模式' })
+const MemoryPage = lazy(() => import('./components/memory/MemoryPage.vue'), { name: '记忆管理' })
+const MaterialsPage = lazy(() => import('./components/materials/MaterialsPage.vue'), { name: '资料检索' })
+const ExamPage = lazy(() => import('./components/exam/ExamPage.vue'), { name: '模拟测试' })
 const chatPage = ref<{ focusPrompt?: () => void }>()
 const memoryPage = ref<{ focusSearch?: () => void }>()
 const materialsPage = ref<{ focusSearch?: () => void }>()
@@ -536,7 +539,7 @@ function examImported(_doc: Doc) { void refresh() }
 let memoryApi: typeof import('./memory') | undefined
 function withMemory(run: (api: typeof import('./memory')) => void) {
   if (memoryApi) { run(memoryApi); return }
-  void import('./memory').then(api => { memoryApi = api; run(api) }).catch(() => { /* 记忆是旁路功能，加载失败不影响阅读 */ })
+  void import('./memory').then(api => { memoryApi = api; run(api) }).catch(error => { /* 记忆是旁路功能，加载失败不影响阅读，只记日志 */ reportClientError('chunk-load', error, { level: 'warn', info: 'memory engine' }) })
 }
 // ---- 加入文档：窗口、拖放与导入队列（排队与进度在 library/importer.ts）----------------
 const importOpen = ref(false)

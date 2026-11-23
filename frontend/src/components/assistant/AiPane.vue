@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { lazy } from '../../ui/lazy'
 import 'katex/dist/katex.min.css'
 import { adoptTurns, addExcerpt, removeExcerpt, removeMessage, compressConversation, sideConversation, chatState, sendChat, stopChat, configureRequests, taskSummary, conversations, activeConversationId, selectConversation, newConversation, deleteConversation, loadConversations, conversationTokens, contextWindow, branchConversation, resendQuestion, watchConversation, allConversations, pinMessage, MAX_ATTACHMENTS, pendingImages, setPendingImages, keepImage, type Message, type ChatState } from '../../ai/workspace'
 import { renderMarkdown, renderDiagrams } from '../../ai/render'
@@ -15,8 +16,8 @@ import AssistantMark from './AssistantMark.vue'
 import { greetingFor, placeholderFor, thinkingVerb, spinnerFor } from '../../ai/greeting'
 import { predictQuestion, predictionKey } from '../../ai/predict'
 import { cropImageAsync } from '../../reader/crop'
-const ModelPicker = defineAsyncComponent(() => import('./ModelPicker.vue'))
-const UsagePanel = defineAsyncComponent(() => import('./UsagePanel.vue'))
+const ModelPicker = lazy(() => import('./ModelPicker.vue'), { name: '模型选择', variant: 'quiet' })
+const UsagePanel = lazy(() => import('./UsagePanel.vue'), { name: '用量面板', variant: 'quiet' })
 
 const props = defineProps<{ document: { id: string; title: string; kind: string }; context: any; sendShortcut?: string; consumeCapture?: (value: { documentId: string; selection: any }) => void; conversationId?: string; draggable?: boolean
   /** Other documents on screen beside this one (side-by-side), to switch which one the assistant reads. */
