@@ -37,7 +37,8 @@ test('materials surfaces: App.vue 已接上资料检索页', () => {
 })
 
 test('materials surfaces: 通道与用量已登记', () => {
-  assert.ok(source('sdk/python.ts').includes("cmd==='material_sync'"))
+  // 资料同步的进度通道在请求结束后释放（1.2.8 起收在 PROGRESS_ONLY 里）。
+  assert.match(source('sdk/python.ts'), /PROGRESS_ONLY = new Set\(\[[^\]]*'material_sync'/)
   assert.ok(source('ai/usage.ts').includes('discover: \'资料检索\''))
   assert.ok(source('components/ui/AppIcon.vue').includes('discover:'))
 })

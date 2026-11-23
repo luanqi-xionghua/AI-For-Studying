@@ -26,6 +26,7 @@ function events(): Promise<WebSocket> {
     ws.onclose=()=>{connecting=undefined; reject(new Error('本机连接已关闭')); for(const [id,ch] of channels){ch.onmessage({type:'error',event:'disconnect',message:'本机连接已关闭',error:'本机连接已关闭'}); forget(id)}}
   })
 }
+export const PROGRESS_ONLY = new Set(['update_download', 'import_documents', 'material_sync', 'temp_doc_prepare'])
 function forget(id:string|undefined){ if(!id)return; channels.delete(id); for(const m of [requests]) for(const [key,v] of m) if(v===id)m.delete(key) }
 export async function invoke<T=unknown>(cmd:string,args:Record<string,any>={}):Promise<T>{
   if(!token)throw new Error('此操作需要桌面版')
@@ -38,7 +39,9 @@ export async function invoke<T=unknown>(cmd:string,args:Record<string,any>={}):P
     const value=await r.json()
     return value as T
   } catch(e){forget(ch?.id);throw e}
-  finally{if(cmd==='ai_cancel')forget(requests.get(payload.id)); if(cmd==='update_download'||cmd==='import_documents'||cmd==='material_sync')forget(ch?.id)}
+  // 只用于进度的通道在请求结束后就释放；留着的话，下次事件通道断开时会收到 disconnect，
+  // 临时文档会被误当成“又在转换”（1.2.8：temp_doc_prepare 漏在这张表外）。
+  finally{if(cmd==='ai_cancel')forget(requests.get(payload.id)); if(PROGRESS_ONLY.has(cmd))forget(ch?.id)}
 }
 export const open=(options:{multiple?:boolean;title?:string}={})=>invoke<string[]|string|null>('select_files',options)
 function listen(name:string,fn:EventListener){window.addEventListener(name,fn);return Promise.resolve(()=>window.removeEventListener(name,fn))}
