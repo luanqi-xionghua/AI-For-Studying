@@ -83,3 +83,11 @@ test('所有懒加载组件都经 lazy() 包装，入口与 Vue 错误都接到�
   assert.match(main, /import\('\.\/desktop-app'\)\.catch\(/)
   assert.match(await read('desktop-app.ts'), /app\.config\.errorHandler = /)
 })
+
+test('新装首开（空库 + 背景动画）也显示文档库空状态与加入文档引导，不再只剩底板', () => {
+  assert.doesNotMatch(app, /!documents\.value\.length[^\n]*libraryShown\.value = false/)
+  assert.doesNotMatch(app, /libraryToggledByUser/)
+  assert.match(app, /const libraryShown = ref\(true\)/)
+  // 空状态本身仍在：空库时渲染 library-empty（含加入文档的提示）。
+  assert.match(app, /v-else-if="!visibleDocuments\.length" class="library-empty"/)
+})

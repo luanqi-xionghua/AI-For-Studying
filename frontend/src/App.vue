@@ -501,13 +501,10 @@ function translateSelection(text = window.getSelection()?.toString() || '') {
 }
 // 文档库可以收起，只留桌面上的底板（铅笔草稿风格下是慢慢自转的流形）。「文档库」再点一次就打开 / 收起。
 const libraryShown = ref(true)
-/** 启动时书单还没读完，用户就自己点过「文档库」开关：读完后不再替他收起。 */
-let libraryToggledByUser = false
 function toggleLibrary() {
   // 在对话模式 / 记忆管理页点文档库：直接回到文档库（顶栏保险处理）。
   if (page.value !== 'library') { page.value = 'library'; libraryShown.value = true; return }
   if (active.value) { closeReader(); return }
-  libraryToggledByUser = true
   libraryShown.value = !libraryShown.value
   if (!libraryShown.value) { clearPicked(); batchTag.value = null }
 }
@@ -1809,10 +1806,9 @@ onMounted(async () => {
   // 记忆引擎：空闲时再启动，不挡文档库首屏。
   const startMemory = () => withMemory(api => { void api.startMemoryEngine({ notify, foregroundBusy: () => taskSummary.running > 0 || chatBusy() || examBusy() }) })
   if ('requestIdleCallback' in window) (window as any).requestIdleCallback(startMemory, { timeout: 3000 }); else setTimeout(startMemory, 1500)
-  // 打开应用时：库里有书就直接摆出来；只有空库且开着流形背景（暖色极简、铅笔草稿），才收起文档库、只留底板。
-  // 以前不看库里有没有书，一律先收起，主页面只剩底板，第一次打开的人会以为书没了。
-  // 等书单读完再决定：有书时文档库从「正在读取」直接换成卡片，不会先收起再展开地闪一下。
-  if (!active.value && manifoldVisible.value && !documents.value.length && !libraryToggledByUser) libraryShown.value = false
+  // 打开应用时文档库总是摆出来（1.2.8）：以前空库且开着流形背景时会自动收起、只留底板，新装第一次打开的人
+  // 看到的是侧栏 + 一片只有淡淡线稿的内容区，没有任何「加入文档」的提示，被当成“内容区空白”。
+  // 现在空库也显示空状态与加入文档的引导；想只看底板，点顶栏「文档库」即可收起。
 })
 onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); document.removeEventListener('mousedown', middleDown); document.removeEventListener('auxclick', middleClick); window.removeEventListener('kaizhi:open-ai-settings', openAiSettings); closeLooseCards(); stopAutoCheck(); clearTimeout(enteringTimer); disposed = true; ++openEpoch; dismissCaptureQuick(); stopDropListening?.(); clearWheelZoom(); readerInstances.clear(); glassContrast?.dispose(); document.removeEventListener('keydown', keydown); document.removeEventListener('contextmenu', appContextMenu); document.removeEventListener('wheel', wheel, true); document.removeEventListener('selectionchange', selectionChanged); document.removeEventListener('scroll', dismissSelectionAction, true); document.removeEventListener('scroll', captureViewportChanged, true); window.removeEventListener('resize', dismissSelectionAction); window.removeEventListener('resize', captureViewportChanged); closeAllChats(); forgetAllPasswords(); systemTheme.removeEventListener('change', applyTheme); flushProgress(); for (const timer of indexTimers.values()) clearTimeout(timer); clearTimeout(queryTimer); clearTimeout(toastTimer); void memoryApi?.stopMemoryEngine() })
 </script>
