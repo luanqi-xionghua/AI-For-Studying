@@ -2,8 +2,10 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import shutil
 import sys
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -13,6 +15,7 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QFileDialog
 
+from .. import VERSION
 from ..api.server import DesktopService
 
 
@@ -32,6 +35,41 @@ def startup_canvas(settings, system_dark):
     if style == "sketch":
         return "#22211e" if dark else "#efe9db"
     return "#1f2427" if dark else "#f6f8f8"
+
+
+def purge_web_cache(root, version=VERSION):
+    """升级（或降级）后第一次启动，先丢掉 Chromium 的 HTTP 缓存目录 web-cache。
+
+    只动缓存：书库、设置、localStorage（web/）都不碰。≤1.2.7 写进缓存的 index.html 没有
+    Cache-Control，会被启发式地当成“新鲜”继续使用，新版的缓存头来不及生效，所以要按版本清一次。
+    必须在端口绑定成功（确认单实例）之后、创建 QWebEngineProfile 之前调用。
+    返回 "fresh"（无缓存）/ "kept"（版本相同）/ "purged" / "locked"（删除失败，下次再试）。
+    """
+    root = Path(root)
+    cache, stamp = root / "web-cache", root / "web-cache.version"
+    try:
+        if stamp.read_text("utf-8").strip() == version:
+            return "kept"
+    except OSError:
+        pass
+    state = "fresh"
+    if cache.exists():
+        # 先改名再删：改名是原子的，失败说明还有进程占着，就保留原样、不写版本戳，下次启动再试；
+        # 改名成功后哪怕删不干净，Chromium 也只会看到一个全新的空目录。
+        aside = root / f"web-cache.old-{os.getpid()}-{int(time.time())}"
+        try:
+            cache.rename(aside)
+        except OSError:
+            return "locked"
+        shutil.rmtree(aside, ignore_errors=True)
+        state = "purged"
+    for leftover in root.glob("web-cache.old-*"):
+        shutil.rmtree(leftover, ignore_errors=True)
+    try:
+        stamp.write_text(version, "utf-8")
+    except OSError:
+        pass
+    return state
 
 
 class Page(QWebEnginePage):
@@ -196,16 +234,28 @@ def run(dist, data_dir=None, smoke=False):
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
     url = ready.result(timeout=15)
+    log = service.log
+    log.write("qt", "start", version=VERSION, smoke=bool(smoke))
+    if not smoke:
+        # 端口已绑定成功 = 确认只有这一个实例在用这个数据目录；此时清缓存不会和别的进程抢文件。
+        cache_state = purge_web_cache(root)
+        if cache_state != "kept":
+            log.write("qt", "web-cache", "warn" if cache_state == "locked" else "info", state=cache_state)
     profile = (
         QWebEngineProfile(app) if smoke else QWebEngineProfile("kaizhi-python", app)
     )
     if not smoke:
         profile.setPersistentStoragePath(str(root / "web"))
         profile.setCachePath(str(root / "web-cache"))
-    page = Page(profile, service.origin, view)
     canvas = startup_canvas(service.lib.get_startup_settings(),
                             app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
-    page.setBackgroundColor(QColor(canvas))
+
+    def make_page():
+        made = Page(profile, service.origin, view)
+        made.setBackgroundColor(QColor(canvas))
+        return made
+
+    page = make_page()
     view.setPage(page)
     view.setWindowTitle("阅迁星穹")
     view.resize(1440, 940)
