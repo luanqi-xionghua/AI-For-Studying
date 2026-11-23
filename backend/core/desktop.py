@@ -3,6 +3,7 @@ import concurrent.futures
 import json
 import os
 import shutil
+import signal
 import sys
 import threading
 import time
@@ -11,7 +12,7 @@ from urllib.parse import urlsplit
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QIcon
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QFileDialog
 
@@ -72,10 +73,36 @@ def purge_web_cache(root, version=VERSION):
     return state
 
 
+RECOVERED_SCRIPT = "kaizhi-recovered"
+
+
 class Page(QWebEnginePage):
     def __init__(self, profile, origin, parent):
         super().__init__(profile, parent)
         self.origin = origin
+        # 页面弹出 alert/confirm/prompt 时渲染线程是被它挂住的，看护不能把这当成“卡死”。
+        self.dialogs = 0
+
+    def javaScriptAlert(self, origin, msg):
+        self.dialogs += 1
+        try:
+            return super().javaScriptAlert(origin, msg)
+        finally:
+            self.dialogs -= 1
+
+    def javaScriptConfirm(self, origin, msg):
+        self.dialogs += 1
+        try:
+            return super().javaScriptConfirm(origin, msg)
+        finally:
+            self.dialogs -= 1
+
+    def javaScriptPrompt(self, origin, msg, default):
+        self.dialogs += 1
+        try:
+            return super().javaScriptPrompt(origin, msg, default)
+        finally:
+            self.dialogs -= 1
 
     def acceptNavigationRequest(self, url, kind, is_main):
         u = urlsplit(url.toString())
@@ -199,6 +226,156 @@ class DropFilter(QObject):
         return True
 
 
+class Watchdog(QObject):
+    """渲染进程看护。
+
+    - 渲染进程异常退出（崩溃、被杀、异常终止）：第一次就地重新加载；
+    - 两分钟内再次出事：丢掉这张页面，换一张新的 QWebEnginePage（新的渲染进程）重新打开；
+    - 两分钟内累计 4 次仍不行：停手并记日志，避免无限重启；
+    - 页面主线程卡死：每 5 秒用 runJavaScript 问一次，连续 9 次（约 45 秒活动时间）没回音，
+      先结束这个渲染进程，再按上面的“异常退出”处理。页面开着 alert/confirm 时不计时；
+      电脑休眠时计时器不走，醒来后第一拍会收到回音，不会误判。
+    每次恢复都在下一次加载的页面里留一个标记，界面据此提示“已自动重新加载”。
+    """
+
+    BEAT_MS = 5000
+    HANG_BEATS = 9
+    WINDOW_S = 120
+    GIVE_UP = 4
+
+    def __init__(self, view, url, make_page, log=None, parent=None):
+        super().__init__(parent)
+        self.view, self.url, self.make_page, self.log = view, url, make_page, log
+        self.failures = []
+        self.serial = 0
+        self.pending = 0
+        self.missed = 0
+        self.loaded = False
+        self.stopped = False
+        self.killing = False  # 是看护自己结束了卡死的渲染进程：随后的退出按“无响应”处理
+        self.attach(view.page())
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.beat)
+        self.timer.start(self.BEAT_MS)
+
+    def note(self, event, level="info", **fields):
+        if self.log is not None:
+            self.log.write("qt", event, level, **fields)
+
+    def attach(self, page):
+        page.renderProcessTerminated.connect(self.terminated)
+        page.loadFinished.connect(self.load_finished)
+        self.loaded = False
+        self.pending = 0
+        self.missed = 0
+
+    def stop(self):
+        self.stopped = True
+        self.timer.stop()
+
+    def load_finished(self, ok):
+        page = self.view.page()
+        if self.sender() is not None and self.sender() is not page:
+            return
+        self.loaded = bool(ok)
+        self.pending = 0
+        self.missed = 0
+        for script in page.scripts().find(RECOVERED_SCRIPT):
+            page.scripts().remove(script)
+
+    def beat(self):
+        page = self.view.page()
+        if self.stopped or not self.loaded or getattr(page, "dialogs", 0):
+            self.missed = 0
+            return
+        if self.pending:
+            self.missed += 1
+            if self.missed >= self.HANG_BEATS:
+                self.hung()
+            return
+        self.serial += 1
+        serial = self.pending = self.serial
+        page.runJavaScript("1", 0, lambda _value, serial=serial: self.answered(serial))
+
+    def answered(self, serial):
+        if serial == self.pending:
+            self.pending = 0
+            self.missed = 0
+
+    def hung(self):
+        page = self.view.page()
+        pid = page.renderProcessPid()
+        self.note("renderer-unresponsive", "error", seconds=self.missed * self.BEAT_MS // 1000, pid=pid)
+        self.pending = 0
+        self.missed = 0
+        self.loaded = False
+        if pid and pid > 0:
+            try:
+                self.killing = True
+                os.kill(pid, signal.SIGTERM)  # Windows 上是 TerminateProcess；随后 renderProcessTerminated 接手
+                return
+            except OSError as error:
+                self.killing = False
+                self.note("renderer-kill-failed", "error", error=repr(error))
+        self.recover("unresponsive")
+
+    def terminated(self, status, code):
+        if self.stopped or self.sender() is not self.view.page():
+            return
+        self.loaded = False
+        if status == QWebEnginePage.RenderProcessTerminationStatus.NormalTerminationStatus:
+            self.note("renderer-exited", code=int(code))
+            return
+        reason = "unresponsive" if self.killing else {
+            QWebEnginePage.RenderProcessTerminationStatus.CrashedTerminationStatus: "crashed",
+            QWebEnginePage.RenderProcessTerminationStatus.KilledTerminationStatus: "killed",
+        }.get(status, "abnormal")
+        self.killing = False
+        self.note("renderer-terminated", "error", reason=reason, code=int(code))
+        self.recover(reason)
+
+    def recover(self, reason):
+        now = time.monotonic()
+        self.failures = [t for t in self.failures if now - t < self.WINDOW_S] + [now]
+        count = len(self.failures)
+        if count > self.GIVE_UP:
+            self.note("renderer-recovery-gave-up", "error", reason=reason, failures=count)
+            return
+        action = "reload" if count == 1 else "rebuild"
+        self.note("renderer-recover", "warn", reason=reason, action=action, failures=count)
+        QTimer.singleShot(300, lambda: self.reload(reason) if action == "reload" else self.rebuild(reason))
+
+    def mark(self, page, reason, action):
+        script = QWebEngineScript()
+        script.setName(RECOVERED_SCRIPT)
+        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        script.setRunsOnSubFrames(False)
+        script.setSourceCode(
+            "window.__KAIZHI_RECOVERED__=" + json.dumps({"reason": reason, "action": action}) + ";"
+        )
+        page.scripts().insert(script)
+
+    def reload(self, reason):
+        if self.stopped:
+            return
+        page = self.view.page()
+        self.mark(page, reason, "reload")
+        page.triggerAction(QWebEnginePage.WebAction.Reload)
+
+    def rebuild(self, reason):
+        if self.stopped:
+            return
+        old = self.view.page()
+        page = self.make_page()
+        self.mark(page, reason, "rebuild")
+        self.view.setPage(page)
+        self.attach(page)
+        # 新页面是新的标签上下文（sessionStorage 为空），要带着本次运行的 token 重新进入。
+        page.setUrl(QUrl(self.url))
+        old.deleteLater()
+
+
 def run(dist, data_dir=None, smoke=False):
     if not (dist / "index.html").is_file():
         raise SystemExit("请先在 frontend 目录运行 npm ci 和 npm run build。")
@@ -287,6 +464,9 @@ def run(dist, data_dir=None, smoke=False):
         timer.timeout.connect(probe)
         timer.start(400)
         QTimer.singleShot(40000, app.quit)
+    watchdog = None if smoke else Watchdog(view, url, make_page, log, app)
+    if watchdog is not None:
+        app.aboutToQuit.connect(watchdog.stop)
     view.setUrl(QUrl(url))
     if not smoke:
         view.showMaximized()

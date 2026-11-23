@@ -1794,6 +1794,9 @@ onMounted(async () => {
   window.addEventListener('resize', captureViewportChanged)
   systemTheme.addEventListener('change', applyTheme)
   if (props.startupError) notify(`设置加载失败：${props.startupError}`)
+  // 桌面壳的渲染进程看护刚把页面重新加载过（崩溃或长时间无响应）：告诉用户发生了什么。
+  const recovered = (window as any).__KAIZHI_RECOVERED__ as { reason?: string } | undefined
+  if (recovered) notify(recovered.reason === 'unresponsive' ? '界面刚才长时间没有响应，已自动重新加载。' : '界面刚才意外退出，已自动重新加载。')
   await loadLibraryOrder()
   await loadGroups()
   void loadCovers()
