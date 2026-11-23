@@ -24,7 +24,7 @@ import { useFullscreen } from './ui/fullscreen'
 import { vLiquidSelection } from './ui/liquid-selection'
 import { useReorder } from './ui/reorder'
 import { useRubberBand } from './ui/rubber-band'
-import { translator, translate, type Translation } from './ai/translate'
+import { translator, translate, stopTranslation, type Translation } from './ai/translate'
 import { explainCards, closeCard, closeLooseCards, explainTarget, runExplain } from './ai/explain'
 import { looksMathy, selectionImage } from './reader/selection-image'
 import ExplainCard from './components/assistant/ExplainCard.vue'
@@ -861,10 +861,14 @@ function autoTranslate(event: MouseEvent) {
     if (!text || text.length > 3000) { hoverSource = ''; return }
     if (text === hoverSource && hoverTranslation.value) return
     hoverSource = text
+    // 换了新选区：上一条还在跑的划词翻译停掉（1.2.8），否则连续划几处就把 8 个 AI 请求名额占满，
+    // 阅读助手、出题、记忆都会报“AI 请求过多”，被丢下的翻译还在花 token。
+    stopHoverTranslation()
     void translate(text, translator.target, false, { quiet: true, image: looksMathy(text) ? selectionImage() : undefined, onItem: item => { closeLooseCards(); hoverTranslation.value = { item, x, y } } })
   }, 0)
 }
-function closeHoverTranslation() { hoverTranslation.value = undefined; hoverSource = '' }
+function stopHoverTranslation() { const item = hoverTranslation.value?.item; if (item?.status === 'running') stopTranslation(item.id) }
+function closeHoverTranslation() { stopHoverTranslation(); hoverTranslation.value = undefined; hoverSource = '' }
 // 快速解释：选中文字后按鼠标中键。按下时拦住浏览器的中键滚动，松开时解释。
 function middleDown(event: MouseEvent) { if (event.button === 1 && (event.target as HTMLElement | null)?.closest?.('.reader-pane') && window.getSelection()?.toString().trim()) event.preventDefault() }
 function middleClick(event: MouseEvent) {
