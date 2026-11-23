@@ -1,5 +1,5 @@
 # 第三方代码与许可
-
+# 作者:乱崎凶华
 项目自身代码使用根目录的 MIT 许可。以下为桌面版的主要第三方组件。
 
 - PDF.js / pdfjs-dist 6.4.299 用于本地 PDF 阅读。前端构建保留 `vendor/pdfjs/LICENSE`，以及 CMaps、标准字体、色彩和 WebAssembly 资源附带的许可文本。
