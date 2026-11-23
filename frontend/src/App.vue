@@ -1484,6 +1484,8 @@ const manifoldVisible = computed(() => {
   const appearance = effectiveAppearance.value
   return (appearance.style === 'sketch' || appearance.style === 'warm') && appearance.manifold.show && (!active.value || appearance.manifold.reader)
 })
+// 设置、加入文档、移除确认这类模态窗盖住整个界面时，背景动画停下（1.2.8 Bug 2：设置页一直闪）。
+const backgroundPaused = computed(() => settingsOpen.value || importOpen.value || !!removeTarget.value || !!removeBatch.value)
 function applyTheme() {
   const appearance = effectiveAppearance.value
   const selected = appearance.theme
@@ -1817,7 +1819,7 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
 
 <template>
   <div class="app-shell" :class="{ 'sidebar-collapsed': !sidebarOpen, 'has-reader': active, 'chrome-collapsed': chromeCollapsed }">
-    <ManifoldDoodle v-if="manifoldVisible" :shapes="effectiveAppearance.manifold.shapes" />
+    <ManifoldDoodle v-if="manifoldVisible" :shapes="effectiveAppearance.manifold.shapes" :paused="backgroundPaused" />
     <Transition name="chrome-tag"><button v-if="chromeCollapsed" class="chrome-tag" data-tip="展开顶栏与侧栏" :data-tip-key="tipKey('sidebar')" aria-label="展开顶栏与侧栏" @click="expandChrome"><AppIcon name="chevron-right" :size="14" /></button></Transition>
     <!-- 侧栏收起或被隐藏时小钟不在：计时中改在窗口左下角画一只小圆环，到点了照样弹出卡片。 -->
     <ClockChip v-if="!clockInSidebar" collapsed />

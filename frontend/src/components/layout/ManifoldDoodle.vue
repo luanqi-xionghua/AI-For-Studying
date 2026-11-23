@@ -9,7 +9,11 @@ import { networkById, ML_FACTS, type Graph } from '../../sketch/networks'
 import { sketchById, type Painter, type Sketch, resetSprites } from '../../sketch/scenes'
 
 // preview：设置里悬停时的缩略图——只画一个画面，铺满自己的小框，不写旁注、不轮换。
-const props = defineProps<{ shapes: string[]; preview?: boolean }>()
+// paused：上面盖着设置等模态窗时整个停下（1.2.8 Bug 2）：全窗口画布每帧重画、上面再叠一层半透明遮罩，
+// 软件合成下帧率从 29 掉到 5，看起来就是整页一直闪；画面本来也被遮住了。恢复时接着原来的进度画，不跳。
+const props = defineProps<{ shapes: string[]; preview?: boolean; paused?: boolean }>()
+// 设置里的缩略图最多 30 帧：它只有 280×190，再快看不出区别，只会和设置面板抢主线程。
+const PREVIEW_FRAME = 1000 / 30
 const backing = ref('')
 
 const canvas = ref<HTMLCanvasElement>()
@@ -74,7 +78,7 @@ async function recoverWorker(event: ErrorEvent) {
     startWorker(); postView(true)
     const rebuilt = worker as Worker | undefined
     rebuilt?.postMessage({ type: 'scene', id: sketch?.offscreen ? current.value : null, elapsed: Math.max(0, performance.now() - drawnAt) })
-    if (document.hidden || held) rebuilt?.postMessage({ type: 'halt' })
+    if (document.hidden || held || paused) rebuilt?.postMessage({ type: 'halt' })
   }
   remote = Boolean(worker && sketch?.offscreen)
   if (!worker) console.warn('[background] worker unavailable; using the foreground renderer')
@@ -131,7 +135,7 @@ function choose(id: string | undefined) {
   painter = other?.create()
   remote = Boolean(worker && other?.offscreen)
   worker?.postMessage({ type: 'scene', id: remote ? id : null, elapsed: 0 })
-  if (remote && !document.hidden && !held) worker?.postMessage({ type: 'run' })
+  if (remote) syncWorker()
   baseTilt = other?.tilt ?? manifold?.tilt ?? (network ? .32 : .42)
   jitter = seeded(mesh ? mesh.points.length / 3 : graph ? graph.nodes.length / 3 : 1)
   drawnAt = performance.now()
@@ -674,16 +678,35 @@ function drawVisual(context: CanvasRenderingContext2D, item: Drawing, now: numbe
 
 function tick(now: number) {
   frame = 0
-  if (document.hidden) return
+  if (document.hidden || paused) return
   if (held) { frame = requestAnimationFrame(tick); return }
-  // GB300 保持原最高目标 60 FPS；其他场景沿用原来的自适应调度。
-  const interval = sketch?.offscreen ? 1000 / 60 : cost < (smoothRun ? 10 : 7) ? 1000 / 60 : cost > 16 ? 1000 / 20 : FRAME
+  // GB300 保持原最高目标 60 FPS；其他场景沿用原来的自适应调度；设置里的缩略图封顶 30 帧。
+  const interval = props.preview ? PREVIEW_FRAME : sketch?.offscreen ? 1000 / 60 : cost < (smoothRun ? 10 : 7) ? 1000 / 60 : cost > 16 ? 1000 / 20 : FRAME
   smoothRun = interval < 20
   if (now - last >= interval - 2) { last = now; const began = performance.now(); draw(now); cost += (performance.now() - began - cost) * .1 }
   if (!reduced.matches && (!remote || !labelSettled || labelDirty)) frame = requestAnimationFrame(tick)
 }
-function run() { if (!disposed && !frame && !document.hidden && (!remote || !labelSettled || labelDirty)) frame = requestAnimationFrame(tick) }
+function run() { if (!disposed && !frame && !document.hidden && !paused && (!remote || !labelSettled || labelDirty)) frame = requestAnimationFrame(tick) }
 function halt() { cancelAnimationFrame(frame); frame = 0 }
+/** 让后台线程的画面跟着当前状态走：隐藏、交互让位、模态暂停任一成立就停。 */
+function syncWorker() { worker?.postMessage({ type: document.hidden || held || paused ? 'halt' : 'run' }) }
+// 模态暂停：停掉主线程循环、后台线程、换画面计时与旁注；恢复时把时钟往后挪暂停的时长，画面从停下的地方接着走。
+let paused = false, pausedAt = 0
+function setPaused(on: boolean) {
+  if (on === paused || props.preview) return
+  paused = on
+  if (on) {
+    pausedAt = performance.now()
+    halt(); clearTimeout(switchTimer); clearTimeout(noteTimer); noteTimer = undefined
+  } else {
+    const now = performance.now(), gap = now - pausedAt
+    start += gap; drawnAt = Math.min(now, drawnAt + gap); last = 0
+    scheduleSwitch()
+    if (!noteTimer && !disposed) noteTimer = setTimeout(nextNote, NOTE_EVERY / 3)
+    run()
+  }
+  syncWorker()
+}
 
 // 随机的定理 / 定义：洗好的一袋，抽完再洗；夹几条当前画面自己的。流形上能画的就画在曲面上。
 function pickKnowledge(): Knowledge | undefined {
@@ -738,18 +761,19 @@ function nextNote() {
   noteTimer = setTimeout(nextNote, reduced.matches ? 60000 : NOTE_EVERY)
 }
 
-function visibility() { if (document.hidden) { halt(); worker?.postMessage({ type: 'halt' }) } else { run(); worker?.postMessage({ type: 'run' }) } }
+function visibility() { if (document.hidden) halt(); else run(); syncWorker() }
 const resizer = new ResizeObserver(() => { resize(); if (!frame) draw(performance.now()) })
 // GB300 no longer pauses for interaction. Other scenes retain their old policy.
 const themeWatch = new MutationObserver(records => {
   // 拖动排列文档时也停：那一阵卡片的让位动画最怕掉帧。
   const busy = !sketch?.offscreen && ('paneMotion' in document.documentElement.dataset || document.documentElement.classList.contains('reordering'))
-  if (busy !== held) { held = busy; worker?.postMessage({ type: busy ? 'halt' : 'run' }) }
+  if (busy !== held) { held = busy; syncWorker() }
   if (records.every(record => record.attributeName === 'data-pane-motion' || record.attributeName === 'class')) return
   readInk(); if (!frame) draw(performance.now())
 })
 
-watch(() => props.shapes.join(','), () => { if (!current.value || !props.shapes.includes(current.value)) choose(nextManifold(props.shapes, undefined)); else scheduleSwitch() })
+watch(() => props.shapes.join(','), () => { if (!current.value || !props.shapes.includes(current.value)) choose(nextManifold(props.shapes, undefined)); else if (!paused) scheduleSwitch() })
+watch(() => props.paused, value => setPaused(!!value))
 
 onMounted(() => {
   startWorker()
@@ -767,6 +791,7 @@ onMounted(() => {
   void document.fonts.ready.then(fontsChanged)
   run()
   if (!props.preview) noteTimer = setTimeout(nextNote, 2500)
+  if (props.paused) setPaused(true)
 })
 function fontsChanged() { if (!disposed) invalidateLabel() }
 function restored() { resetSprites(); labelDirty = true; draw(performance.now()); run() }
