@@ -16,15 +16,20 @@ from ..services.library import Library
 from ..services.materials import Materials
 from ..services.tempdocs import TempDocs
 from ..services.updates import Updates
+from ..core.applog import AppLog
 from ..core.windows import Credentials
 
-DATA = "get_startup_settings list_documents import_documents relocate_document backup_database restore_database read_document update_document remove_document read_asset index_document get_setting set_setting delete_setting".split()
+DATA ="get_startup_settings list_documents import_documents relocate_document backup_database restore_database read_document update_document remove_document read_asset index_document get_setting set_setting delete_setting".split()
 AI = {"ai_start", "ai_cancel", "ai_tool_result", "ai_set_key", "ai_has_key"}
 UPDATE = "update_status update_check update_download update_cancel update_install update_open_page".split()
 TEMP = {"temp_doc_pick", "temp_doc_prepare", "temp_doc_read", "temp_doc_release"}
 MATERIAL = {"material_status", "material_sync", "material_cancel",
             "material_search", "material_open", "material_clear"}
 EXAM = {"exam_export"}
+# 页面上报的错误种类（见 frontend/src/ui/error-log.ts）；其余一律记成 other。
+CLIENT_LOG_KINDS = {"error", "unhandledrejection", "chunk-load", "resource", "vue",
+                    "recovered", "boot", "other"}
+CLIENT_LOG_FIELDS = ("message", "stack", "source", "line", "column", "page", "version", "info")
 
 
 def static_cache_control(rel):
@@ -58,6 +63,8 @@ class DesktopService:
         self.dist = Path(dist).resolve()
         self.gui = gui
         self.token = secrets.token_urlsafe(40)
+        # 本机滚动日志（<数据目录>/logs/app.log），写入前会把本次 token 等敏感串替换掉。
+        self.log = AppLog(root, [self.token])
         self.ai = Harness(self.creds, self.emit)
         self.ws = None
         self.runner = None
@@ -187,6 +194,22 @@ class DesktopService:
             return {"cancelled": True}
         return await asyncio.to_thread(self.exams.export, path, args["markdown"])
 
+    def client_log(self, args):
+        """页面上报的未捕获异常、chunk 加载失败等，写进本机滚动日志（脱敏、限速在 AppLog 里）。"""
+        kind = args.get("kind")
+        kind = kind if kind in CLIENT_LOG_KINDS else "other"
+        level = args.get("level") if args.get("level") in ("info", "warn", "error") else "error"
+        fields = {}
+        for key in CLIENT_LOG_FIELDS:
+            value = args.get(key)
+            if isinstance(value, bool) or value is None:
+                continue
+            if isinstance(value, (int, float)):
+                fields[key] = value
+            elif isinstance(value, str):
+                fields[key] = value[:4000]
+        return self.log.write("renderer", kind, level, **fields)
+
     async def events(self, req):
         ws = web.WebSocketResponse(max_msg_size=1024, heartbeat=30)
         await ws.prepare(req)
@@ -227,6 +250,8 @@ class DesktopService:
                 value = await self.temp_pick(args)
             elif cmd == "exam_export":
                 value = await self.exam_export(args)
+            elif cmd == "client_log":
+                value = await asyncio.to_thread(self.client_log, args)
             else:
                 owner = (
                     self.lib
@@ -261,6 +286,10 @@ class DesktopService:
         except web.HTTPException:
             raise
         except Exception as exc:
+            if not isinstance(exc, (ValueError, FileNotFoundError)):
+                # 预期内的错误（参数、文件不存在）直接回给界面；意外的才进日志，便于事后排查。
+                self.log.write("server", "api-error", "error", cmd=cmd[:60],
+                               error=f"{type(exc).__name__}: {exc}")
             return web.json_response(
                 {
                     "error": str(exc)
@@ -285,3 +314,4 @@ class DesktopService:
         self.materials.close()
         await self.runner.cleanup()
         await self.client.close()
+        self.log.close()
