@@ -53,6 +53,19 @@ def saved_port(port_file):
     return int(text)
 
 
+def static_path_is_safe(rel):
+    """静态文件路径只做纯字符串判断，不访问文件系统。
+
+    拒绝：反斜杠（%5C 解码后可拼出 \\\\host\\share 这类 UNC 路径）、冒号（盘符、备用数据流）、
+    NUL、以 / 开头或含空段（///host/share 会被拼成 UNC）、. 与 .. 段。合法的前端资源
+    （assets/*.js、vendor/..、samples/..）都只是普通的相对路径。
+    """
+    if not rel or any(ch in rel for ch in ("\\", ":", "\x00")) or rel.startswith("/"):
+        return False
+    parts = rel.split("/")
+    return all(part and part not in (".", "..") for part in parts)
+
+
 def static_cache_control(rel):
     """Vite 的 /assets/ 文件名带内容哈希，可以长缓存；其余（index.html、vendor、图标）每次都要重新验证。
 
@@ -148,6 +161,9 @@ class DesktopService:
 
     async def static(self, req):
         rel = req.match_info["file"] or "index.html"
+        if not static_path_is_safe(rel):
+            # 必须在碰文件系统之前拦下：resolve() 遇到 \\host\share 会去连网络共享并发送 NTLM 凭据。
+            raise web.HTTPNotFound()
         file = (self.dist / rel).resolve()
         if not file.is_relative_to(self.dist) or not file.is_file():
             raise web.HTTPNotFound()

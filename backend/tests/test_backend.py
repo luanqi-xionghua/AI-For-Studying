@@ -278,6 +278,49 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("local-fixture-only", json.dumps(result))
         self.assertEqual(seen, ["Bearer local-fixture-only"])
 
+    async def test_static_paths_never_reach_unc_or_absolute_files(self):
+        # 1.2.8 安全：%5C%5Chost%5Cshare 或 ///host/share 曾被拼成 \\host\share 再 resolve()，
+        # Windows 会去连那台主机的 SMB 共享并发送当前用户的 NTLM 凭据。静态路由只校验 Host，
+        # 普通网页的 <img> 就能触发。
+        from backend.api.server import static_path_is_safe
+
+        (self.root / "index.html").write_text("<!doctype html>", "utf-8")
+        (self.root / "vendor" / "cmaps").mkdir(parents=True)
+        (self.root / "vendor" / "cmaps" / "UniGB-UCS2-H.bcmap").write_bytes(b"x")
+        (self.root / "samples").mkdir()
+        (self.root / "samples" / "示例.md").write_text("# 示例", "utf-8")
+        touched = []
+        original = Path.resolve
+
+        def spy(path, *args, **kwargs):
+            touched.append(str(path))
+            if str(path).startswith("\\\\"):
+                raise AssertionError(f"UNC 路径进了 resolve()：{path}")
+            return original(path, *args, **kwargs)
+
+        bad = [
+            "/%5C%5Cevil.invalid%5Cs%5Cx.png",
+            "///evil.invalid/s/x.png",
+            "/C:%5CWindows%5Cwin.ini",
+            "/C:/Windows/win.ini",
+            "/..%5C..%5Cx",
+            "/assets/..%2F..%2Fsecret",
+            "/a/./b",
+        ]
+        with patch.object(Path, "resolve", spy):
+            for path in bad:
+                async with self.client.get(self.service.origin + path) as r:
+                    self.assertEqual(r.status, 404, path)
+            for path in ("/vendor/cmaps/UniGB-UCS2-H.bcmap", "/samples/%E7%A4%BA%E4%BE%8B.md", "/"):
+                async with self.client.get(self.service.origin + path) as r:
+                    self.assertEqual(r.status, 200, path)
+        outside = [p for p in touched if not p.startswith(str(self.root)) and Path(p) != Path(str(self.service.dist))]
+        self.assertEqual(outside, [], "非法路径不应碰到文件系统")
+        for rel in ("\\\\h\\s", "C:x", "a\x00b", "/x", "a//b", "../x", "a/../b", "./a", ""):
+            self.assertFalse(static_path_is_safe(rel), repr(rel))
+        for rel in ("index.html", "assets/index-AbC.js", "vendor/cmaps/a.bcmap", "samples/示例.md"):
+            self.assertTrue(static_path_is_safe(rel), rel)
+
     async def test_static_cache_policy_revalidates_the_entry_page(self):
         # 1.2.8 Bug 1：index.html 必须每次重新验证，否则覆盖安装后头一次启动会拿到旧版入口。
         (self.root / "index.html").write_text("<!doctype html>", "utf-8")
