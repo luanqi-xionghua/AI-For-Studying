@@ -620,14 +620,26 @@ export function createExamState(deps: ExamDeps) {
 
     const examId = deps.uuid()
     state.generation.examId = examId
-    await deps.store.evictForRoom(examId, '')
-    const meta = newMeta(examId, doc, resolvedValue.preset.name)
-    await deps.store.saveMeta(meta)
-    await deps.store.saveEntry(entryOf(meta, { count: 0, max: 0, answered: 0 }, 'draft'))
-    state.current = {
-      id: examId, meta, questions: [], answers: { ...blankAnswers(), examId }, readOnly: false, newer: false, banner: '',
+    try {
+      await deps.store.evictForRoom(examId, '')
+      const meta = newMeta(examId, doc, resolvedValue.preset.name)
+      await deps.store.saveMeta(meta)
+      await deps.store.saveEntry(entryOf(meta, { count: 0, max: 0, answered: 0 }, 'draft'))
+      state.current = {
+        id: examId, meta, questions: [], answers: { ...blankAnswers(), examId }, readOnly: false, newer: false, banner: '',
+      }
+      await deps.store.mutateIndex(index => ({ ...index, activeId: examId }))
+    } catch (error) {
+      // 出题前的存储写入失败（1.2.8）：以前 running 一直是 true、又没有出题任务，开始按钮永远灰着
+      // （“正在给另一套试卷出题”），停止也无效，只能重启。现在退回设置页并说明原因。
+      state.generation.running = false
+      state.generation.phase = 'idle'
+      state.generation.error = `没能开始出题：${error instanceof Error ? error.message : String(error)}`
+      if (state.current?.id === examId) state.current = null
+      state.view = 'setup'
+      deps.notify(state.generation.error)
+      return
     }
-    await deps.store.mutateIndex(index => ({ ...index, activeId: examId }))
     await trackGeneration(examId)
   }
 

@@ -701,3 +701,23 @@ test('state 1.2.6: 交卷后在结果页展开大题并自评，总分随之更�
   h.api.selfScore(essay.slot, 10)
   assert.equal(h.api.state.current.answers.items[String(essay.slot)].selfScore, 7)
 })
+
+test('state: 出题前的存储写入失败 → 退回设置页并说明，开始按钮不会永远卡在“正在出题”（1.2.8）', async () => {
+  const h = makeHarness()
+  await h.api.init()
+  h.api.selectDocument(DOC_ID)
+  h.api.setTemplate('A')
+  const saveMeta = h.store.saveMeta
+  let failOnce = true
+  h.store.saveMeta = async (...args) => { if (failOnce) { failOnce = false; throw new Error('磁盘已满') } return saveMeta(...args) }
+  await h.api.start()
+  assert.equal(h.api.state.generation.running, false)
+  assert.equal(h.api.view.value, 'setup')
+  assert.match(h.api.state.generation.error, /没能开始出题：磁盘已满/)
+  assert.equal(h.generationCalls.plan.length, 0, '没有开始调用模型')
+  assert.ok(h.notifications.some(message => /没能开始出题：磁盘已满/.test(message)), '设置页也能看到原因')
+  // 再点一次就能正常出题。
+  await h.api.start()
+  assert.equal(h.api.view.value, 'taking')
+  assert.equal(h.api.state.current.questions.length, 20)
+})
