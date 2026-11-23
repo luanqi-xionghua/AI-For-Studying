@@ -331,3 +331,15 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 - 证据与验证：`docs/bug-report-1.2.7.md`（旧版注入 +200s 跳变后 10 秒吃 11.73 秒 CPU，修复版 3ms 响应；旧算法 41 步模拟 10 万次未退出）。
 - 测试：前端 618 项（新增 `sketch-walk` 6 项），后端 88 项；vue-tsc、构建通过。
 - 同类排查：洛伦兹（`target - done > 40`）、生命游戏（`target - done > 2`）、画面切换（`env.t - since > STEP*3`）均已有跳变保护；其余循环有界。
+
+## 1.2.8（2026-11-23）：首开空白、设置页闪烁、整体排查
+
+- **首开空白**：根因是 `index.html` 没有 `Cache-Control`，被 Chromium 启发式缓存；应用内更新后首开仍跑旧入口，请求已删除的 chunk（404）。修复：`server.py` 缓存头（`/assets/` immutable、其余 no-cache）、`desktop.py` 按版本清 `web-cache`（`web-cache.version`）、前端 `ui/lazy.ts` 包装全部懒加载组件（重试 / 刷新一次 / 错误卡片）。新装空库首开也显示文档库空状态。
+- **设置页闪**：模态窗打开时背景动画仍 60 帧重画整窗，软件合成下帧率 29 → 5。`ManifoldDoodle` 新增 `paused`，App 在设置 / 加入文档 / 移除确认打开时暂停；缩略图预览封顶 30 帧。回归 `backend/tests/test_settings_render.py` 在真实前端里数重画次数。
+- **看护与日志**：`desktop.py` 的 `Watchdog`（崩溃重载 → 换新页面 → 4 次停手；45 秒心跳判定无响应）、`QuitFlush`（关窗前调用 `window.__kaizhiBeforeQuit`，最多 1.5 秒）、重复启动唤起已有窗口；`backend/core/applog.py` 写 `<数据目录>/logs/app.log`，页面经 `client_log` 上报（`ui/error-log.ts`），全部脱敏。
+- **安全**：静态路由拒绝 UNC / 绝对路径（`static_path_is_safe`）；AI 回答里的远程图片改为链接（`ai/markdown-images.ts`）。
+- **其他修复**：`_blank` 外链走系统浏览器（`Page.newWindowRequested`）、事件通道重连等旧通道收尾、临时文档进度通道释放（`PROGRESS_ONLY`）、出题开始失败复位、资料同步轮询容错、划词翻译停旧请求、sdk 纯文本错误。
+- **排查方法**：`build/cdp-lib.mjs`（CDP 客户端）、`flicker-probe.mjs` / `doodle-draws.mjs` / `ab-settings.mjs`（闪烁与帧率）、`first-open.mjs`（入口版本与缓存命中）、`chunk-fallback.mjs`、`freeze-regress.mjs`、`screen-shots.py` + `shot-diff.py`（原生截屏对比）；升级复现用安装包 `/S /PORTABLE` + `YUEQIAN_PORTABLE_DIR` + `KAIZHI_DATA_DIR`（不碰注册表与快捷方式）。这些都在 `build/`，不入库。
+- **调试**：日志看 `%APPDATA%\com.phydog.reading.python\logs\app.log`；CDP 用 `QTWEBENGINE_REMOTE_DEBUGGING=9222`；模拟无显卡加速用 `QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu --disable-gpu-compositing"`。
+- **测试基线**：前端 637 项，后端 109 项（skipped 1）。schema 与 `user_version`（1）未变，无新依赖。
+- **未修（P3）**：见 `docs/bug-report-1.2.8.md` 末尾表格。
