@@ -82,6 +82,15 @@ class Page(QWebEnginePage):
         self.origin = origin
         # 页面弹出 alert/confirm/prompt 时渲染线程是被它挂住的，看护不能把这当成“卡死”。
         self.dialogs = 0
+        # target="_blank" 的链接（AI 回答、Markdown 文档、PDF 里的链接）走“新窗口”这条路，
+        # 不经过 acceptNavigationRequest；不接这个信号时点了没有任何反应（1.2.8 实测）。
+        self.newWindowRequested.connect(self.open_new_window_externally)
+
+    def open_new_window_externally(self, request):
+        url = request.requestedUrl()
+        if url.scheme() in ("https", "http"):
+            QDesktopServices.openUrl(url)
+        # 不调用 request.openIn()：应用内不开第二个窗口。
 
     def javaScriptAlert(self, origin, msg):
         self.dialogs += 1
