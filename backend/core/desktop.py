@@ -14,10 +14,10 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QIcon
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .. import VERSION
-from ..api.server import DesktopService
+from ..api.server import DesktopService, PortInUse
 
 
 def startup_canvas(settings, system_dark):
@@ -376,6 +376,54 @@ class Watchdog(QObject):
         old.deleteLater()
 
 
+def running_instance(port, timeout=2.0):
+    """这个端口上是不是另一个阅迁星穹：只读 GET /（不带 token、不调用接口），看标题。"""
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        conn.request("GET", "/")
+        reply = conn.getresponse()
+        return reply.status == 200 and "阅迁星穹".encode() in reply.read(8192)
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        conn.close()
+
+
+def activate_window(title="阅迁星穹"):
+    """把已经开着的主窗口带到前台（最小化的先还原）。找不到窗口返回 False。"""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW(None, title)
+    if not hwnd:
+        return False
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    user32.SetForegroundWindow(hwnd)
+    return True
+
+
+def second_launch(app, root, error, log):
+    """启动时端口绑不上：已有实例就把它叫到前台、安静退出；否则给一句看得懂的话，不弹 Python 堆栈。"""
+    port = getattr(error, "port", 0)
+    if port and running_instance(port):
+        log.write("qt", "second-instance", port=port, activated=activate_window())
+        return 0
+    log.write("qt", "port-unavailable", "error", port=port, error=repr(error.__cause__ or error))
+    QMessageBox.critical(
+        None,
+        "阅迁星穹",
+        f"阅迁星穹没能启动：本机端口 {port} 被其他程序占用（也可能是系统为 Hyper-V / WSL 保留了这一段端口）。\n\n"
+        "请关闭占用该端口的程序，或重启电脑后再打开。文档库与设置都没有受到影响。\n"
+        f"详情已写入 {Path(root) / 'logs' / 'app.log'}",
+    )
+    return 1
+
+
 def run(dist, data_dir=None, smoke=False):
     if not (dist / "index.html").is_file():
         raise SystemExit("请先在 frontend 目录运行 npm ci 和 npm run build。")
@@ -410,7 +458,11 @@ def run(dist, data_dir=None, smoke=False):
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
-    url = ready.result(timeout=15)
+    try:
+        url = ready.result(timeout=15)
+    except PortInUse as error:
+        # 双击了两次快捷方式、或端口被占：以前这里直接抛出，用户看到的是 PyInstaller 的堆栈弹窗。
+        return second_launch(app, root, error, service.log)
     log = service.log
     log.write("qt", "start", version=VERSION, smoke=bool(smoke))
     if not smoke:

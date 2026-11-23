@@ -32,6 +32,27 @@ CLIENT_LOG_KINDS = {"error", "unhandledrejection", "chunk-load", "resource", "vu
 CLIENT_LOG_FIELDS = ("message", "stack", "source", "line", "column", "page", "version", "info")
 
 
+class PortInUse(RuntimeError):
+    """已保存的本机端口绑不上：另一个实例在用，或被别的程序 / 系统保留端口占着。"""
+
+    def __init__(self, port, message):
+        super().__init__(message)
+        self.port = port
+
+
+def saved_port(port_file):
+    """读 desktop-port.txt：没有文件 → 0（随机分配）；内容无效 → None。"""
+    try:
+        text = Path(port_file).read_text("ascii").strip()
+    except FileNotFoundError:
+        return 0
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not text.isdigit() or not 1024 <= int(text) <= 65535:
+        return None
+    return int(text)
+
+
 def static_cache_control(rel):
     """Vite 的 /assets/ 文件名带内容哈希，可以长缓存；其余（index.html、vendor、图标）每次都要重新验证。
 
@@ -96,9 +117,12 @@ class DesktopService:
         # The Vue application also uses origin-scoped browser storage. Keep this
         # port across launches rather than silently losing that part of its state.
         port_file = self.lib.root / "desktop-port.txt"
-        port = int(port_file.read_text("ascii")) if port_file.is_file() else 0
-        if port and not 1024 <= port <= 65535:
-            raise ValueError("无效的桌面端口配置")
+        port, rewrite = saved_port(port_file), not port_file.exists()
+        if port is None:
+            # 文件空了或被写坏（例如首次写入时断电）：原端口已无从得知，只能换新端口，
+            # 否则以后每次启动都会直接报错退出。记一条日志说明原因。
+            self.log.write("server", "port-file-invalid", "warn")
+            port, rewrite = 0, True
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -106,9 +130,9 @@ class DesktopService:
             sock.bind(("127.0.0.1", port))
         except OSError as e:
             sock.close()
-            raise RuntimeError("应用正在运行，或已保存的本机端口被占用") from e
+            raise PortInUse(port, "应用正在运行，或已保存的本机端口被占用") from e
         port = sock.getsockname()[1]
-        if not port_file.exists():
+        if rewrite:
             port_file.write_text(str(port), "ascii")
         self.host = f"127.0.0.1:{port}"
         self.origin = "http://" + self.host
