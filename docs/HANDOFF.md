@@ -345,9 +345,9 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 - **未修（P3）**：见 `docs/bug-report-1.2.8.md` 末尾表格。
 
 
-## 1.2.8 五项桌面端改动（2026-11-26，未发版）
+## 1.2.9 五项桌面端改动（2026-11-26）
 
-**边界**：本次只改前端与文档，未改版本号、未打 tag、未发布；`library.sqlite3` 的 schema 与 `PRAGMA user_version`（仍为 1）未变，本地 `localStorage` 键名与存储对象形状、备份格式、模型协议、Harness、原生拖放桥、Word 转换器、安装器均未动；未新增 npm / Python 依赖。基线实跑：前端 637 项、后端 109 项（108 通过 + 1 项 Office 环境跳过）；完成后前端 **689/689**。
+**边界**：本次改动只涉及前端与文档（后端 Python 代码未改）；随后按发布流程统一提升版本号为 1.2.9 并发布。`library.sqlite3` 的 schema 与 `PRAGMA user_version`（仍为 1）未变，本地 `localStorage` 键名与存储对象形状、备份格式、模型协议、Harness、原生拖放桥、Word 转换器、安装器均未动；未新增 npm / Python 依赖。基线实跑：前端 637 项、后端 109 项（108 通过 + 1 项 Office 环境跳过）；完成后前端 **689/689**。
 
 ### ① 学习模式统一入库门禁
 
@@ -393,4 +393,13 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
   - 对话抽屉 13 项：「确定」在抽屉最下一行右侧；鼠标与键盘 Enter 各只收起一次、焦点回模型按钮、`aria-expanded=false`、`inert` 保留；不额外保存选择、不发消息；重开仍保持选中模型。
   - 真实入库 7 项：学习模式填完后经原生拖放事件入库、自动打开文档、草稿消费一次、重开显示「已记下这批 1 份」并恢复待填写。
   - 截图：`build/qa-shots/`（gate-01…05、layout-01/02/03、layout-04-dpr1.25/1.5、settings-01…04、chat-01）；`build/` 不入库。需求附件里的四张截图未随本次对话提供，视觉核对以本机真实 Qt 截图为准。
-- 未做 / 已知限制：考试导出旁路只能用假 client 单测（本机无 API Key，未生成真实试卷走「导出并加入文档库」）；真实资源管理器拖拽用同一 `kaizhi:native-drop` 事件模拟（Qt 端到端 smoke 已过）；「抽屉已打开后失去有效模型时确定置灰」只有源码级判定断言，未在 Qt 里构造该现场；未发版。
+- 未做 / 已知限制：考试导出旁路只能用假 client 单测（本机无 API Key，未生成真实试卷走「导出并加入文档库」）；真实资源管理器拖拽用同一 `kaizhi:native-drop` 事件模拟（Qt 端到端 smoke 已过）；「抽屉已打开后失去有效模型时确定置灰」只有源码级判定断言，未在 Qt 里构造该现场。
+
+### 1.2.9 发布（2026-11-26）
+
+- 版本：`backend/__init__.py` 的 `VERSION`、`frontend/package.json`、`frontend/package-lock.json` 统一为 **1.2.9**；tag **`v1.2.9`**。
+- 构建：`scripts\build-windows.ps1 -Test -Release`（前后端测试 → Harness / 前端构建 → PyInstaller 目录包 → 打包后 EXE 的 `--harness-smoke` / `--smoke` → NSIS 安装包 → `dist\release\`）。
+- 发布物：`YueqianXingqiong-1.2.9-setup.exe`、`YueqianXingqiong-1.2.9-portable.zip`、`SHA256SUMS.txt`；资产摘要以 GitHub Release 上的附件与 `SHA256SUMS.txt` 为准，应用内更新器按 GitHub Release 记录的 SHA-256 校验。
+- 发布说明：`docs/release-notes-1.2.9.md`，与 GitHub Release 正文一致。
+- 兼容：数据目录、SQLite `user_version`、`localStorage` 键、备份格式、模型协议不变；升级后首次启动按既有机制清理一次浏览器缓存。
+- 发布边界：本次未做代码签名（首次运行可能触发 SmartScreen）；真实模型端到端、原生另存为等人工场景沿用上文的剩余风险说明。
