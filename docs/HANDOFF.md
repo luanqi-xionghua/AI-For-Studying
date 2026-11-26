@@ -397,9 +397,16 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 
 ### 1.2.9 发布（2026-11-26）
 
-- 版本：`backend/__init__.py` 的 `VERSION`、`frontend/package.json`、`frontend/package-lock.json` 统一为 **1.2.9**；tag **`v1.2.9`**。
-- 构建：`scripts\build-windows.ps1 -Test -Release`（前后端测试 → Harness / 前端构建 → PyInstaller 目录包 → 打包后 EXE 的 `--harness-smoke` / `--smoke` → NSIS 安装包 → `dist\release\`）。
-- 发布物：`YueqianXingqiong-1.2.9-setup.exe`、`YueqianXingqiong-1.2.9-portable.zip`、`SHA256SUMS.txt`；资产摘要以 GitHub Release 上的附件与 `SHA256SUMS.txt` 为准，应用内更新器按 GitHub Release 记录的 SHA-256 校验。
+- 版本：`backend/__init__.py` 的 `VERSION`、`frontend/package.json`、`frontend/package-lock.json` 统一为 **1.2.9**；tag **`v1.2.9`**（轻量标签，指向发布提交 `8ce62fc`，其下为 `337c2bd` 的五项改动）。推送前已 rebase 到远端 `origin/main`（`9809d43`，含远端 5 个与该功能无关的提交），`main` 与 tag 均指向 `8ce62fc`。
+- 构建：`scripts\build-windows.ps1 -Test -Release` 退出码 0（前后端测试 → Harness / 前端构建 → PyInstaller 目录包 → 打包后 EXE 的 `--harness-smoke` / `--smoke` 均 passed → NSIS 安装包 → `dist\release\`）。构建日志 `build/release-1.2.9.log`（不入库）。
+- 发布物（`dist\release\`，已上传 GitHub Release）：
+  | 文件 | 大小（字节） | SHA-256 |
+  |---|---:|---|
+  | `YueqianXingqiong-1.2.9-setup.exe` | 196838961 | `dd5d71f66ad8906eb62d5636b785cac5ad41b3caa1462c1f77d938d0c18f5656` |
+  | `YueqianXingqiong-1.2.9-portable.zip` | 280831568 | `d424f1d24e1a564062de61af509092ef69d9911b29861b321cb67e674e9b5305` |
+  | `SHA256SUMS.txt` | 201 | `897d7defc97c2c749324258163a65d97a1f07d802f0b8821c54d1eace0cbdcc6` |
+- GitHub Release：<https://github.com/luanqi-xionghua/AI-For-Studying/releases/tag/v1.2.9>（非 draft、非 prerelease，title「阅迁星穹 1.2.9」，正文与 `docs/release-notes-1.2.9.md` 逐字一致）。GitHub API 记录的资产 `digest` 与上表 SHA-256 一致。
+- 更新器实测：用真实 GitHub API 模拟一台停在 1.2.8 的安装版客户端调用 `backend/services/updates.py` 的 `Updates.update_check()`，返回 `version=1.2.9`、`tag=v1.2.9`、setup 资产 `size`/`sha256` 与 `SHA256SUMS.txt` 一致、说明正文以「# 1.2.9」开头；便携版资产 URL 也按既有目录版规则被识别。未实际下载/安装（避免改动本机安装）。
 - 发布说明：`docs/release-notes-1.2.9.md`，与 GitHub Release 正文一致。
 - 兼容：数据目录、SQLite `user_version`、`localStorage` 键、备份格式、模型协议不变；升级后首次启动按既有机制清理一次浏览器缓存。
 - 发布边界：本次未做代码签名（首次运行可能触发 SmartScreen）；真实模型端到端、原生另存为等人工场景沿用上文的剩余风险说明。
