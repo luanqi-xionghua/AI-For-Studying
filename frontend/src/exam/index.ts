@@ -12,6 +12,7 @@ import { createExamStore } from './storage.ts'
 import { examClient } from './client.ts'
 
 import { createNotifyRelay } from './notify.ts'
+import { createLibraryExport } from './library-export.ts'
 
 const relay = createNotifyRelay()
 
@@ -37,6 +38,11 @@ function withVision<T extends { connection: { provider: string; model: string; v
   return { ...input, connection: { ...input.connection, vision: known?.vision !== false } }
 }
 
+/** 结果页「导出并加入文档库」也会新建文档库记录：套用与「加入文档」同一道学习模式门禁。 */
+const libraryExport = createLibraryExport({
+  exportMarkdown: (markdown, title) => examClient.exportMarkdown(markdown, title),
+})
+
 export const exam = createExamState({
   store,
   plan: async (input, signal, hooks) => (await import('../ai/exam.ts')).runPlanCall(withVision(input), signal, hooks),
@@ -50,7 +56,7 @@ export const exam = createExamState({
   // P2 会补记忆注入的用途枚举；这里先按同一条管道接上（'exam' 在 P2-01 加进 MemoryPurpose）。
   memory: async doc => (await import('../ai/memory-context.ts')).memoryInjection(doc, 'exam' as never),
   emit: event => emitLearningEvent(event),
-  exportMarkdown: (markdown, title) => examClient.exportMarkdown(markdown, title),
+  exportMarkdown: libraryExport,
   settings: () => loadAiSettings(),
   choiceStorage: typeof localStorage === 'undefined' ? null : localStorage,
   notify: text => relay.notify(text),

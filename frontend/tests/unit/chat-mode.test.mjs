@@ -1,5 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { chatTitle, boundChatHistory, wireMessages } from '../../src/chat/history.ts'
 import {
   CHAT_CHOICE_KEY, connectionScope, loadChatChoice, normalizeChatChoice, pickChatEffort, pickChatModel,
@@ -130,6 +131,22 @@ test('chat choice: pickers update only the chat choice', () => {
   assert.equal(modelPick.model, 'deepseek-flash')
   const effortPick = pickChatEffort(settings, presetPick, 'max')
   assert.equal(effortPick.effort, 'max')
+})
+
+test('chat choice: 抽屉的「确定」只收起，不额外保存一次选择', () => {
+  const composer = readFileSync(new URL('../../src/components/chat/ChatComposer.vue', import.meta.url), 'utf8')
+  const page = readFileSync(new URL('../../src/components/chat/ChatModePage.vue', import.meta.url), 'utf8')
+  // 选择仍在点预设/模型/强度时即时提交：父级唯一的保存入口是 @choice → applyChoice。
+  assert.match(composer, /function commit\(next: ChatModelChoice\) \{ emit\('choice', next\) \}/)
+  assert.match(page, /function applyChoice\(next: ChatModelChoice\) \{ saveChatChoice\(next\); choice\.value = next \}/)
+  assert.match(page, /@choice="applyChoice"/)
+  // 确定复用 closePicker；既不 emit choice 也不发消息，父级也没给它接 @confirm，所以确认不会多存一次。
+  const confirmBody = /function confirmPicker\(\) \{([\s\S]*?)\n\}/.exec(composer)?.[1]
+  assert.ok(confirmBody !== undefined, 'confirmPicker 未定义')
+  assert.match(confirmBody, /closePicker\(\)/)
+  assert.ok(!confirmBody.includes('emit('), '确定只收起抽屉，不二次提交')
+  const composerTag = page.slice(page.indexOf('<ChatComposer'), page.indexOf('>', page.indexOf('<ChatComposer')))
+  assert.ok(!composerTag.includes('@confirm'), 'ChatModePage 不应给 ChatComposer 接 @confirm')
 })
 
 test('chat choice: switching to a model without the stored effort falls back to its default', () => {

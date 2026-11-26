@@ -1949,6 +1949,8 @@ kbd {
   pointer-events: none;
   animation: zg-fade-in var(--dur-2) var(--ease-out) both;
 }
+.file-drop-overlay.is-blocked { border-color: color-mix(in srgb, var(--ink) 20%, transparent); background: color-mix(in srgb, var(--surface) 62%, transparent); }
+.file-drop-overlay.is-blocked .file-drop-target strong { color: var(--secondary); }
 .file-drop-target { display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--ink); padding: 36px 46px; background-color: var(--popup-glass); background-image: var(--popup-sheen); border: 1px solid var(--glass-outline); border-radius: var(--r-2xl); box-shadow: var(--shadow-3), var(--glass-edge); animation: zg-pop-in var(--dur-bounce) var(--spring-bouncy) both; }
 .file-drop-target strong { font-size: 22px; font-family: var(--font-display); }
 .file-drop-target span { font-size: 14px; }

@@ -98,10 +98,21 @@ test('exam surfaces 1.2.6: 模拟测试的模型抽屉右下角有「确定」�
   assert.match(picker, /\.drawer-footer\{justify-content:flex-end\}/)
   assert.match(picker, /<button v-if="confirmInPresets" type="button" class="drawer-confirm"/)
 
-  // 对话模式的输入栏不显示确定；阅读助手、翻译仍把确定放在预设行（默认）。
+  // 对话模式的输入栏复用抽屉右下角的「确定」；逐项检查接线，不依赖属性顺序。
   const composer = source('components/chat/ChatComposer.vue')
   const composerPicker = composer.slice(composer.indexOf('<ModelPicker'), composer.indexOf('/>', composer.indexOf('<ModelPicker')))
-  assert.ok(!composerPicker.includes('show-confirm'))
+  for (const wiring of ['show-confirm', 'confirm-placement="footer"', ':confirm-disabled="!canConfirm"', '@confirm="confirmPicker"']) {
+    assert.ok(composerPicker.includes(wiring), `对话模式抽屉缺少 ${wiring}`)
+  }
+  // 确定可点的判定：忙碌/禁用时不可点；模型非空且确实在当前候选里（自定义模型也纳入候选）。
+  assert.match(composer, /const canConfirm = computed\(\(\) => \{\s*const id = props\.resolved\?\.model\s*return !props\.busy && !props\.disabled && !!id\?\.trim\(\) && pickerModels\.value\.some\(m => m\.id === id\)\s*\}\)/)
+  // 确定只复用已有的关闭+回焦，不 emit choice、不发消息。
+  const confirmBody = /function confirmPicker\(\) \{([\s\S]*?)\n\}/.exec(composer)?.[1]
+  assert.ok(confirmBody !== undefined, 'confirmPicker 未定义')
+  assert.match(confirmBody, /closePicker\(\)/)
+  assert.ok(!confirmBody.includes('emit('), '确定只收起抽屉，不二次提交')
+  assert.match(composer, /:inert="!pickerOpen \|\| undefined"/)
+
   for (const file of ['components/assistant/AiPane.vue', 'components/translate/TranslatePane.vue']) {
     const text = source(file)
     assert.ok(text.includes('<ModelPicker v-if="drawerMounted" show-confirm'), file)

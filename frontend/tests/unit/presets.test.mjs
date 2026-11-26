@@ -1,6 +1,8 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadAiSettings, normalizeAiSettings, saveAiSettings, saveModelChoice, saveTranslationChoice, saveTaskPreset, translationSettings, explainSettings, presetFor, credentialSlot, hasPresets, MAX_PRESETS, PRESETS_VERSION, memorySettings } from '../../src/ai/settings.mjs'
+import { normalizeDocumentLimits } from '../../src/shared/document-limits.mjs'
+import { normalizeRequestLimits } from '../../src/shared/request-queue.mjs'
 import { presetTitle, presetDetail } from '../../src/ai/presets.ts'
 
 const KEY = 'paperdesk.ai.settings.v1'
@@ -137,4 +139,84 @@ test('retired Codex login is not a selectable preset; existing API presets survi
  const s=normalizeAiSettings({presets:[mine('old','codex','old'),mine('api','openai','test')],assistantPreset:'old',provider:'codex'});
  assert.deepEqual(s.presets.map(p=>p.id),['api']);assert.equal(s.assistantPreset,'api');assert.equal(s.provider,'openai');
  assert.equal(presetTitle(mine('c','custom','custom-model')),'自定义 · custom-model')
+})
+
+// ---- 预算默认值（计划 §3）：九项默认取字段上限；有效旧值保留；局部重置只在保存后落盘 ----
+const DOCUMENT_KEYS = ['images', 'pages', 'characters', 'calls', 'rounds', 'searchPages', 'searchMilliseconds']
+const DOCUMENT_DEFAULTS = { images: 10, pages: 40, characters: 120000, calls: 60, rounds: 8, searchPages: 500, searchMilliseconds: 30000 }
+const REQUEST_DEFAULTS = { concurrent: 4, queued: 16 }
+const OLD_DOCUMENT = { images: 5, pages: 8, characters: 24000, calls: 12, rounds: 3, searchPages: 120, searchMilliseconds: 10000 }
+const budgetPresets = () => [mine('p-a', 'deepseek', 'deepseek-flash'), mine('p-b', 'kimi', 'kimi-latest')]
+const withBudgets = (documentLimits, requestLimits) => ({ presetsVersion: PRESETS_VERSION, presets: budgetPresets(), assistantPreset: 'p-a', translationPreset: 'p-b', explainPreset: 'p-b', documentLimits, requestLimits })
+const pickDocument = limits => Object.fromEntries(DOCUMENT_KEYS.map(key => [key, limits[key]]))
+
+test('budgets: a fresh install starts at the new maxima and saving then reloading keeps them', async () => {
+  const fresh = loadAiSettings()
+  assert.deepEqual(pickDocument(fresh.documentLimits), DOCUMENT_DEFAULTS)
+  assert.deepEqual(fresh.requestLimits, REQUEST_DEFAULTS)
+  assert.equal(store.has(KEY), false, '加载不写存储')
+  await saveAiSettings(fresh)
+  const reopened = loadAiSettings()
+  assert.deepEqual(pickDocument(reopened.documentLimits), DOCUMENT_DEFAULTS)
+  assert.deepEqual(reopened.requestLimits, REQUEST_DEFAULTS)
+  assert.equal(store.has(KEY), true)
+})
+
+test('budgets: an old 7+2 configuration keeps every value through save and reload, instead of being maxed out', async () => {
+  write(withBudgets({ ...OLD_DOCUMENT }, { concurrent: 1, queued: 2 }))
+  const loaded = loadAiSettings()
+  assert.deepEqual(pickDocument(loaded.documentLimits), OLD_DOCUMENT)
+  assert.deepEqual(loaded.requestLimits, { concurrent: 1, queued: 2 })
+  await saveAiSettings(loaded)
+  const reopened = loadAiSettings()
+  assert.deepEqual(pickDocument(reopened.documentLimits), OLD_DOCUMENT)
+  assert.deepEqual(reopened.requestLimits, { concurrent: 1, queued: 2 })
+  // 离步进格点的有效旧值也保留。
+  write(withBudgets({ ...OLD_DOCUMENT, characters: 24567 }, { concurrent: 1, queued: 0 }))
+  const offGrid = loadAiSettings()
+  assert.equal(offGrid.documentLimits.characters, 24567)
+  assert.equal(offGrid.requestLimits.queued, 0)
+  await saveAiSettings(offGrid)
+  assert.equal(loadAiSettings().documentLimits.characters, 24567)
+  assert.equal(loadAiSettings().requestLimits.queued, 0)
+})
+
+test('budgets: only the missing keys are filled from the new defaults', () => {
+  write({ presetsVersion: PRESETS_VERSION, presets: budgetPresets(), assistantPreset: 'p-a', documentLimits: { images: 3, searchMilliseconds: 10025 }, requestLimits: { concurrent: 1 } })
+  const loaded = loadAiSettings()
+  assert.deepEqual(pickDocument(loaded.documentLimits), { ...DOCUMENT_DEFAULTS, images: 3, searchMilliseconds: 10025 })
+  assert.deepEqual(loaded.requestLimits, { concurrent: 1, queued: 16 })
+})
+
+test('budgets: resetting only one group and saving keeps the other group and the model presets', async () => {
+  write(withBudgets({ ...OLD_DOCUMENT, images: 2 }, { concurrent: 1, queued: 2 }))
+  // 只点「多文件提问」的恢复本组默认，再保存。
+  const onlyRequest = loadAiSettings()
+  onlyRequest.requestLimits = normalizeRequestLimits()
+  await saveAiSettings(onlyRequest)
+  let after = loadAiSettings()
+  assert.deepEqual(after.requestLimits, REQUEST_DEFAULTS)
+  assert.deepEqual(pickDocument(after.documentLimits), { ...OLD_DOCUMENT, images: 2 })
+  assert.deepEqual(after.presets.map(item => item.id), ['p-a', 'p-b'])
+  // 只点「阅读助手每次对话」的恢复本组默认，再保存。
+  after.documentLimits = normalizeDocumentLimits()
+  await saveAiSettings(after)
+  const reopened = loadAiSettings()
+  assert.deepEqual(pickDocument(reopened.documentLimits), DOCUMENT_DEFAULTS)
+  assert.deepEqual(reopened.requestLimits, REQUEST_DEFAULTS)
+  assert.deepEqual(reopened.presets.map(item => item.id), ['p-a', 'p-b'])
+  assert.deepEqual([reopened.assistantPreset, reopened.translationPreset], ['p-a', 'p-b'])
+})
+
+test('budgets: a local reset abandoned before saving leaves storage untouched', () => {
+  write(withBudgets({ ...OLD_DOCUMENT }, { concurrent: 1, queued: 2 }))
+  const before = store.get(KEY)
+  // 「恢复本组默认」只改内存草稿；不点保存就关闭设置，存储应保持原值。
+  const draft = loadAiSettings()
+  draft.documentLimits = normalizeDocumentLimits()
+  draft.requestLimits = normalizeRequestLimits()
+  assert.equal(store.get(KEY), before)
+  const reopened = loadAiSettings()
+  assert.deepEqual(pickDocument(reopened.documentLimits), OLD_DOCUMENT)
+  assert.deepEqual(reopened.requestLimits, { concurrent: 1, queued: 2 })
 })

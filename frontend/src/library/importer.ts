@@ -3,7 +3,7 @@
  * 每份的状态、Word 转换走到哪一步、失败原因都记在这里，「加入文档」窗口关了再开也还在。
  * 真正的导入函数由调用方传进来，这个模块不碰桌面接口，单元测试可以直接用。
  */
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 import { DOCUMENT_PATTERN, WORD_PATTERN } from './kinds.ts'
 import type { Doc } from '../sdk/types.ts'
 import { LIMITS, type OnboardingAnswers, type SelfLevel } from '../memory/types.ts'
@@ -41,19 +41,47 @@ export const learning = reactive({
   /** 最近一批记下了几份；0 = 不显示「已记下」那行。 */
   recorded: 0,
 })
+/** 学习模式里缺的第一项（只看内存里的草稿，不做 UI 副作用）；开关关着或都填了返回 null。 */
+export type LearningField = 'docLevel' | 'fieldLevel' | 'goal'
+function answered(level: number): boolean { return Number.isInteger(level) && level >= 1 && level <= 4 }
+export function firstMissingLearningField(): LearningField | null {
+  if (!learning.enabled) return null
+  if (!answered(learning.docLevel)) return 'docLevel'
+  if (!answered(learning.fieldLevel)) return 'fieldLevel'
+  if (!learning.goal.trim()) return 'goal'
+  return null
+}
 /** 学习模式关着，或开着且两题都答了、学习目标也写了。 */
 export function learningReady(): boolean {
-  return !learning.enabled || (learning.docLevel >= 1 && learning.fieldLevel >= 1 && Boolean(learning.goal.trim()))
+  return firstMissingLearningField() === null
 }
 /** 开着且答完 → 返回一份答案（source: 'import'，answeredAt: now）；否则 null。不改状态。 */
 export function currentLearningAnswers(now = Date.now()): OnboardingAnswers | null {
-  const goal = learning.goal.trim().slice(0, LIMITS.goal)
-  if (!learning.enabled || !learning.docLevel || !learning.fieldLevel || !goal) return null
+  if (!learning.enabled || firstMissingLearningField()) return null
   return {
-    docLevel: learning.docLevel, fieldLevel: learning.fieldLevel,
-    goal, preference: learning.preference.trim().slice(0, LIMITS.preference), note: learning.note.trim().slice(0, LIMITS.note),
+    docLevel: learning.docLevel as SelfLevel, fieldLevel: learning.fieldLevel as SelfLevel,
+    goal: learning.goal.trim().slice(0, LIMITS.goal), preference: learning.preference.trim().slice(0, LIMITS.preference), note: learning.note.trim().slice(0, LIMITS.note),
     answeredAt: now, source: 'import',
   }
+}
+/** 草稿修订号：开关和五个答案值同步一变就加一；用来判断放行凭据是否还对得上当前草稿。不持久化。 */
+let draftRevision = 0
+watch(() => [learning.enabled, learning.docLevel, learning.fieldLevel, learning.goal, learning.preference, learning.note] as const,
+  () => { draftRevision++ }, { flush: 'sync' })
+
+/** 所有「新建库文档」的操作都走这里：学习模式没填完就拒绝，并发出一次需要展示校验的通知。 */
+export type ImportIntent = 'library' | 'exam-export'
+export type Admission = { ok: false } | { ok: true; answers: OnboardingAnswers | null; revision: number }
+export const IMPORT_INCOMPLETE_MESSAGE = '学习模式已开启：请先完成两道自评并填写学习目标，再加入文档。'
+/** seq 每次被拒 +1；App 只监听这个信号决定要不要打开表单并提示。intent 说明是哪个入口被拒。 */
+export const importFeedback = reactive({ seq: 0, intent: 'library' as ImportIntent })
+export function admitImport(intent: ImportIntent): Admission {
+  if (firstMissingLearningField()) {
+    importFeedback.intent = intent
+    importFeedback.seq++
+    return { ok: false }
+  }
+  return { ok: true, answers: currentLearningAnswers(), revision: draftRevision }
 }
 export function resetLearningAnswers() {
   learning.docLevel = 0
@@ -67,22 +95,39 @@ export function markLearningRecorded(count: number) {
   resetLearningAnswers()
   learning.recorded = count
 }
+/** 一批被接纳时只用一次草稿：有带快照的新条目，且草稿在放行后没再改过。 */
+export function finishImportAdmission(gate: Extract<Admission, { ok: true }>, n: number) {
+  if (n > 0 && gate.answers && gate.revision === draftRevision) markLearningRecorded(n)
+}
 export function setLearningEnabled(value: boolean) {
   learning.enabled = value
-  if (!value) resetLearningAnswers()
+  // 关掉学习模式只停用这组回答：清掉提示状态，草稿留着，再打开还能接着改。
+  if (!value) learning.recorded = 0
   try { globalThis.localStorage?.setItem(LEARNING_KEY, value ? '1' : '0') } catch { /* 存不下就只在这次有效 */ }
 }
 
 export function fileName(path: string) { return path.split(/[\\/]/).pop() || path }
 
-/** 排进队列，返回这次新排进去的条目。不支持的文件直接记成失败并写明原因；正在排队的同一个文件不重复排。 */
-export function enqueue(paths: string[], onboarding?: OnboardingAnswers | null): ImportItem[] {
+/**
+ * 排进队列，返回这次新排进去的条目。学习模式没填完时整批拒绝：不生成任何条目（连「不支持」的错误行也没有）、
+ * 不发记忆事件；被接纳时这一批的每份受支持文档都带一份同一时刻的答案快照。正在排队的同一个文件不重复排。
+ */
+export function enqueue(paths: string[]): ImportItem[] {
+  const unique = [...new Set(paths.filter(Boolean))]
+  if (!unique.length) return []
+  const gate = admitImport('library')
+  if (!gate.ok) return []
+  const added = appendAccepted(unique, gate.answers)
+  finishImportAdmission(gate, added.filter(item => item.onboarding).length)
+  return added
+}
+function appendAccepted(paths: string[], answers: OnboardingAnswers | null): ImportItem[] {
   const added: ImportItem[] = []
-  for (const path of new Set(paths.filter(Boolean))) {
+  for (const path of paths) {
     if (importer.items.some(item => item.path === path && (item.status === 'waiting' || item.status === 'working'))) continue
     const supported = DOCUMENT_PATTERN.test(path)
     const entry: ImportItem = { id: crypto.randomUUID(), path, name: fileName(path), word: WORD_PATTERN.test(path), status: supported ? 'waiting' : 'error', ...(supported ? {} : { error: UNSUPPORTED }) }
-    if (supported && onboarding) entry.onboarding = { ...onboarding }
+    if (supported && answers) entry.onboarding = { ...answers }
     importer.items.push(entry)
     added.push(entry)
   }

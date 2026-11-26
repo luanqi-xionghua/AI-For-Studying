@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTextSearchIndex, matchText, matchPdfItems, scanPdfMatches } from '../../src/reader/search.mjs';
+import { createDocumentSession } from '../../src/document/session.mjs';
 
 test('plain document search preserves original offsets through case, whitespace and PDF ligatures', () => {
   const source = 'The ﬁle\n  ＰＤＦ and 😀pdf';
@@ -76,4 +77,33 @@ test('paused tab searches resume after the last fully scanned page', async () =>
   const result = await scanPdfMatches(pdf, 'alpha', { startPage: 3 });
   assert.deepEqual(visited, [3, 4]);
   assert.equal(result.total, 2);
+});
+
+test('PDF sessions honour a smaller searchPages budget and continue from next_page', async () => {
+  // 14 页的假 PDF；把单次搜索扫描页数显式设为字段下限 10，验证覆盖不全时返回 next_page、续搜后覆盖全文。
+  const pdf = {
+    numPages: 14,
+    getPageLabels: async () => null,
+    getOutline: async () => null,
+    getPage: async number => ({
+      getViewport: () => ({ width: 600, height: 900 }),
+      getTextContent: async () => ({ items: [{ str: `page-${number} alpha`, transform: [1, 0, 0, 1, 20, 800], width: 160, height: 10 }] }),
+    }),
+  };
+  const session = await createDocumentSession({ pdf, page: 1 }, { title: 'long.pdf' }, { searchPages: 10 }, true, () => {});
+  try {
+    assert.equal(session.seed.limits.searchPages, 10);
+    assert.equal(session.seed.limits.searchMilliseconds, 30000);
+    const first = await session.document.tool('pdf_search', { query: 'alpha', start_page: null, end_page: null, next_page: null });
+    assert.equal(first.complete, false);
+    assert.equal(first.searchedPages, 6);
+    assert.deepEqual(first.scannedRange, [1, 6]);
+    assert.equal(first.next_page, 7);
+    assert.ok(first.evidence.length > 0);
+    const second = await session.document.tool('pdf_search', { query: 'alpha', start_page: null, end_page: null, next_page: first.next_page });
+    assert.equal(second.complete, true);
+    assert.equal(second.next_page, null);
+    assert.equal(second.searchedPages, 14);
+    assert.ok(second.evidence.every(item => typeof item.sourceId === 'string'));
+  } finally { session.close(); }
 });

@@ -1,8 +1,13 @@
 // Scheduling metadata only: prompts, credentials and pixels never enter this queue.
+/**
+ * @typedef {{ key: string, label: string, min: number, max: number, default: number }} RequestLimitField
+ */
+/** @type {readonly RequestLimitField[]} */
 export const REQUEST_LIMIT_FIELDS = Object.freeze([
-  { key: 'concurrent', label: '同时运行的提问 / 全部窗口', min: 1, max: 4, default: 2 },
-  { key: 'queued', label: '最多等待的提问 / 全部窗口', min: 0, max: 16, default: 8 },
+  { key: 'concurrent', label: '同时运行的提问 / 全部窗口', min: 1, max: 4, default: 4 },
+  { key: 'queued', label: '最多等待的提问 / 全部窗口', min: 0, max: 16, default: 16 },
 ]);
+/** queued: 0 是有效配置，不能用 || 兜底成默认值。 */
 export function normalizeRequestLimits(value) {
   return Object.fromEntries(REQUEST_LIMIT_FIELDS.map(field => [field.key,
     typeof value?.[field.key] === 'number' && Number.isFinite(value[field.key])

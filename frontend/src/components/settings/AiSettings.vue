@@ -4,9 +4,10 @@ import { PROVIDERS, PROTOCOLS, getProvider } from '../../ai/providers.mjs'
 import { loadAiSettings, credentialSlot, saveAiSettings, supportsFast, newPresetId, presetConnection, MAX_PRESETS, PRESET_NAME_LIMIT, memoryEffortOptions, memoryModelOf, recommendedMemoryEffort, isHighMemoryEffort } from '../../ai/settings.mjs'
 import { listModels, testConnection } from '../../ai/connection.mjs'
 import { presetTitle, presetDetail, EFFORT_NAMES, type Preset } from '../../ai/presets'
-import { DOCUMENT_LIMIT_FIELDS } from '../../shared/document-limits.mjs'
+import { DOCUMENT_LIMIT_FIELDS, normalizeDocumentLimits } from '../../shared/document-limits.mjs'
 import { apiOrigin } from '../../shared/provider-config.mjs'
-import { normalizeRequestLimits } from '../../shared/request-queue.mjs'
+import { REQUEST_LIMIT_FIELDS, normalizeRequestLimits } from '../../shared/request-queue.mjs'
+import { displayDraft, displayStep, parseDraft } from '../../settings/limit-input'
 
 withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 const emit = defineEmits<{ saved: [value: any]; close: [] }>()
@@ -17,10 +18,60 @@ const error = ref(false)
 const saving = ref(false)
 const edited = ref(false)
 function markEdited() { edited.value = true }
-const requestFields = [
-  { key: 'concurrent', label: '同时运行的提问', min: 1, max: 4 },
-  { key: 'queued', label: '最多等待的提问', min: 0, max: 16 },
-]
+// 请求预算的范围与默认值来自字段表；这里只映射界面上的短标签，不再手写数字。
+const REQUEST_LABELS: Record<string, string> = { concurrent: '同时运行的提问', queued: '最多等待的提问' }
+const requestFields = REQUEST_LIMIT_FIELDS.map(field => ({ key: field.key, label: REQUEST_LABELS[field.key] || field.label, min: field.min, max: field.max, default: field.default }))
+// 阅读预算的输入草稿：搜索时间显示秒，存储仍用毫秒；编辑中允许空串，保存时才解析。
+const docFields = DOCUMENT_LIMIT_FIELDS
+const docDraft = reactive<Record<string, string>>(displayDraft(DOCUMENT_LIMIT_FIELDS, settings.value.documentLimits))
+const invalid = reactive<Record<string, string>>({})
+const docDetails = ref<HTMLDetailsElement>()
+const requestDetails = ref<HTMLDetailsElement>()
+function refreshDocDraft(limits: unknown) {
+  for (const [key, value] of Object.entries(displayDraft(DOCUMENT_LIMIT_FIELDS, limits as Record<string, number>))) { docDraft[key] = value; delete invalid[key] }
+}
+function editDoc(key: string, event: Event) {
+  docDraft[key] = (event.target as HTMLInputElement).value
+  delete invalid[key]
+}
+function clearInvalid(key: string) { delete invalid[key] }
+/** 不合法的字段：展开所在分组、标 aria-invalid，并在下一次 DOM 更新后把焦点放回输入框。 */
+function markInvalid(group: 'document' | 'request', key: string, message: string) {
+  const details = group === 'document' ? docDetails.value : requestDetails.value
+  if (details) details.open = true
+  invalid[key] = message
+  void nextTick(() => details?.querySelector<HTMLInputElement>(`[data-limit-key="${key}"]`)?.focus())
+}
+/** 底部状态说明或单位说明（doc-limit-help）挂到这个输入上；有错时状态说明排在后面。 */
+function describedBy(key: string, search = false): string | undefined {
+  const ids = [...(search ? ['doc-limit-help'] : []), ...(invalid[key] ? ['ai-settings-status'] : [])]
+  return ids.length ? ids.join(' ') : undefined
+}
+/** 先解析全部阅读预算到临时对象；任一不合法就阻止整次保存。 */
+function readDocumentLimits(): Record<string, number> {
+  const parsed = parseDraft(DOCUMENT_LIMIT_FIELDS, docDraft)
+  if (!parsed.ok) { markInvalid('document', parsed.key, parsed.message); throw new Error(parsed.message) }
+  return parsed.values
+}
+/** 请求预算沿用整数输入框，保存前同样逐个检查。 */
+function readRequestLimits(): Record<string, number> {
+  for (const field of requestFields) {
+    const value = settings.value.requestLimits?.[field.key]
+    if (!Number.isInteger(value) || value < field.min || value > field.max) {
+      const message = `${field.label}须为 ${field.min}–${field.max} 的整数。`
+      markInvalid('request', field.key, message)
+      throw new Error(message)
+    }
+  }
+  return { ...settings.value.requestLimits }
+}
+/** 本组「恢复本组默认」：只重建这一组并标记为已编辑，点「保存」才落盘，「关闭」不保存。 */
+function resetBudget(group: 'document' | 'request') {
+  if (group === 'document') refreshDocDraft(normalizeDocumentLimits())
+  else settings.value.requestLimits = normalizeRequestLimits()
+  for (const key of Object.keys(invalid)) if (group === 'document' ? key in docDraft : requestFields.some(field => field.key === key)) delete invalid[key]
+  markEdited()
+}
 // 四处用途各选一个预设；记忆管理另外还选思考强度。
 const TASKS = [
   { field: 'assistantPreset', key: 'assistant', label: '阅读助手', aria: '阅读助手用的预设' },
@@ -301,11 +352,12 @@ async function save() {
       // 有问题的预设打开它的窗口，提示里写明是哪一个。
       try { check(preset, presets.value.length > 1) } catch (cause: any) { editPreset(preset.id); status.value = cause?.message || String(cause); error.value = true; return null }
     }
-    for (const field of requestFields) {
-      const value = settings.value.requestLimits[field.key]
-      if (!Number.isInteger(value) || value < field.min || value > field.max) throw new Error(`${field.label}须为 ${field.min}–${field.max} 的整数。`)
-    }
-    settings.value.requestLimits = normalizeRequestLimits(settings.value.requestLimits)
+    // 先解析全部预算草稿到临时对象；任一不合法就整次不保存（在 read* 里展开分组、标记并聚焦）。
+    const documentLimits = readDocumentLimits()
+    const requestLimits = readRequestLimits()
+    settings.value.documentLimits = normalizeDocumentLimits(documentLimits)
+    settings.value.requestLimits = normalizeRequestLimits(requestLimits)
+    for (const key of Object.keys(invalid)) delete invalid[key]
     // 只写改动过的密钥；「记住密钥」改了的话，已读到的每把密钥都按新的选择重新写入或清除。
     const rememberChanged = Boolean(settings.value.rememberKey) !== rememberedAtLoad
     const changedKeys = [...new Map(presets.value.map(p=>[credentialSlot(p),p])).entries()]
@@ -317,6 +369,7 @@ async function save() {
     for (const slot of Object.keys(keyDrafts)) delete keyDrafts[slot]
     rememberedAtLoad = Boolean(saved.rememberKey)
     settings.value = saved
+    refreshDocDraft(saved.documentLimits)
     status.value = ''
     edited.value = false
     emit('saved', saved)
@@ -361,9 +414,18 @@ defineExpose({ save, hasChanges: () => edited.value })
     </template>
     <p v-else class="settings-note">新建预设后，在这里给阅读助手、翻译、快速解释和记忆管理各选一个；第一个预设会先用在这四处，记忆管理的思考强度默认取推荐的低档。</p>
 
-    <details class="limit-settings"><summary>每题阅读预算</summary><label v-for="field in DOCUMENT_LIMIT_FIELDS" :key="field.key">{{ field.label }}<input v-model.number="settings.documentLimits[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step || 1" /></label></details>
-    <details class="limit-settings"><summary>多文件提问</summary><label v-for="field in requestFields" :key="field.key">{{ field.label }}<input v-model.number="settings.requestLimits[field.key]" type="number" :min="field.min" :max="field.max" :aria-label="field.label" /></label><p class="settings-note">切换标签或收起助手后继续回答；关闭文件标签会停止该文件的提问。</p></details>
-    <p v-if="status && !form" class="settings-status" :class="{ error }" role="status">{{ status }}</p>
+    <details ref="docDetails" class="limit-settings"><summary>阅读助手每次对话</summary>
+      <p id="doc-limit-help" class="settings-note">阅读助手每次提问使用这组预算。搜索页数和时间按单次搜索计算。模拟测试的规划和出题使用独立预算。</p>
+      <label v-for="field in docFields" :key="field.key">{{ field.label }}<input type="number" :value="docDraft[field.key]" :aria-label="field.label" :min="field.min / (field.scale ?? 1)" :max="field.max / (field.scale ?? 1)" :step="displayStep(field, docDraft[field.key])" :data-limit-key="field.key" :aria-invalid="invalid[field.key] ? 'true' : undefined" :aria-describedby="describedBy(field.key, field.key === 'searchPages' || field.key === 'searchMilliseconds')" @input="editDoc(field.key, $event)" /></label>
+      <p class="settings-note">对话模式附多份文档时，读取预算也会按本数分配。</p>
+      <button type="button" class="text-button" @click="resetBudget('document')">恢复本组默认</button>
+    </details>
+    <details ref="requestDetails" class="limit-settings"><summary>多文件提问</summary>
+      <label v-for="field in requestFields" :key="field.key">{{ field.label }}<input v-model.number="settings.requestLimits[field.key]" type="number" :min="field.min" :max="field.max" :step="1" :aria-label="field.label" :data-limit-key="field.key" :aria-invalid="invalid[field.key] ? 'true' : undefined" :aria-describedby="describedBy(field.key)" @input="clearInvalid(field.key)" /></label>
+      <p class="settings-note">切换标签或收起助手后继续回答；关闭文件标签会停止该文件的提问。</p>
+      <button type="button" class="text-button" @click="resetBudget('request')">恢复本组默认</button>
+    </details>
+    <p v-if="status && !form" id="ai-settings-status" class="settings-status" :class="{ error }" role="status">{{ status }}</p>
     <button v-if="!embedded" class="primary-button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button>
 
     <!-- 预设窗口：浏览器原生的模态对话框，盖在设置窗口之上；里面的改动不算进设置页，点「添加 / 确定」才算。 -->

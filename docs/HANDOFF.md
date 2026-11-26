@@ -343,3 +343,54 @@ SQLite `settings` 表：`memory.v1.index`、`memory.v1.global`、`memory.v1.doc.
 - **调试**：日志看 `%APPDATA%\com.phydog.reading.python\logs\app.log`；CDP 用 `QTWEBENGINE_REMOTE_DEBUGGING=9222`；模拟无显卡加速用 `QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu --disable-gpu-compositing"`。
 - **测试基线**：前端 637 项，后端 109 项（skipped 1）。schema 与 `user_version`（1）未变，无新依赖。
 - **未修（P3）**：见 `docs/bug-report-1.2.8.md` 末尾表格。
+
+
+## 1.2.8 五项桌面端改动（2026-11-26，未发版）
+
+**边界**：本次只改前端与文档，未改版本号、未打 tag、未发布；`library.sqlite3` 的 schema 与 `PRAGMA user_version`（仍为 1）未变，本地 `localStorage` 键名与存储对象形状、备份格式、模型协议、Harness、原生拖放桥、Word 转换器、安装器均未动；未新增 npm / Python 依赖。基线实跑：前端 637 项、后端 109 项（108 通过 + 1 项 Office 环境跳过）；完成后前端 **689/689**。
+
+### ① 学习模式统一入库门禁
+
+- `library/importer.ts`：新增 `firstMissingLearningField()`、`admitImport(intent)` / `finishImportAdmission(gate, n)`、`importFeedback`（`seq/intent`）、`IMPORT_INCOMPLETE_MESSAGE`、模块内 `draftRevision`（开关 + 五个答案值的同步修订号，不持久化）。`learningReady()` / `currentLearningAnswers()` 与门禁共用同一判断（两自评必须为整数 1–4）。`enqueue(paths)` 收紧为单参：入口先过门禁，被拒时整批零写入（连「不支持」错误行也不生成、不发记忆事件）；受支持的新条目各拷贝一份同一批快照；草稿消费移入 `enqueue` 成功分支（`n > 0` 且修订号未变才消费一次）。关学习模式不再清草稿，只清提示状态。
+- 新增 `library/import-flow.ts`：`chooseLibraryPaths(pick)` 先 `admitImport('library')` 再调 `pick()`，返回去空路径；Node 单测可注入 spy 断言「被拒时选择框一次都没打开」。
+- `App.vue`：监听 `importFeedback.seq`（`flush:'sync'`）→ 设 `importIntent`/`validationTicket`/递增 `interactionEpoch`，开窗；若设置有设置 / 删除确认模态挡着，只 `notify` 提示并留 `importPending`，等模态关闭再呈现表单（不抢焦点、不强关）。`addPaths` 去掉 `fromDialog` 与手传答案；600 ms 自动收尾前后核对 `runId` / `interactionEpoch` / `validationTicket` / `disposed`，不匹配只完成刷新、不关窗不抢焦点；拖放遮罩待填写时加 `.is-blocked` 并显示「先填写学习模式必填项」；`closeImport()` 与懒加载失败卡片 dismiss 走同一清理函数，清本次 ticket 但不归零全局 `seq`。
+- `components/library/ImportDialog.vue`：新增 `validationTicket` / `intent` props（默认 0 / `library`）与 `interact` 事件；常驻空 `role="status" aria-live="polite" aria-atomic="true"` 提示位；`onMounted` 读初始 ticket，已挂载时 `watch(ticket, …, {flush:'post'})`；被拒时先清空再写统一提示、下一帧聚焦缺失项，重复尝试仍重新聚焦；`intent='exam-export'` 隐藏选文件入口、显示「返回试卷」和返回结果页说明；卸载不再 `resetLearningAnswers()`。
+- `components/memory/OnboardingFields.vue`：新增可选 `invalidField` / `validationId`，`aria-invalid` / `aria-describedby` 只接当前缺失的 radio 组或目标 textarea；`focusFirstUnanswered()` 优先用 `invalidField`，记忆编辑页不传时保持原顺序（程序写入越界自评也能聚焦正确组）。
+- 新增 `exam/library-export.ts` + `exam/index.ts` 装配：`createLibraryExport` 在 `examClient.exportMarkdown` 之前 `admitImport('exam-export')`；被拒返回 `{cancelled:true}`，不弹另存为、不写文件、不入库、不发记忆事件（状态机现有 `finally` 收起 exporting）。成功才用新 `document.id` 发一条 `onboarding` 学习事件并 `finishImportAdmission(grant, 1)`；不再次 `enqueue`，导出 JSON/SQLite 协议未变。
+- 测试：重写 `import-learning`（含门禁顺序、伪传旧答案、整批拒绝零写入、同批快照 + 只消费一次、关开关保草稿、`chooseLibraryPaths` spy）；新增 `import-surfaces`（App/弹窗/遮罩/适配器接线 + 假 client 的考试导出拒绝/取消/成功/异步改草稿）；`import-queue` 保持。
+
+### ② 「加入文档」窗口加宽
+
+- 只改 `ImportDialog.vue` scoped CSS：`width: min(688px, calc(100vw - 24px))`、`max-width:none`、`max-height: min(760px, calc(100vh - 32px))`；标题固定，只有 `.import-body` 滚动（`scrollbar-gutter: stable`）；学习区选项 4 列 →（≤719px）2 列 →（≤419px）1 列；textarea 全宽、`.import-row` 极窄时换行；底部动作 2 / 1 列；配合 `:deep()` 只影响本弹窗。公共 `.confirm-dialog`（380px）与两处记忆表单未改，未用 `overflow-x:hidden` 掩盖。
+
+### ③ 九项预算默认取上限 + 秒/毫秒
+
+- `shared/document-limits.mjs` 七项默认改上限（images 10 / pages 40 / characters 120000 / calls 60 / rounds 8 / searchPages 500 / searchMilliseconds 30000）；`shared/request-queue.mjs` 改 concurrent 4 / queued 16。`.min/.max/.step/.scale` 与 normalize 逻辑不变：缺键或非有限 number 才取新默认，有限旧值只夹取、不会被写成上限；`queued:0` 仍有效；`seedCharacters:8000`、`pageBatch:3` 等非这九项的常量未动。补 JSDoc typedef 供 strict 类型检查。
+- 新增 `settings/limit-input.ts`：`displayValue` / `displayStep` / `parseLimit` / `displayDraft` / `parseDraft`。秒/毫秒只在显示边界换算，解析用十进制整数字符串构造毫秒（`10.025` 秒 ↔ `10025` 毫秒无损）；`characters` 离格有效值（如 24567）自动 `step=1`。
+- `components/settings/AiSettings.vue`：`requestFields` 从 `REQUEST_LIMIT_FIELDS` 派生（只映射界面短标签）；阅读组输入改为显示草稿（搜索时间显示秒，min 1 / max 30 / step 0.001），编辑中允许空串、无 watcher 归一化；`save()` 改为先 parse 全部 → normalize → `saveAiSettings` → 用返回值刷新草稿；任一预算不合法则整次不保存，展开对应 `<details>`、`aria-invalid`、聚焦出错的 `[data-limit-key]`；两组各加 `type="button"`「恢复本组默认」→ `resetBudget('document'|'request')`，只改内存 + `markEdited()`，点保存才落盘，关闭不保存；预设 / 密钥 / 脏标志逻辑未动。
+- **模拟测试预算路径未改**：`ai/exam.ts` 的 `examDocLimits` 与私有默认、`exam/state.ts` 规划和各批次的 `limits: null`、PDF / Markdown 会话现有预算归一化全部原样；`ai-document` / `exam-prompts` 回归固定这些值。
+- 测试：新增 `limit-input`；`presets` / `chat-attachments` / `request-scheduler` / `ai-document` / `document-search` 同步更新（保留显式小配额、旧值、离格值用例，不删断言）。
+
+### ④ 术语
+
+- `document-limits.mjs` 七个标签统一为「/ 每次对话」，两个搜索项注明「按单次搜索」；`AiSettings.vue` 折叠标题改为「阅读助手每次对话」，并说明「阅读助手每次提问使用这组预算。搜索页数和时间按单次搜索计算。模拟测试的规划和出题使用独立预算。」；`USAGE.md` 同步。真正表示题目的文案（试卷、每题来源等）未改。
+
+### ⑤ 对话模式模型抽屉「确定」
+
+- `components/chat/ChatComposer.vue`：新增 `canConfirm`（非忙碌/禁用、模型非空且在 `pickerModels` 候选中）与 `confirmPicker()`；只给 `ModelPicker` 传 `show-confirm`、`confirm-placement="footer"`、`:confirm-disabled="!canConfirm"`、`@confirm="confirmPicker"`。确认只复用已有 `closePicker()`（收起 + 下一帧回焦），不 `emit('choice')`、不发消息、不写全局预设；Esc/点外部/管理按钮行为不变；共享 `ModelPicker.vue`、`AiPane.vue`、`TranslatePane.vue`、`ExamSetupPanel.vue` 未改。
+- 测试：`exam-surfaces` 把「对话抽屉不能显示确定」的反向断言改为正向接线断言（保留考试 footer、阅读助手/翻译默认位置断言）；`chat-mode` 增「确定只收起、不额外保存」的接线断言。
+
+### 验证（2026-11-26 本机实跑）
+
+- 前端单测：`node --test 'frontend/tests/unit/*.test.mjs'` → **689 tests / 689 pass / 0 fail**（基线 637；新增 52 项：import-surfaces 15、limit-input 15、import-learning 与既有文件等价更新、presets +5、request-scheduler +3、ai-document +3、document-search +1、chat-mode +1）。
+- 构建：`npm.cmd --prefix frontend run build`（`prepare-assets` + `vue-tsc --noEmit` + Vite）通过。
+- 后端：`.venv\Scripts\python.exe -m unittest discover -s backend/tests -t .` → **Ran 109 tests，OK (skipped=1)**；`python backend\main.py --smoke`、`--harness-smoke` 退出码 0（冒烟使用临时数据目录）。
+- 测试库（临时 `--data-dir`）：`PRAGMA user_version = 1`；表/索引集合与基线一致；真实拖入一份 PDF 后 `documents` 1 条、`settings` 3 条，学习模式草稿只消费一次。
+- Qt 人工走查（临时数据目录 + `QTWEBENGINE_REMOTE_DEBUGGING`，CDP 驱动真实 QWebEngine，共 **95 项断言全过**）：
+  - 门禁 20 项：点选、键盘、拖主窗口、遮罩 hover 均被同一句提示拦下；焦点依次落在第一题 / 第二题 / 目标框；被拒时 `select_files` / `import_documents` 调用数为 0、队列无新条目；填好后提示与待填写样式消失；关窗保草稿、重开仍在。
+  - 布局 30 项：1280/1024/720/719/640/480/360 客户区与 DPR 1.25/1.5 下外宽依次 688/688/688/688/616/456/336，选项 4/4/4/2/2/2/1 列，`.import-body` 无横向滚动，左右各留 ≥12px。
+  - 预算 25 项：新装九项默认 10/40/120000/60/8/500/30 秒 + 4/16；旧配置 10025ms 显示 10.025 秒、24567 字符合法且 `step=1`；非法 10.0251 秒阻止保存、提示、aria-invalid 与聚焦；保存后内部仍是 10025；「恢复本组默认」只改本组、未保存不落盘，保存后本组变上限且不动另一组 / 模型预设；两组分别重置与保存均通过。
+  - 对话抽屉 13 项：「确定」在抽屉最下一行右侧；鼠标与键盘 Enter 各只收起一次、焦点回模型按钮、`aria-expanded=false`、`inert` 保留；不额外保存选择、不发消息；重开仍保持选中模型。
+  - 真实入库 7 项：学习模式填完后经原生拖放事件入库、自动打开文档、草稿消费一次、重开显示「已记下这批 1 份」并恢复待填写。
+  - 截图：`build/qa-shots/`（gate-01…05、layout-01/02/03、layout-04-dpr1.25/1.5、settings-01…04、chat-01）；`build/` 不入库。需求附件里的四张截图未随本次对话提供，视觉核对以本机真实 Qt 截图为准。
+- 未做 / 已知限制：考试导出旁路只能用假 client 单测（本机无 API Key，未生成真实试卷走「导出并加入文档库」）；真实资源管理器拖拽用同一 `kaizhi:native-drop` 事件模拟（Qt 端到端 smoke 已过）；「抽屉已打开后失去有效模型时确定置灰」只有源码级判定断言，未在 Qt 里构造该现场；未发版。

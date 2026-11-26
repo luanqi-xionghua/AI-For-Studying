@@ -42,6 +42,15 @@ const modelLabel = computed(() => {
 })
 const effortLabel = computed(() => props.resolved ? (EFFORT_LABELS[props.resolved.effort] ?? props.resolved.effort) : '')
 const pickerModels = computed(() => props.resolved ? composerModels(props.resolved.provider, props.resolved.model) : [])
+// 抽屉右下角「确定」：当前模型有效才可点。选模型/强度时已经即时保存，确定只收起抽屉并回焦，不二次提交。
+const canConfirm = computed(() => {
+  const id = props.resolved?.model
+  return !props.busy && !props.disabled && !!id?.trim() && pickerModels.value.some(m => m.id === id)
+})
+function confirmPicker() {
+  if (!pickerOpen.value || !canConfirm.value) return
+  closePicker()
+}
 const presetChips = computed(() => (props.settings?.presets || []).map((item: any) => ({ id: item.id, name: presetTitle(item), detail: presetDetail(item) })))
 const contextLimit = computed(() => props.resolved ? contextWindow(props.resolved.provider, props.resolved.model) : 0)
 
@@ -140,6 +149,10 @@ defineExpose({ focus })
         :models="pickerModels"
         :presets="presetChips"
         :preset="props.resolved?.preset.id"
+        show-confirm
+        confirm-placement="footer"
+        :confirm-disabled="!canConfirm"
+        @confirm="confirmPicker"
         @preset="choosePreset"
         @model="chooseModel"
         @effort="chooseEffort"

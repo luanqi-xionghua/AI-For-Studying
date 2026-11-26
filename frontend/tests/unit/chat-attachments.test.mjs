@@ -9,7 +9,8 @@ import {
 } from '../../src/chat/attachments.ts'
 import { CHAT_ATTACH_LIMITS } from '../../src/chat/types.ts'
 
-const DEFAULT_LIMITS = {
+/** 老用户显式保存过的一组旧默认（不是代码里的当前默认；当前默认走 perDocLimits 的缺省值）。 */
+const LEGACY_LIMITS = {
   images: 5, pages: 8, characters: 24000, calls: 12, rounds: 3,
   searchPages: 120, searchMilliseconds: 10000, seedCharacters: 8000,
 }
@@ -105,18 +106,26 @@ test('attachments: hasAttachments and the context estimate', () => {
   assert.equal(attachmentContextTokens(-1, -2), 0)
 })
 
-test('attachments: per-document budgets follow the §5.3 table', () => {
-  const one = perDocLimits(DEFAULT_LIMITS, 1, true)
-  assert.deepEqual([one.calls, one.rounds, one.pages, one.characters, one.images], [12, 3, 8, 24000, 5])
-  const two = perDocLimits(DEFAULT_LIMITS, 2, true)
-  assert.deepEqual([two.calls, two.rounds, two.pages, two.characters, two.images], [6, 3, 4, 12000, 2])
-  const three = perDocLimits(DEFAULT_LIMITS, 3, true)
-  assert.deepEqual([three.calls, three.rounds, three.pages, three.characters, three.images], [4, 2, 3, 8000, 1])
-  assert.equal(perDocLimits(DEFAULT_LIMITS, 1, false).images, 0)
+test('attachments: per-document budgets follow the §5.3 table on the new reading defaults', () => {
+  // 不传 limits 才真正走字段表的缺省值（九项新默认），而不是测试里另写一份“默认”。
+  const one = perDocLimits(undefined, 1, true)
+  assert.deepEqual([one.calls, one.rounds, one.pages, one.characters, one.images], [60, 8, 40, 120000, 10])
+  assert.deepEqual([one.searchPages, one.searchMilliseconds], [500, 30000])
+  const two = perDocLimits(undefined, 2, true)
+  assert.deepEqual([two.calls, two.rounds, two.pages, two.characters, two.images], [30, 8, 20, 60000, 5])
+  const three = perDocLimits(undefined, 3, true)
+  assert.deepEqual([three.calls, three.rounds, three.pages, three.characters, three.images], [20, 2, 14, 40000, 3])
+  assert.equal(perDocLimits(undefined, 1, false).images, 0)
+  assert.equal(perDocLimits(undefined, 3, true).seedCharacters, 8000)
+  // 老用户显式存着旧默认时按本数拆分，结果仍是旧值，不跟着新默认放大。
+  const legacyOne = perDocLimits(LEGACY_LIMITS, 1, true)
+  assert.deepEqual([legacyOne.calls, legacyOne.rounds, legacyOne.pages, legacyOne.characters, legacyOne.images], [12, 3, 8, 24000, 5])
+  const legacyTwo = perDocLimits(LEGACY_LIMITS, 2, true)
+  assert.deepEqual([legacyTwo.calls, legacyTwo.rounds, legacyTwo.pages, legacyTwo.characters, legacyTwo.images], [6, 3, 4, 12000, 2])
   // 用户把预算调小后仍保底 3 次调用 / 3 页 / 6000 字。
-  const tiny = perDocLimits({ ...DEFAULT_LIMITS, calls: 4, pages: 4, characters: 6000, rounds: 3, images: 2 }, 2, true)
+  const tiny = perDocLimits({ ...LEGACY_LIMITS, calls: 4, pages: 4, characters: 6000, rounds: 3, images: 2 }, 2, true)
   assert.deepEqual([tiny.calls, tiny.pages, tiny.characters, tiny.images], [3, 3, 6000, 1])
-  assert.equal(perDocLimits(DEFAULT_LIMITS, 3, true).seedCharacters, 8000)
+  assert.equal(perDocLimits(LEGACY_LIMITS, 3, true).seedCharacters, 8000)
 })
 
 test('attachments: document errors become fixed text and never leak a path', () => {

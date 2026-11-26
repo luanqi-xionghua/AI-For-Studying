@@ -33,7 +33,7 @@ import SelectionTranslation from './components/translate/SelectionTranslation.vu
 import { startAutoCheck, stopAutoCheck } from './ui/updater'
 import { registerCustomFonts } from './ui/custom-fonts'
 import { covers, loadCovers, setCover, imageCover, pageCover, type Cover } from './library/covers'
-import { importer, enqueue, runQueue, clearFinished, learningReady, currentLearningAnswers, markLearningRecorded } from './library/importer'
+import { importer, enqueue, runQueue, clearFinished, learningReady, importFeedback, IMPORT_INCOMPLETE_MESSAGE, type ImportIntent } from './library/importer'
 import { saveFailures, retrySave } from './ui/save-errors'
 import { setActiveMemoryDocument } from './ai/memory-context'
 import { emitLearningEvent } from './memory/events'
@@ -50,7 +50,7 @@ const UpdateCard = lazy(() => import('./components/settings/UpdateCard.vue'), { 
 const ContextMenu = lazy(() => import('./components/layout/ContextMenu.vue'), { name: '右键菜单', variant: 'quiet' })
 const ManifoldDoodle = lazy(() => import('./components/layout/ManifoldDoodle.vue'), { name: '背景动画', variant: 'quiet' })
 const TranslatePane = lazy(() => import('./components/translate/TranslatePane.vue'), { name: '翻译助手' })
-const ImportDialog = lazy(() => import('./components/library/ImportDialog.vue'), { name: '加入文档窗口', variant: 'overlay', dismiss: () => { importOpen.value = false } })
+const ImportDialog = lazy(() => import('./components/library/ImportDialog.vue'), { name: '加入文档窗口', variant: 'overlay', dismiss: () => { closeImport() } })
 const ChatModePage = lazy(() => import('./components/chat/ChatModePage.vue'), { name: '对话模式' })
 const MemoryPage = lazy(() => import('./components/memory/MemoryPage.vue'), { name: '记忆管理' })
 const MaterialsPage = lazy(() => import('./components/materials/MaterialsPage.vue'), { name: '资料检索' })
@@ -541,9 +541,56 @@ function withMemory(run: (api: typeof import('./memory')) => void) {
 }
 // ---- 加入文档：窗口、拖放与导入队列（排队与进度在 library/importer.ts）----------------
 const importOpen = ref(false)
+/** 这次打开表单是从哪来的：普通加入文档，还是试卷结果页的「导出并加入文档库」。 */
+const importIntent = ref<ImportIntent>('library')
+/** 父级收到的拒绝信号：设置后传给 ImportDialog，它读到就展示同一段提示并聚焦缺失项。 */
+const validationTicket = ref(0)
+/** 用户对这一批的交互版本：作答、重新选文件、关窗/重开都会加一，旧的 600ms 收尾据此作废。 */
+const interactionEpoch = ref(0)
+/** 有更重要的窗口开着时先记下拒绝，等它关掉再呈现表单（不叠一张被盖住的表）。 */
+let importPending = false
+let importRun = 0
 const wordConverting = computed(() => importer.items.some(item => item.word && item.status === 'working'))
-function openImport() { libraryShown.value = true; importOpen.value = true }
-function closeImport() { importOpen.value = false; if (!importer.running) clearFinished() }
+function openImport() {
+  libraryShown.value = true
+  importIntent.value = 'library'
+  validationTicket.value = 0
+  importPending = false
+  interactionEpoch.value++
+  importOpen.value = true
+}
+function closeImport() {
+  importOpen.value = false
+  importIntent.value = 'library'
+  validationTicket.value = 0
+  importPending = false
+  interactionEpoch.value++
+  if (!importer.running) clearFinished()
+}
+function modalCoversImport() { return settingsOpen.value || Boolean(removeTarget.value) || Boolean(removeBatch.value) }
+/** 被拒后呈现表单：已有设置/删除确认挡着就只留提示意图，等它关掉再开，不抢焦点也不强关。 */
+function presentImportFeedback() {
+  importIntent.value = importFeedback.intent
+  validationTicket.value = importFeedback.seq
+  interactionEpoch.value++
+  if (modalCoversImport()) {
+    importPending = true
+    notify(`${IMPORT_INCOMPLETE_MESSAGE}请先关闭当前打开的窗口。`)
+    return
+  }
+  importPending = false
+  importOpen.value = true
+}
+// 唯一的「需要展示校验」信号：只记录请求与开窗意图，不在这里做表单聚焦（子组件挂载或 ticket 变化时自己处理）。
+watch(() => importFeedback.seq, seq => { if (seq && !disposed) presentImportFeedback() }, { flush: 'sync' })
+// 填好（或关掉学习模式）后收起提示：清 ticket，不归零全局 seq，冷启动后不会重放旧请求。
+watch(learningReady, ready => { if (ready) validationTicket.value = 0 }, { flush: 'sync' })
+watch([settingsOpen, removeTarget, removeBatch], () => {
+  if (importPending && !modalCoversImport()) {
+    importPending = false
+    importOpen.value = true
+  }
+})
 /** 加入成功的文档：已开的标签换成新记录（文件变过就丢掉旧缓存、重新读），没开过的放进标签页。 */
 function applyImported(docs: Doc[], changed: Set<string>) {
   for (const doc of docs) {
@@ -564,17 +611,19 @@ function applyImported(docs: Doc[], changed: Set<string>) {
 /**
  * 排进队列并依次加入。这一批里有 Word（要转换，看进度）或有加不进来的文件（看原因）时打开「加入文档」窗口；
  * 全部成功就关上窗口、打开第一份，和以前一样；有失败的就留着窗口，写明原因。
+ * 学习模式的校验在 enqueue 里（所有入口共用）：被拒时 added 为空，由 importFeedback.seq 通知开表单并提示。
  */
-async function addPaths(paths: string[], fromDialog = importOpen.value) {
-  if (fromDialog && !learningReady()) { notify('学习模式已开启：请先回答两道自评、填写学习目标，再拖入文件。'); return }
-  const answers = fromDialog ? currentLearningAnswers() : null
-  const added = enqueue(paths, answers)
+async function addPaths(paths: string[]) {
+  const added = enqueue(paths)
   if (!added.length) return
-  const recorded = added.filter(item => item.onboarding).length
-  if (recorded) markLearningRecorded(recorded)
   libraryShown.value = true
   if (added.some(item => item.word || item.status === 'error')) importOpen.value = true
-  if (importer.running) return // 正在跑的队列会接着处理新排进来的
+  if (importer.running) return // 正在跑的队列会接着处理新排进来的；新批次已经按新状态准入
+  const runId = ++importRun
+  // 这一批的收尾只对「同一个运行、同一份交互版本、同一张 ticket」有效：期间用户作答、重新选文件、
+  // 被拒后打开了表单或关窗重开，都让旧的 600ms 自动关闭作废，避免抢走正在作答的界面。
+  const epoch = interactionEpoch.value
+  const ticket = validationTicket.value
   const imported: Doc[] = [], changed = new Set<string>()
   await runQueue(importDocument, (docs, item) => {
     applyImported(docs, changed)
@@ -584,14 +633,16 @@ async function addPaths(paths: string[], fromDialog = importOpen.value) {
       for (const doc of docs) emitLearningEvent({ type: 'onboarding', docId: doc.id, title: doc.name, answers: item.onboarding, importId: item.id, at: Date.now() })
     }
   })
-  if (disposed) return
+  if (disposed || runId !== importRun) return
   await refresh()
+  if (runId !== importRun) return
   if (imported.length) notify(`已加入 ${imported.length} 份文档`)
   if (importer.items.some(item => item.status === 'error')) { importOpen.value = true; return }
   if (!imported.length) return
-  // 全部成功：窗口开着就让「已加入」停一下再关，然后打开第一份。
+  // 全部成功：窗口开着就让「已加入」停一下再关，然后打开第一份；等待前后都核对这一批是否还是当前那一批。
   if (importOpen.value) {
     await new Promise(resolve => setTimeout(resolve, 600))
+    if (disposed || runId !== importRun || interactionEpoch.value !== epoch || validationTicket.value !== ticket) return
     if (importer.running || !importOpen.value) return
     closeImport()
   } else clearFinished()
@@ -1981,7 +2032,7 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
     <SelectionTranslation v-if="hoverTranslation" :key="hoverTranslation.item.id" :item="hoverTranslation.item" :x="hoverTranslation.x" :y="hoverTranslation.y" @close="closeHoverTranslation" />
     <ExplainCard v-for="card in explainCards" :key="card.id" :card="card" @close="closeCard(card)" />
     <Transition name="capture-focus"><CaptureQuickPrompt v-if="captureQuick && !settingsOpen" :frame="captureQuick.frame" :prompts="preferences.assistant.captureQuestions" :busy="captureQuickBusy" :status="captureQuickStatus" @ask="askCaptureQuick" @continue="continueCaptureQuick" @cancel="dismissCaptureQuick()" /></Transition>
-    <div v-if="draggingFiles && !importOpen" class="file-drop-overlay" aria-live="polite"><div class="file-drop-target"><AppIcon name="plus" :size="32" /><strong>加入文档库</strong><span>松开以加入 PDF / Markdown / Word 文档</span></div></div>
+    <div v-if="draggingFiles && !importOpen" class="file-drop-overlay" :class="{ 'is-blocked': !learningReady() }" aria-live="polite"><div class="file-drop-target"><AppIcon name="plus" :size="32" /><strong>{{ learningReady() ? '加入文档库' : '先填写学习模式必填项' }}</strong><span>{{ learningReady() ? '松开以加入 PDF / Markdown / Word 文档' : '松开后会打开表单，回答两道自评并填写学习目标' }}</span></div></div>
     <UpdateCard v-if="!settingsOpen" />
     <TransitionGroup tag="div" name="notice" class="notice-stack" aria-live="polite">
       <div v-for="notice in notices" :key="notice.id" class="answer-notice" role="status" @pointerenter="holdNotice(notice.id, true)" @pointerleave="holdNotice(notice.id, false)">
@@ -1998,7 +2049,7 @@ onBeforeUnmount(() => { document.removeEventListener('mouseup', autoTranslate); 
     </TransitionGroup>
     <Transition name="toast"><div v-if="toast" class="toast-message" role="status"><span>{{ toast }}</span><button @click="toast = ''" data-tip="关闭提示" aria-label="关闭提示"><AppIcon name="close" :size="15" /></button></div></Transition>
     <Transition name="dialog">
-      <ImportDialog v-if="importOpen" :dragging="draggingFiles" @close="closeImport" @add="addPaths" @open="openImported" />
+      <ImportDialog v-if="importOpen" :dragging="draggingFiles" :validation-ticket="validationTicket" :intent="importIntent" @close="closeImport" @add="addPaths" @open="openImported" @interact="interactionEpoch++" />
     </Transition>
     <Transition name="dialog">
       <div v-if="removeBatch" class="dialog-backdrop" @click.self="removeBatch = null"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-batch-title"><div class="dialog-icon"><AppIcon name="trash" :size="24" /></div><h2 id="remove-batch-title">移除 {{ removeBatch.length }} 份文档？</h2><p>{{ removeBatch.slice(0, 3).map(doc => `「${doc.name}」`).join('') }}{{ removeBatch.length > 3 ? ` 等 ${removeBatch.length} 份` : '' }}的阅读记录、标签与学习记忆会被移除，原文件仍保留在电脑上。</p><div class="dialog-actions"><button @click="removeBatch = null">取消</button><button class="danger-button" @click="removeDocuments">移除 {{ removeBatch.length }} 份</button></div></section></div>

@@ -12,7 +12,11 @@ const props = withDefaults(defineProps<{
   note: string
   docQuestion?: string
   disabled?: boolean
-}>(), { docQuestion: '你对这份文档的内容了解多少？', disabled: false })
+  /** 导入门禁判定出的缺失项：优先聚焦到这一组，并把 aria-invalid/aria-describedby 只接在这里。 */
+  invalidField?: 'docLevel' | 'fieldLevel' | 'goal'
+  /** 校验提示元素的 id；只有 invalidField 存在时才会被引用。 */
+  validationId?: string
+}>(), { docQuestion: '你对这份文档的内容了解多少？', disabled: false, invalidField: undefined, validationId: undefined })
 const emit = defineEmits<{
   'update:docLevel': [value: 0 | SelfLevel]
   'update:fieldLevel': [value: 0 | SelfLevel]
@@ -39,7 +43,11 @@ function inputGoal(event: Event) { emit('update:goal', (event.target as HTMLText
 function inputPreference(event: Event) { emit('update:preference', (event.target as HTMLTextAreaElement).value) }
 function inputNote(event: Event) { emit('update:note', (event.target as HTMLTextAreaElement).value) }
 function focusFirstUnanswered() {
-  if (!props.docLevel) docField.value?.querySelector<HTMLInputElement>('input')?.focus()
+  // 导入门禁已经判定出缺哪一项（含程序写入的越界值）时直接聚焦那一组；记忆编辑页不传，沿用原顺序。
+  if (props.invalidField === 'docLevel') docField.value?.querySelector<HTMLInputElement>('input')?.focus()
+  else if (props.invalidField === 'fieldLevel') fieldField.value?.querySelector<HTMLInputElement>('input')?.focus()
+  else if (props.invalidField === 'goal') goalInput.value?.focus()
+  else if (!props.docLevel) docField.value?.querySelector<HTMLInputElement>('input')?.focus()
   else if (!props.fieldLevel) fieldField.value?.querySelector<HTMLInputElement>('input')?.focus()
   else if (!props.goal.trim()) goalInput.value?.focus()
 }
@@ -48,7 +56,7 @@ defineExpose({ focusFirstUnanswered })
 
 <template>
   <div class="onboarding-fields">
-    <fieldset ref="docField" class="onboarding-question" :disabled="props.disabled">
+    <fieldset ref="docField" class="onboarding-question" :disabled="props.disabled" :aria-invalid="props.invalidField === 'docLevel' ? true : undefined" :aria-describedby="props.invalidField === 'docLevel' ? props.validationId : undefined">
       <legend>{{ props.docQuestion }}</legend>
       <div class="onboarding-options">
         <label v-for="option in DOC_OPTIONS" :key="option.value" class="onboarding-option">
@@ -56,7 +64,7 @@ defineExpose({ focusFirstUnanswered })
         </label>
       </div>
     </fieldset>
-    <fieldset ref="fieldField" class="onboarding-question" :disabled="props.disabled">
+    <fieldset ref="fieldField" class="onboarding-question" :disabled="props.disabled" :aria-invalid="props.invalidField === 'fieldLevel' ? true : undefined" :aria-describedby="props.invalidField === 'fieldLevel' ? props.validationId : undefined">
       <legend>你对它所属的专业或行业了解多少？</legend>
       <div class="onboarding-options">
         <label v-for="option in FIELD_OPTIONS" :key="option.value" class="onboarding-option">
@@ -66,7 +74,7 @@ defineExpose({ focusFirstUnanswered })
     </fieldset>
     <label class="onboarding-note">
       <span>你的学习目标是什么？<em class="onboarding-required">必填</em></span>
-      <textarea ref="goalInput" :value="props.goal" :maxlength="LIMITS.goal" rows="2" placeholder="例如：下个月通过考试、完成课程汇报、系统入门这个方向" :disabled="props.disabled" @input="inputGoal" />
+      <textarea ref="goalInput" :value="props.goal" :maxlength="LIMITS.goal" rows="2" placeholder="例如：下个月通过考试、完成课程汇报、系统入门这个方向" :disabled="props.disabled" :aria-invalid="props.invalidField === 'goal' ? true : undefined" :aria-describedby="props.invalidField === 'goal' ? props.validationId : undefined" @input="inputGoal" />
       <small class="onboarding-count">{{ goalLength }} / {{ LIMITS.goal }}</small>
     </label>
     <label class="onboarding-note">
